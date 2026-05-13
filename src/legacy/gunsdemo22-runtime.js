@@ -50,6 +50,7 @@ const trails = [];
 const stains = [];
 const deathOverlays = [];
 const hintMessages = [];
+const scoreboardRows = new Map();
 
 const AMMO_MAX = 30;
 const AMMO_PACK_VALUE = 30;
@@ -200,6 +201,9 @@ function makeUnit(
     ammo: cannonConfig.maxAmmo,
 
     frags: 0,
+    pilotKills: 0,
+    cannonBreaks: 0,
+    pilotDeaths: 0,
     score: 0,
     passiveScoreTimer: 0,
 
@@ -689,6 +693,7 @@ function startPlayerFlyToggle() {
     player.pilotFlyState === "ground" ||
     player.pilotFlyState === "falling"
   ) {
+    dropCarriedAmmo(player);
     player.pilotFlyState = "rising";
     player.pilotFlyTime = 0;
     player.pilotKnockback = null;
@@ -810,14 +815,33 @@ function fireBullet(owner, angle) {
   owner.ammo = Math.max(0, owner.ammo - 1);
 }
 
-function spawnAmmoPack() {
+function addAmmoPack(x, y, value = AMMO_PACK_VALUE) {
   ammoPacks.push({
-    x: randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
-    y: randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90),
+    x,
+    y,
     radius: 16,
-    value: AMMO_PACK_VALUE,
+    value,
     time: 0
   });
+}
+
+function spawnAmmoPack() {
+  addAmmoPack(
+    randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
+    randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90)
+  );
+}
+
+function dropCarriedAmmo(unit) {
+  if (unit.carriedAmmoValue <= 0) return;
+
+  addAmmoPack(
+    clamp(unit.pilotX, ROOM_LEFT + 90, ROOM_RIGHT - 90),
+    clamp(unit.pilotY, ROOM_TOP + 90, ROOM_BOTTOM - 90),
+    unit.carriedAmmoValue
+  );
+
+  unit.carriedAmmoValue = 0;
 }
 
 function addExplosion(x, y) {
@@ -1231,6 +1255,7 @@ function destroyCannonCompletely(unit, attacker) {
 
   if (attacker && attacker !== unit) {
     attacker.frags++;
+    attacker.cannonBreaks++;
     addScore(attacker, 50);
   }
 }
@@ -1250,8 +1275,11 @@ function killPilot(victim, killer) {
     addDeathOverlay();
   }
 
+  victim.pilotDeaths++;
+
   if (killer && killer !== victim) {
     killer.frags++;
+    killer.pilotKills++;
     addScore(killer, 100);
   }
 
@@ -1932,6 +1960,7 @@ function updateBullets(dt) {
 
           if (target.hp <= 0) {
             destroyCannon(target);
+            bullet.owner.cannonBreaks++;
             addScore(bullet.owner, 50);
           }
 
@@ -2007,6 +2036,7 @@ function updateBullets(dt) {
 
               if (target.hp <= 0) {
                 breakEmptyCannon(target);
+                bullet.owner.cannonBreaks++;
                 addScore(bullet.owner, 50);
               }
 
@@ -3461,6 +3491,8 @@ function drawWreck(unit) {
   } else {
     drawHealthBar(unit);
   }
+
+  drawAmmoText(unit);
 }
 
 function drawParachute(unit, p) {
@@ -3686,6 +3718,63 @@ function drawExplosions() {
   }
 }
 
+function drawScoreboardPilotIcon(x, y) {
+  ctx.save();
+  ctx.fillStyle = LCD_INK;
+
+  ctx.beginPath();
+  ctx.arc(x, y + 6, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawScoreboardCannonIcon(x, y) {
+  ctx.save();
+  ctx.strokeStyle = LCD_INK;
+  ctx.fillStyle = LCD_INK;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.arc(x - 3, y + 7, 5, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x, y + 5);
+  ctx.lineTo(x + 9, y - 1);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawScoreboardSkullIcon(x, y) {
+  ctx.save();
+  ctx.strokeStyle = LCD_INK;
+  ctx.fillStyle = LCD_INK;
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+
+  ctx.beginPath();
+  ctx.moveTo(x - 7, y + 12);
+  ctx.lineTo(x + 7, y);
+  ctx.moveTo(x - 7, y);
+  ctx.lineTo(x + 7, y + 12);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(x, y + 5, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = LCD_PANEL;
+  ctx.beginPath();
+  ctx.arc(x - 2, y + 4, 1.3, 0, Math.PI * 2);
+  ctx.arc(x + 2, y + 4, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function drawScoreboard() {
   ctx.save();
 
@@ -3700,57 +3789,120 @@ function drawScoreboard() {
     (a, b) => b.score - a.score
   );
 
-  const panelHeight = 76 + sorted.length * 22;
+  const panelX = 12;
+  const panelY = 12;
+  const panelW = 306;
+  const versionY = panelY + 10;
+  const headerY = panelY + 32;
+  const separatorY = panelY + 54;
+  const rowsStartY = panelY + 62;
+  const rowH = 22;
+  const panelHeight = 70 + sorted.length * rowH;
 
   ctx.fillStyle = LCD_PANEL;
 
-  ctx.fillRect(12, 12, 170, panelHeight);
+  ctx.fillRect(panelX, panelY, panelW, panelHeight);
 
   ctx.strokeStyle = LCD_INK;
   ctx.lineWidth = 1;
 
-  ctx.strokeRect(12, 12, 170, panelHeight);
+  ctx.strokeRect(panelX, panelY, panelW, panelHeight);
+
+  ctx.fillStyle = "rgba(31, 43, 22, 0.12)";
+  ctx.fillRect(panelX + 1, headerY - 6, panelW - 2, 24);
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.globalAlpha = 0.55;
+  ctx.beginPath();
+  ctx.moveTo(panelX + 8, separatorY);
+  ctx.lineTo(panelX + panelW - 8, separatorY);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
 
   ctx.fillStyle = LCD_INK;
   ctx.font = "12px monospace";
   ctx.textAlign = "left";
   ctx.fillText(
     "v" + GAME_VERSION,
-    24,
-    22
+    panelX + 12,
+    versionY
   );
 
   ctx.font = "14px monospace";
   ctx.textAlign = "left";
   ctx.fillText(
-    "PILOT",
-    24,
-    44
+    "#",
+    panelX + 12,
+    headerY
   );
+
+  ctx.fillText(
+    "PILOT",
+    panelX + 40,
+    headerY
+  );
+
+  drawScoreboardPilotIcon(panelX + 154, headerY + 1);
+  drawScoreboardCannonIcon(panelX + 190, headerY + 1);
+  drawScoreboardSkullIcon(panelX + 226, headerY + 1);
 
   ctx.textAlign = "right";
   ctx.fillText(
     "SCORE",
-    170,
-    44
+    panelX + panelW - 12,
+    headerY
   );
 
   for (let i = 0; i < sorted.length; i++) {
     const unit = sorted[i];
-    const rowY = 66 + i * 22;
+    const targetY = rowsStartY + i * rowH;
+    const currentY =
+      scoreboardRows.has(unit.id)
+        ? scoreboardRows.get(unit.id)
+        : targetY;
+
+    const rowY =
+      currentY + (targetY - currentY) * 0.18;
+
+    scoreboardRows.set(unit.id, rowY);
 
     ctx.fillStyle = unit.color;
     ctx.textAlign = "left";
     ctx.fillText(
+      i + 1,
+      panelX + 12,
+      rowY
+    );
+
+    ctx.fillText(
       getUnitDisplayName(unit),
-      24,
+      panelX + 40,
+      rowY
+    );
+
+    ctx.textAlign = "right";
+    ctx.fillText(
+      unit.pilotKills || 0,
+      panelX + 154,
+      rowY
+    );
+
+    ctx.fillText(
+      unit.cannonBreaks || 0,
+      panelX + 190,
+      rowY
+    );
+
+    ctx.fillText(
+      unit.pilotDeaths || 0,
+      panelX + 226,
       rowY
     );
 
     ctx.textAlign = "right";
     ctx.fillText(
       Math.floor(unit.score),
-      170,
+      panelX + panelW - 12,
       rowY
     );
   }
