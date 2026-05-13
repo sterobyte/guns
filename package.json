@@ -1,0 +1,10 @@
+{
+  "name": "guns-next1",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Project wrapper around gunsdemo22.html with legacy behavior preserved.",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}

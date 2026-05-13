@@ -1,0 +1,3948 @@
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const blurCanvas = document.createElement("canvas");
+const blurCtx = blurCanvas.getContext("2d");
+
+const gridSize = 40;
+
+const ROOM_WIDTH = 2400;
+const ROOM_HEIGHT = 1600;
+const ROOM_LEFT = -ROOM_WIDTH / 2;
+const ROOM_RIGHT = ROOM_WIDTH / 2;
+const ROOM_TOP = -ROOM_HEIGHT / 2;
+const ROOM_BOTTOM = ROOM_HEIGHT / 2;
+const CAMERA_WALL_OVERSCAN = 140;
+const CAMERA_BASE_SCALE = 0.86;
+
+const LCD_BG = "#a9bd78";
+const LCD_BG_LIGHT = "#bdd08a";
+const LCD_BG_DARK = "#7f9558";
+const LCD_INK = "#1f2b16";
+const LCD_INK_2 = "#33451f";
+const LCD_INK_3 = "#4b5f2f";
+const LCD_FAINT = "rgba(31, 43, 22, 0.16)";
+const LCD_SOFT = "rgba(31, 43, 22, 0.32)";
+const LCD_PANEL = "rgba(189, 208, 138, 0.62)";
+const CANNON_INK = LCD_INK;
+const PILOT_INK = LCD_INK;
+
+const bullets = [];
+const ammoPacks = [];
+const explosions = [];
+const smokePuffs = [];
+const rearSmokePuffs = [];
+const trails = [];
+const stains = [];
+const deathOverlays = [];
+const hintMessages = [];
+
+const AMMO_MAX = 30;
+const AMMO_PACK_VALUE = 30;
+const AMMO_PACK_FADE_TIME = 2;
+const AMMO_PACK_LIFE_TIME = 60;
+const BULLET_SPEED = 720;
+
+const BOT_TURRET_TURN_SPEED = 5.8;
+const BOT_MAX_SHOOT_DISTANCE = 1320;
+const BOT_MIN_SHOT_CONFIDENCE = 0.46;
+
+const KNOCKBACK_TIME = 0.75;
+const KNOCKBACK_DISTANCE = 170;
+
+const WRECK_REPAIR_TIME = 16;
+const WRECK_HP = 500;
+
+const HP_REGEN_TIME = 60;
+const HP_REGEN_PER_SECOND = 100 / HP_REGEN_TIME;
+
+const PILOT_RADIUS = 7;
+const PILOT_STOP_RADIUS = 18;
+const PILOT_IMMUNITY_TIME = 5;
+
+const PILOT_EJECT_TIME = 2.5;
+const PILOT_EJECT_DISTANCE = 510;
+const PILOT_EJECT_PEAK_RADIUS = 27;
+const PILOT_FLY_PEAK_RADIUS = 17;
+const DOUBLEGUN_SCORE_REQUIREMENT = 3000;
+const PILOT_FLY_TRANSITION_TIME = 0.75;
+
+const STAIN_LIFE = 300;
+
+const PLAYER_COLOR = "#1f2b16";
+const RED_COLOR = "#33451f";
+const GREEN_COLOR = "#4b5f2f";
+const PURPLE_COLOR = "#5e7340";
+
+const mouse = {
+  x: 0,
+  y: 0,
+  active: false,
+  down: false
+};
+
+const keys = {
+  space: false,
+  z: false,
+  p: false,
+  f: false
+};
+
+let paused = false;
+
+const camera = {
+  x: 0,
+  y: 0,
+  scale: CAMERA_BASE_SCALE
+};
+
+function randomPilotOffset() {
+  const maxScreen = Math.max(window.innerWidth, window.innerHeight);
+
+  const dist = 300 + Math.random() * maxScreen * 1.5;
+  const angle = Math.random() * Math.PI * 2;
+
+  return {
+    x: Math.cos(angle) * dist,
+    y: Math.sin(angle) * dist
+  };
+}
+
+function makeUnit(
+  id,
+  x,
+  y,
+  color,
+  speed,
+  isPlayer,
+  gunType = "autogun"
+) {
+  const offset = randomPilotOffset();
+
+  return {
+    id,
+    isPlayer,
+    isCannonOnly: false,
+
+    state: "pilot",
+
+    x,
+    y,
+
+    radiusOuter: 34,
+    radiusInner: 13,
+
+    speed,
+
+    slowdownRadius: isPlayer ? 220 : 0,
+    stopRadius: isPlayer ? 50 : 0,
+
+    moveAngle: 0,
+    lastMoveVx: 0,
+    lastMoveVy: 0,
+    turretAngle: 0,
+
+    repairAngle: 0,
+    repairSpinDir: 1,
+
+    fireCooldown: 0,
+    fireRate: isPlayer ? 0.12 : 0.35,
+    recoilTime: 0,
+    recoilDuration: 0.085,
+
+    color,
+
+    hp: 100,
+    maxHp: 100,
+    wreckHp: 0,
+    cannonDestroyed: false,
+
+    ammo: gunType === "doublegun" ? 60 : 30,
+
+    frags: 0,
+    score: 0,
+    passiveScoreTimer: 0,
+
+    knockback: null,
+
+    exitRequested: false,
+    exitStopTimer: 0,
+    postEjectBrake: null,
+
+    pilotX: x + offset.x,
+    pilotY: y + offset.y,
+
+    pilotRadius: PILOT_RADIUS,
+    pilotSpeed: isPlayer ? 230 : 145,
+
+    pilotHp: 1,
+    pilotImmunity: PILOT_IMMUNITY_TIME,
+
+    pilotKnockback: null,
+    pilotEject: null,
+    pilotLastMoveVx: 0,
+    pilotLastMoveVy: 0,
+    pilotFlyState: "ground",
+    pilotFlyTime: 0,
+
+    wreckRepair: 0,
+
+    smokeTimer: 0,
+    rearSmokeTimer: 0,
+
+    aiMode: "approach",
+    aiTimer: 0,
+    aiTargetTimer: 0,
+    aiTarget: null,
+    aiBurstShots: 0,
+    aiBurstPause: 0,
+
+    gunType,
+    damageMultiplier:
+      1
+  };
+}
+
+const player = makeUnit("player", 0, 0, PLAYER_COLOR, 260, true);
+
+const bot1 = makeUnit(
+  "bot1",
+  950,
+  620,
+  RED_COLOR,
+  126,
+  false
+);
+
+const bot2 = makeUnit(
+  "bot2",
+  -950,
+  -620,
+  GREEN_COLOR,
+  126,
+  false
+);
+
+const doubleGun = makeUnit(
+  "doublegun",
+  0,
+  -520,
+  PURPLE_COLOR,
+  0,
+  false,
+  "doublegun"
+);
+
+doubleGun.isCannonOnly = true;
+doubleGun.pilotImmunity = 0;
+
+const units = [
+  player,
+  bot1,
+  bot2,
+  doubleGun
+];
+
+window.GUNS_LEGACY = {
+  player,
+  bot1,
+  bot2,
+  doubleGun,
+  units,
+  bullets,
+  ammoPacks,
+  explosions,
+  smokePuffs,
+  rearSmokePuffs,
+  trails,
+  stains,
+  deathOverlays,
+  hintMessages
+};
+
+for (const unit of units) {
+  unit.state = "pilot";
+
+  clampToRoomPoint(unit, unit.radiusOuter);
+
+  unit.pilotX = clamp(
+    unit.pilotX,
+    ROOM_LEFT + unit.pilotRadius,
+    ROOM_RIGHT - unit.pilotRadius
+  );
+
+  unit.pilotY = clamp(
+    unit.pilotY,
+    ROOM_TOP + unit.pilotRadius,
+    ROOM_BOTTOM - unit.pilotRadius
+  );
+}
+
+let ammoSpawnTimer = 0;
+let lastTime = performance.now();
+
+const collisionLocks = new Set();
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function clampToRoomPoint(obj, radius = 0) {
+  obj.x = clamp(obj.x, ROOM_LEFT + radius, ROOM_RIGHT - radius);
+  obj.y = clamp(obj.y, ROOM_TOP + radius, ROOM_BOTTOM - radius);
+}
+
+function isOutsideRoom(x, y, margin = 0) {
+  return (
+    x < ROOM_LEFT - margin ||
+    x > ROOM_RIGHT + margin ||
+    y < ROOM_TOP - margin ||
+    y > ROOM_BOTTOM + margin
+  );
+}
+
+
+function clampPilotToRoom(unit) {
+  unit.pilotX = clamp(
+    unit.pilotX,
+    ROOM_LEFT + unit.pilotRadius,
+    ROOM_RIGHT - unit.pilotRadius
+  );
+
+  unit.pilotY = clamp(
+    unit.pilotY,
+    ROOM_TOP + unit.pilotRadius,
+    ROOM_BOTTOM - unit.pilotRadius
+  );
+
+  if (unit.pilotEject) {
+    unit.pilotEject.endX = clamp(
+      unit.pilotEject.endX,
+      ROOM_LEFT + unit.pilotRadius,
+      ROOM_RIGHT - unit.pilotRadius
+    );
+
+    unit.pilotEject.endY = clamp(
+      unit.pilotEject.endY,
+      ROOM_TOP + unit.pilotRadius,
+      ROOM_BOTTOM - unit.pilotRadius
+    );
+  }
+}
+
+function clampUnitsToRoom() {
+  for (const unit of units) {
+    if (!unit.cannonDestroyed) {
+      clampToRoomPoint(unit, unit.radiusOuter);
+    }
+
+    clampPilotToRoom(unit);
+  }
+}
+
+
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function angleToTarget(a, b) {
+  return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+function angleDelta(from, to) {
+  return Math.atan2(
+    Math.sin(to - from),
+    Math.cos(to - from)
+  );
+}
+
+function rotateTowardAngle(from, to, maxStep) {
+  const delta = angleDelta(from, to);
+
+  if (Math.abs(delta) <= maxStep) {
+    return to;
+  }
+
+  return from + Math.sign(delta) * maxStep;
+}
+
+function worldToScreen(x, y) {
+  return {
+    x: (x - camera.x) * camera.scale + window.innerWidth / 2,
+    y: (y - camera.y) * camera.scale + window.innerHeight / 2
+  };
+}
+
+function screenToWorld(x, y) {
+  return {
+    x: (x - window.innerWidth / 2) / camera.scale + camera.x,
+    y: (y - window.innerHeight / 2) / camera.scale + camera.y
+  };
+}
+
+function clampCamera() {
+  const halfW = window.innerWidth / 2 / camera.scale;
+  const halfH = window.innerHeight / 2 / camera.scale;
+
+  if (ROOM_WIDTH <= halfW * 2) {
+    camera.x = 0;
+  } else {
+    camera.x = clamp(
+      camera.x,
+      ROOM_LEFT + halfW - CAMERA_WALL_OVERSCAN / camera.scale,
+      ROOM_RIGHT - halfW + CAMERA_WALL_OVERSCAN / camera.scale
+    );
+  }
+
+  if (ROOM_HEIGHT <= halfH * 2) {
+    camera.y = 0;
+  } else {
+    camera.y = clamp(
+      camera.y,
+      ROOM_TOP + halfH - CAMERA_WALL_OVERSCAN / camera.scale,
+      ROOM_BOTTOM - halfH + CAMERA_WALL_OVERSCAN / camera.scale
+    );
+  }
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutSine(t) {
+  return -(Math.cos(Math.PI * t) - 1) / 2;
+}
+
+function randomRange(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function getMaxAmmo(unit) {
+  return unit.gunType === "doublegun" ? 60 : AMMO_MAX;
+}
+
+function z(v) {
+  return v * camera.scale;
+}
+
+function getActivePoint(unit) {
+  return unit.state === "pilot"
+    ? { x: unit.pilotX, y: unit.pilotY }
+    : { x: unit.x, y: unit.y };
+}
+
+function getActiveVelocity(unit) {
+  return unit.state === "pilot"
+    ? {
+        x: unit.pilotLastMoveVx || 0,
+        y: unit.pilotLastMoveVy || 0
+      }
+    : {
+        x: unit.lastMoveVx || 0,
+        y: unit.lastMoveVy || 0
+      };
+}
+
+function getPilotPoint(unit) {
+  return unit.state === "alive"
+    ? { x: unit.x, y: unit.y }
+    : { x: unit.pilotX, y: unit.pilotY };
+}
+
+function getEnemies(unit) {
+  if (unit.isCannonOnly) return [];
+
+  return units.filter(u => {
+    if (u === unit) return false;
+    if (u.isCannonOnly) return false;
+
+    if (
+      isPilotAirborne(u) &&
+      unit !== player &&
+      u === player &&
+      player.state === "pilot"
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function addScore(unit, value) {
+  if (!unit) return;
+  if (unit.isCannonOnly) return;
+  unit.score += value;
+}
+
+function updatePassiveScore(unit, dt) {
+  if (unit.isCannonOnly) return;
+
+  unit.passiveScoreTimer += dt;
+
+  const ticks =
+    Math.floor(unit.passiveScoreTimer / 0.1);
+
+  if (ticks <= 0) return;
+
+  addScore(unit, ticks);
+  unit.passiveScoreTimer -= ticks * 0.1;
+}
+
+function canEnterCannon(unit, cannon) {
+  return (
+    cannon.gunType !== "doublegun" ||
+    unit.score >= DOUBLEGUN_SCORE_REQUIREMENT
+  );
+}
+
+function addHint(text) {
+  const existing =
+    hintMessages.find(h => h.text === text);
+
+  if (existing) {
+    existing.time = 0;
+    return;
+  }
+
+  hintMessages.push({
+    text,
+    time: 0,
+    life: 1.7
+  });
+}
+
+function isPilotAirborne(unit) {
+  return (
+    unit.state === "pilot" &&
+    unit.pilotFlyState !== "ground"
+  );
+}
+
+function isDeathBlurActive() {
+  return deathOverlays.length > 0;
+}
+
+function getPilotFlyAmount(unit) {
+  if (unit.pilotFlyState === "ground") return 0;
+  if (unit.pilotFlyState === "flying") return 1;
+
+  const t = clamp(
+    unit.pilotFlyTime / PILOT_FLY_TRANSITION_TIME,
+    0,
+    1
+  );
+
+  const k = Math.sin((Math.PI / 2) * t);
+
+  return unit.pilotFlyState === "rising"
+    ? k
+    : 1 - k;
+}
+
+function startPlayerFlyToggle() {
+  if (isDeathBlurActive()) return;
+  if (player.state !== "pilot") return;
+  if (player.pilotEject) return;
+
+  if (
+    player.pilotFlyState === "ground" ||
+    player.pilotFlyState === "falling"
+  ) {
+    player.pilotFlyState = "rising";
+    player.pilotFlyTime = 0;
+    player.pilotKnockback = null;
+    return;
+  }
+
+  if (
+    player.pilotFlyState === "flying" ||
+    player.pilotFlyState === "rising"
+  ) {
+    player.pilotFlyState = "falling";
+    player.pilotFlyTime = 0;
+  }
+}
+
+function updatePilotFly(unit, dt) {
+  if (unit.pilotFlyState === "ground") return;
+
+  if (unit.pilotFlyState === "flying") {
+    unit.pilotRadius = PILOT_FLY_PEAK_RADIUS;
+    unit.pilotLastMoveVx = 0;
+    unit.pilotLastMoveVy = 0;
+    return;
+  }
+
+  unit.pilotFlyTime += dt;
+
+  const t = clamp(
+    unit.pilotFlyTime / PILOT_FLY_TRANSITION_TIME,
+    0,
+    1
+  );
+
+  const k = Math.sin((Math.PI / 2) * t);
+  const up =
+    unit.pilotFlyState === "rising"
+      ? k
+      : 1 - k;
+
+  unit.pilotRadius =
+    PILOT_RADIUS +
+    up * (PILOT_FLY_PEAK_RADIUS - PILOT_RADIUS);
+
+  unit.pilotLastMoveVx = 0;
+  unit.pilotLastMoveVy = 0;
+
+  if (t >= 1) {
+    if (unit.pilotFlyState === "rising") {
+      unit.pilotFlyState = "flying";
+      unit.pilotRadius = PILOT_FLY_PEAK_RADIUS;
+    } else {
+      unit.pilotFlyState = "ground";
+      unit.pilotRadius = PILOT_RADIUS;
+    }
+
+    unit.pilotFlyTime = 0;
+  }
+}
+
+function pairKey(a, b) {
+  return [a.id, b.id].sort().join("|");
+}
+
+function getNearestEnemy(unit) {
+  let best = null;
+  let bestD = Infinity;
+
+  const self = getActivePoint(unit);
+
+  for (const enemy of getEnemies(unit)) {
+    const d = distance(self, getActivePoint(enemy));
+
+    if (d < bestD) {
+      best = enemy;
+      bestD = d;
+    }
+  }
+
+  return best;
+}
+
+function fireBullet(owner, angle) {
+  if (owner.state !== "alive") return;
+  if (owner.ammo <= 0) return;
+
+  const perpX = Math.cos(angle + Math.PI / 2);
+  const perpY = Math.sin(angle + Math.PI / 2);
+
+  const makeBullet = (offset) => {
+    bullets.push({
+      x:
+        owner.x +
+        Math.cos(angle) * 85 +
+        perpX * offset,
+
+      y:
+        owner.y +
+        Math.sin(angle) * 85 +
+        perpY * offset,
+
+      vx: Math.cos(angle) * BULLET_SPEED,
+      vy: Math.sin(angle) * BULLET_SPEED,
+
+      radius: 4,
+      life: 1.8,
+
+      owner,
+      color: owner.color,
+
+      damage:
+        10 * owner.damageMultiplier
+    });
+  };
+
+  owner.recoilTime = owner.recoilDuration;
+
+  if (owner.gunType === "doublegun") {
+    makeBullet(-9);
+    makeBullet(9);
+  } else {
+    makeBullet(0);
+  }
+
+  owner.ammo = Math.max(0, owner.ammo - 1);
+}
+
+function spawnAmmoPack() {
+  ammoPacks.push({
+    x: randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
+    y: randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90),
+    radius: 16,
+    value: AMMO_PACK_VALUE,
+    time: 0
+  });
+}
+
+function addExplosion(x, y) {
+  explosions.push({
+    x,
+    y,
+    time: 0,
+    life: 0.55
+  });
+}
+
+function addSmoke(x, y) {
+  smokePuffs.push({
+    x: x + (Math.random() - 0.5) * 14,
+    y: y - 28 + (Math.random() - 0.5) * 8,
+
+    radius: 7 + Math.random() * 8,
+
+    time: 0,
+    life: 1.55
+  });
+}
+
+function addRearSmoke(unit) {
+  const angle = unit.moveAngle + Math.PI;
+
+  rearSmokePuffs.push({
+    x: unit.x + Math.cos(angle) * 60 + (Math.random() - 0.5) * 3,
+    y: unit.y + Math.sin(angle) * 60 + (Math.random() - 0.5) * 3,
+
+    vx: Math.cos(angle) * 42,
+    vy: Math.sin(angle) * 42,
+
+    radius: 2.5 + Math.random() * 1.5,
+
+    time: 0,
+    life: 0.36,
+
+    color: unit.color
+  });
+}
+
+function addTrail(x, y, radius, color, life = 0.34) {
+  trails.push({
+    x,
+    y,
+    radius,
+    color,
+    time: 0,
+    life
+  });
+}
+
+function updateMovementTrails() {
+  for (const unit of units) {
+    const cannonMoving =
+      Math.hypot(unit.lastMoveVx || 0, unit.lastMoveVy || 0) > 18;
+
+    if (
+      unit.state === "alive" &&
+      cannonMoving &&
+      Math.random() < 0.45
+    ) {
+      addTrail(
+        unit.x,
+        unit.y,
+        unit.radiusOuter * 0.62,
+        CANNON_INK,
+        0.28
+      );
+    }
+
+    const pilotMoving =
+      unit.state === "pilot" &&
+      !unit.pilotEject &&
+      Math.hypot(unit.pilotKnockback ? 1 : 0, 0) === 0;
+
+    if (
+      unit.state === "pilot" &&
+      !unit.pilotEject &&
+      Math.random() < 0.22
+    ) {
+      addTrail(
+        unit.pilotX,
+        unit.pilotY,
+        unit.pilotRadius * 0.9,
+        PILOT_INK,
+        0.24
+      );
+    }
+
+    if (
+      unit.pilotEject &&
+      Math.random() < 0.55
+    ) {
+      addTrail(
+        unit.pilotX,
+        unit.pilotY,
+        unit.pilotRadius * 0.8,
+        PILOT_INK,
+        0.30
+      );
+    }
+  }
+}
+
+function addStain(x, y, color) {
+  stains.push({
+    x,
+    y,
+    color,
+
+    time: 0,
+    life: STAIN_LIFE
+  });
+}
+
+function addDeathOverlay() {
+  deathOverlays.push({
+    time: 0,
+    life: 3
+  });
+}
+
+function chooseBotTarget(bot) {
+  let best = null;
+  let bestScore = Infinity;
+
+  const self = getActivePoint(bot);
+
+  for (const enemy of getEnemies(bot)) {
+    if (enemy.cannonDestroyed && enemy.state !== "pilot") continue;
+
+    const p = getActivePoint(enemy);
+    const d = distance(self, p);
+
+    let score = d;
+
+    if (enemy.state === "alive") score -= 80;
+    if (enemy.state === "pilot" && enemy.pilotImmunity <= 0 && !enemy.pilotEject) score -= 140;
+    if (enemy.pilotImmunity > 0) score += 120;
+    if (enemy.pilotEject) score += 220;
+    if (enemy.gunType === "doublegun" && enemy.state === "alive") score -= 60;
+
+    score += Math.random() * 35;
+
+    if (score < bestScore) {
+      bestScore = score;
+      best = enemy;
+    }
+  }
+
+  bot.aiTarget = best;
+  bot.aiTargetTimer = randomRange(0.06, 0.16);
+}
+
+function chooseBotMode(bot) {
+  chooseBotTarget(bot);
+
+  const maxAmmo = getMaxAmmo(bot);
+  const lowAmmo =
+    bot.ammo <= Math.max(4, Math.floor(maxAmmo * 0.22));
+
+  if (lowAmmo && ammoPacks.length > 0) {
+    bot.aiMode = "ammo";
+  } else {
+    bot.aiMode = "approach";
+  }
+
+  bot.aiTimer = randomRange(0.08, 0.22);
+}
+
+function getNearestAmmo(unit) {
+  let best = null;
+  let bestD = Infinity;
+
+  const p = getActivePoint(unit);
+
+  for (const pack of ammoPacks) {
+    const d = Math.hypot(
+      p.x - pack.x,
+      p.y - pack.y
+    );
+
+    if (d < bestD) {
+      bestD = d;
+      best = pack;
+    }
+  }
+
+  return best;
+}
+
+function moveToward(unit, target, dt, stopDistance = 0) {
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+
+  const d = Math.hypot(dx, dy);
+
+  const hardStop = Math.max(stopDistance, unit.stopRadius);
+
+  if (d <= hardStop) return;
+
+  let speedFactor = 1;
+
+  if (unit.slowdownRadius > 0) {
+    speedFactor = clamp(
+      (d - hardStop) / Math.max(1, unit.slowdownRadius - hardStop),
+      0,
+      1
+    );
+  }
+
+  const speed = unit.speed * speedFactor;
+  const step = Math.min(speed * dt, d - hardStop);
+
+  unit.x += (dx / d) * step;
+  unit.y += (dy / d) * step;
+
+  clampToRoomPoint(unit, unit.radiusOuter);
+}
+
+function moveAwayFrom(unit, target, dt) {
+  const dx = unit.x - target.x;
+  const dy = unit.y - target.y;
+
+  const d = Math.hypot(dx, dy);
+
+  if (d <= unit.stopRadius) return;
+
+  const speedFactor = clamp(
+    (d - unit.stopRadius) / Math.max(1, unit.slowdownRadius - unit.stopRadius),
+    0,
+    1
+  );
+
+  const speed = unit.speed * speedFactor;
+
+  unit.x += (dx / d) * speed * dt;
+  unit.y += (dy / d) * speed * dt;
+
+  clampToRoomPoint(unit, unit.radiusOuter);
+}
+
+function moveBotCombatCannon(bot, target, dt) {
+  const ranges = getBotCombatRange(bot);
+  const d = distance(bot, target);
+
+  if (d < ranges.min) {
+    moveAwayFrom(bot, target, dt);
+    return;
+  }
+
+  if (d > ranges.max) {
+    moveToward(bot, target, dt, ranges.ideal);
+    return;
+  }
+
+  const angle =
+    angleToTarget(target, bot) +
+    Math.PI / 2 +
+    Math.sin(performance.now() * 0.002 + bot.id.length) * 0.34;
+
+  const rangeBias =
+    d < ranges.ideal * 0.82
+      ? 0.42
+      : d > ranges.ideal * 1.16
+        ? -0.32
+        : 0;
+
+  bot.x +=
+    (Math.cos(angle) + Math.cos(angleToTarget(target, bot)) * rangeBias) *
+      bot.speed *
+      0.76 *
+      dt;
+
+  bot.y +=
+    (Math.sin(angle) + Math.sin(angleToTarget(target, bot)) * rangeBias) *
+      bot.speed *
+      0.76 *
+      dt;
+
+  clampToRoomPoint(bot, bot.radiusOuter);
+}
+
+function movePilotToward(unit, target, dt, stopDistance = 0) {
+  if (unit.pilotKnockback || unit.pilotEject) return;
+
+  const oldX = unit.pilotX;
+  const oldY = unit.pilotY;
+
+  const dx = target.x - unit.pilotX;
+  const dy = target.y - unit.pilotY;
+
+  const d = Math.hypot(dx, dy);
+
+  if (d <= stopDistance) {
+    unit.pilotLastMoveVx = 0;
+    unit.pilotLastMoveVy = 0;
+    return;
+  }
+
+  const step = Math.min(unit.pilotSpeed * dt, d - stopDistance);
+
+  unit.pilotX += (dx / d) * step;
+  unit.pilotY += (dy / d) * step;
+
+  unit.pilotX = clamp(
+    unit.pilotX,
+    ROOM_LEFT + unit.pilotRadius,
+    ROOM_RIGHT - unit.pilotRadius
+  );
+
+  unit.pilotY = clamp(
+    unit.pilotY,
+    ROOM_TOP + unit.pilotRadius,
+    ROOM_BOTTOM - unit.pilotRadius
+  );
+
+  unit.pilotLastMoveVx =
+    (unit.pilotX - oldX) / Math.max(dt, 0.0001);
+  unit.pilotLastMoveVy =
+    (unit.pilotY - oldY) / Math.max(dt, 0.0001);
+}
+
+function startRepair(unit) {
+  unit.hp = 0;
+  unit.wreckHp = WRECK_HP;
+  unit.cannonDestroyed = false;
+
+  unit.wreckRepair = WRECK_REPAIR_TIME;
+
+  unit.repairAngle = unit.turretAngle || unit.moveAngle || 0;
+  unit.repairSpinDir = Math.random() < 0.5 ? -1 : 1;
+}
+
+function destroyCannon(unit) {
+  if (unit.state !== "alive") return;
+
+  unit.state = "pilot";
+
+  startRepair(unit);
+
+  unit.knockback = null;
+
+  const moveSpeed =
+    Math.hypot(unit.lastMoveVx || 0, unit.lastMoveVy || 0);
+
+  const angle =
+    moveSpeed > 8
+      ? Math.atan2(unit.lastMoveVy, unit.lastMoveVx)
+      : (unit.turretAngle || unit.moveAngle || 0);
+
+  unit.pilotX = unit.x;
+  unit.pilotY = unit.y;
+
+  unit.pilotHp = 1;
+  unit.pilotImmunity = PILOT_IMMUNITY_TIME;
+
+  unit.pilotKnockback = null;
+
+  unit.pilotRadius = PILOT_RADIUS;
+  unit.pilotFlyState = "ground";
+  unit.pilotFlyTime = 0;
+
+  unit.pilotEject = {
+    startX: unit.x,
+    startY: unit.y,
+
+    endX: clamp(
+      unit.x + Math.cos(angle) * PILOT_EJECT_DISTANCE,
+      ROOM_LEFT + PILOT_RADIUS,
+      ROOM_RIGHT - PILOT_RADIUS
+    ),
+    endY: clamp(
+      unit.y + Math.sin(angle) * PILOT_EJECT_DISTANCE,
+      ROOM_TOP + PILOT_RADIUS,
+      ROOM_BOTTOM - PILOT_RADIUS
+    ),
+
+    time: 0,
+    duration: PILOT_EJECT_TIME
+  };
+
+
+
+  addExplosion(unit.x, unit.y);
+}
+
+function breakEmptyCannon(unit) {
+  startRepair(unit);
+  addExplosion(unit.x, unit.y);
+}
+
+
+function destroyCannonCompletely(unit, attacker) {
+  if (unit.cannonDestroyed) return;
+
+  unit.cannonDestroyed = true;
+  unit.wreckRepair = 0;
+  unit.wreckHp = 0;
+  unit.hp = 0;
+  unit.knockback = null;
+  unit.postEjectBrake = null;
+
+  addExplosion(unit.x, unit.y);
+
+  if (attacker && attacker !== unit) {
+    attacker.frags++;
+    addScore(attacker, 50);
+  }
+}
+
+function killPilot(victim, killer) {
+  if (victim.pilotImmunity > 0) return;
+  if (isPilotAirborne(victim)) return;
+
+  addStain(victim.pilotX, victim.pilotY, victim.color);
+
+  if (victim.isPlayer) {
+    addDeathOverlay();
+  }
+
+  if (killer && killer !== victim) {
+    killer.frags++;
+    addScore(killer, 100);
+  }
+
+  victim.pilotHp = 1;
+  victim.pilotImmunity = PILOT_IMMUNITY_TIME;
+
+  victim.pilotKnockback = null;
+  victim.pilotEject = null;
+
+  victim.pilotRadius = PILOT_RADIUS;
+  victim.pilotFlyState = "ground";
+  victim.pilotFlyTime = 0;
+  victim.pilotLastMoveVx = 0;
+  victim.pilotLastMoveVy = 0;
+
+  victim.pilotX = clamp(
+    victim.pilotX,
+    ROOM_LEFT + victim.pilotRadius,
+    ROOM_RIGHT - victim.pilotRadius
+  );
+
+  victim.pilotY = clamp(
+    victim.pilotY,
+    ROOM_TOP + victim.pilotRadius,
+    ROOM_BOTTOM - victim.pilotRadius
+  );
+
+  victim.state = "pilot";
+}
+
+function startKnockbackUnit(unit, nx, ny) {
+  unit.knockback = {
+    startX: unit.x,
+    startY: unit.y,
+
+    endX: unit.x + nx * KNOCKBACK_DISTANCE,
+    endY: unit.y + ny * KNOCKBACK_DISTANCE,
+
+    time: 0
+  };
+}
+
+function startPilotKnockback(unit, nx, ny) {
+  if (unit.pilotEject) return;
+
+  unit.pilotKnockback = {
+    startX: unit.pilotX,
+    startY: unit.pilotY,
+
+    endX: unit.pilotX + nx * 90,
+    endY: unit.pilotY + ny * 90,
+
+    time: 0,
+    duration: 0.35
+  };
+}
+
+function startCannonKnockback(a, b) {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+
+  const d = Math.hypot(dx, dy) || 1;
+
+  const nx = dx / d;
+  const ny = dy / d;
+
+  startKnockbackUnit(a, nx, ny);
+  startKnockbackUnit(b, -nx, -ny);
+
+  collisionLocks.add(pairKey(a, b));
+}
+
+function updateKnockback(unit, dt) {
+  if (!unit.knockback) return false;
+
+  unit.knockback.time += dt;
+
+  const t = Math.min(1, unit.knockback.time / KNOCKBACK_TIME);
+  const k = easeOutCubic(t);
+
+  unit.x =
+    unit.knockback.startX +
+    (unit.knockback.endX - unit.knockback.startX) * k;
+
+  unit.y =
+    unit.knockback.startY +
+    (unit.knockback.endY - unit.knockback.startY) * k;
+
+  clampToRoomPoint(unit, unit.radiusOuter);
+
+  if (t >= 1) {
+    unit.knockback = null;
+  }
+
+  return true;
+}
+
+function updatePilotKnockback(unit, dt) {
+  if (!unit.pilotKnockback) return false;
+
+  const oldX = unit.pilotX;
+  const oldY = unit.pilotY;
+
+  unit.pilotKnockback.time += dt;
+
+  const t = Math.min(
+    1,
+    unit.pilotKnockback.time / unit.pilotKnockback.duration
+  );
+
+  const k = easeOutCubic(t);
+
+  unit.pilotX =
+    unit.pilotKnockback.startX +
+    (unit.pilotKnockback.endX - unit.pilotKnockback.startX) * k;
+
+  unit.pilotY =
+    unit.pilotKnockback.startY +
+    (unit.pilotKnockback.endY - unit.pilotKnockback.startY) * k;
+
+  unit.pilotX = clamp(
+    unit.pilotX,
+    ROOM_LEFT + unit.pilotRadius,
+    ROOM_RIGHT - unit.pilotRadius
+  );
+
+  unit.pilotY = clamp(
+    unit.pilotY,
+    ROOM_TOP + unit.pilotRadius,
+    ROOM_BOTTOM - unit.pilotRadius
+  );
+
+  unit.pilotLastMoveVx =
+    (unit.pilotX - oldX) / Math.max(dt, 0.0001);
+  unit.pilotLastMoveVy =
+    (unit.pilotY - oldY) / Math.max(dt, 0.0001);
+
+  if (t >= 1) {
+    unit.pilotKnockback = null;
+  }
+
+  return true;
+}
+
+function updatePilotEject(unit, dt) {
+  if (!unit.pilotEject) return false;
+
+  const oldX = unit.pilotX;
+  const oldY = unit.pilotY;
+
+  unit.pilotEject.time += dt;
+
+  const t = Math.min(
+    1,
+    unit.pilotEject.time / unit.pilotEject.duration
+  );
+
+  const k = easeInOutSine(t);
+
+  unit.pilotX =
+    unit.pilotEject.startX +
+    (unit.pilotEject.endX - unit.pilotEject.startX) * k;
+
+  unit.pilotY =
+    unit.pilotEject.startY +
+    (unit.pilotEject.endY - unit.pilotEject.startY) * k;
+
+  unit.pilotX = clamp(
+    unit.pilotX,
+    ROOM_LEFT + unit.pilotRadius,
+    ROOM_RIGHT - unit.pilotRadius
+  );
+
+  unit.pilotY = clamp(
+    unit.pilotY,
+    ROOM_TOP + unit.pilotRadius,
+    ROOM_BOTTOM - unit.pilotRadius
+  );
+
+  const arc = Math.sin(Math.PI * t);
+
+  unit.pilotRadius =
+    PILOT_RADIUS +
+    arc * (PILOT_EJECT_PEAK_RADIUS - PILOT_RADIUS);
+
+  unit.pilotLastMoveVx =
+    (unit.pilotX - oldX) / Math.max(dt, 0.0001);
+  unit.pilotLastMoveVy =
+    (unit.pilotY - oldY) / Math.max(dt, 0.0001);
+
+  if (t >= 1) {
+    unit.pilotEject = null;
+    unit.pilotRadius = PILOT_RADIUS;
+  }
+
+  return true;
+}
+
+function updateHealthRegen(unit, dt) {
+  if (unit.wreckRepair > 0) return;
+  if (unit.hp <= 0) return;
+  if (unit.hp >= unit.maxHp) return;
+
+  unit.hp = Math.min(
+    unit.maxHp,
+    unit.hp + HP_REGEN_PER_SECOND * dt
+  );
+}
+
+function updateRearSmoke(dt) {
+  for (const unit of units) {
+    if (unit.state === "alive") {
+      unit.rearSmokeTimer -= dt;
+
+      if (unit.rearSmokeTimer <= 0) {
+        addRearSmoke(unit);
+        unit.rearSmokeTimer = 0.12;
+      }
+    }
+  }
+}
+
+function updateTurrets(dt) {
+  if (player.state === "alive") {
+    if (mouse.active) {
+      const target = screenToWorld(mouse.x, mouse.y);
+      player.turretAngle = angleToTarget(player, target);
+    } else {
+      player.turretAngle = player.moveAngle;
+    }
+  }
+
+  for (const unit of units) {
+    if (!unit.isPlayer && unit.state === "alive") {
+      unit.aiTargetTimer -= dt;
+
+      if (
+        !unit.aiTarget ||
+        unit.aiTargetTimer <= 0
+      ) {
+        chooseBotTarget(unit);
+      }
+
+      if (unit.aiTarget) {
+        const target =
+          getActivePoint(unit.aiTarget);
+
+        unit.turretAngle =
+          angleToTarget(unit, target);
+      }
+    }
+  }
+}
+
+function updateWreckRepair(unit, dt) {
+  if (unit.cannonDestroyed) return;
+  if (unit.state !== "pilot") return;
+
+  if (unit.wreckRepair > 0) {
+    unit.hp = Math.min(
+      unit.maxHp,
+      unit.hp + (unit.maxHp / WRECK_REPAIR_TIME) * dt
+    );
+
+    unit.wreckRepair =
+      WRECK_REPAIR_TIME *
+      (1 - clamp(unit.hp / unit.maxHp, 0, 1));
+
+    unit.smokeTimer -= dt;
+
+    if (unit.smokeTimer <= 0) {
+      addSmoke(unit.x, unit.y);
+      unit.smokeTimer = 0.18;
+    }
+
+    if (unit.hp >= unit.maxHp) {
+      unit.wreckRepair = 0;
+      unit.hp = unit.maxHp;
+      unit.turretAngle = unit.repairAngle;
+    }
+  }
+}
+
+function tryEnterRepairedCannon(unit) {
+  if (unit.isCannonOnly) return;
+  if (unit.state !== "pilot") return;
+  if (unit.pilotEject) return;
+  if (isPilotAirborne(unit)) return;
+
+  let targetCannon = null;
+  let bestD = Infinity;
+
+  for (const cannon of units) {
+    if (cannon.cannonDestroyed) continue;
+    if (cannon.cannonDestroyed) continue;
+    if (cannon.state !== "pilot") continue;
+    if (cannon.wreckRepair > 0) continue;
+    if (cannon.hp <= 0) continue;
+
+    const d = Math.hypot(
+      unit.pilotX - cannon.x,
+      unit.pilotY - cannon.y
+    );
+
+    if (
+      d <= cannon.radiusOuter + unit.pilotRadius + 6 &&
+      d < bestD
+    ) {
+      targetCannon = cannon;
+      bestD = d;
+    }
+  }
+
+  if (!targetCannon) return;
+
+  if (!canEnterCannon(unit, targetCannon)) {
+    if (unit.isPlayer) {
+      addHint(
+        "DOUBLEGUN REQUIRES " +
+          DOUBLEGUN_SCORE_REQUIREMENT +
+          " SCORE"
+      );
+    }
+
+    const dx = unit.pilotX - targetCannon.x;
+    const dy = unit.pilotY - targetCannon.y;
+    const d = Math.hypot(dx, dy);
+    const fallbackAngle = Math.random() * Math.PI * 2;
+    const nx = d > 0 ? dx / d : Math.cos(fallbackAngle);
+    const ny = d > 0 ? dy / d : Math.sin(fallbackAngle);
+
+    if (!unit.pilotKnockback) {
+      startPilotKnockback(unit, nx, ny);
+    }
+
+    return;
+  }
+
+  const oldBody = {
+    x: unit.x,
+    y: unit.y,
+    radiusOuter: unit.radiusOuter,
+    radiusInner: unit.radiusInner,
+    moveAngle: unit.moveAngle,
+    turretAngle: unit.turretAngle,
+    repairAngle: unit.repairAngle,
+    repairSpinDir: unit.repairSpinDir,
+    hp: unit.hp,
+    maxHp: unit.maxHp,
+    ammo: unit.ammo,
+    gunType: unit.gunType,
+    damageMultiplier: unit.damageMultiplier,
+    wreckRepair: unit.wreckRepair,
+    wreckHp: unit.wreckHp,
+    cannonDestroyed: unit.cannonDestroyed
+  };
+
+  const newBody = {
+    x: targetCannon.x,
+    y: targetCannon.y,
+    radiusOuter: targetCannon.radiusOuter,
+    radiusInner: targetCannon.radiusInner,
+    moveAngle: targetCannon.moveAngle,
+    turretAngle: targetCannon.turretAngle,
+    repairAngle: targetCannon.repairAngle,
+    repairSpinDir: targetCannon.repairSpinDir,
+    hp: targetCannon.hp,
+    maxHp: targetCannon.maxHp,
+    ammo: targetCannon.ammo,
+    gunType: targetCannon.gunType,
+    damageMultiplier: targetCannon.damageMultiplier,
+    wreckRepair: targetCannon.wreckRepair,
+    wreckHp: targetCannon.wreckHp,
+    cannonDestroyed: targetCannon.cannonDestroyed
+  };
+
+  unit.x = newBody.x;
+  unit.y = newBody.y;
+  unit.radiusOuter = newBody.radiusOuter;
+  unit.radiusInner = newBody.radiusInner;
+  unit.moveAngle = newBody.moveAngle;
+  unit.turretAngle = newBody.turretAngle;
+  unit.repairAngle = newBody.repairAngle;
+  unit.repairSpinDir = newBody.repairSpinDir;
+  unit.hp = Math.max(1, newBody.hp);
+  unit.maxHp = newBody.maxHp;
+  unit.gunType = newBody.gunType;
+  unit.damageMultiplier = newBody.damageMultiplier;
+  unit.ammo = Math.min(getMaxAmmo(unit), Math.max(newBody.ammo, 10));
+  unit.wreckRepair = 0;
+  unit.wreckHp = 0;
+  unit.cannonDestroyed = false;
+
+  unit.state = "alive";
+  unit.knockback = null;
+  unit.pilotKnockback = null;
+  unit.pilotEject = null;
+  unit.pilotImmunity = 0;
+  unit.pilotRadius = PILOT_RADIUS;
+  unit.pilotFlyState = "ground";
+  unit.pilotFlyTime = 0;
+
+  if (targetCannon !== unit) {
+    targetCannon.x = oldBody.x;
+    targetCannon.y = oldBody.y;
+    targetCannon.radiusOuter = oldBody.radiusOuter;
+    targetCannon.radiusInner = oldBody.radiusInner;
+    targetCannon.moveAngle = oldBody.moveAngle;
+    targetCannon.turretAngle = oldBody.turretAngle;
+    targetCannon.repairAngle = oldBody.repairAngle;
+    targetCannon.repairSpinDir = oldBody.repairSpinDir;
+    targetCannon.hp = Math.max(1, oldBody.hp);
+    targetCannon.maxHp = oldBody.maxHp;
+    targetCannon.ammo = oldBody.ammo;
+    targetCannon.gunType = oldBody.gunType;
+    targetCannon.damageMultiplier = oldBody.damageMultiplier;
+    targetCannon.wreckRepair = oldBody.wreckRepair;
+    targetCannon.wreckHp = oldBody.wreckHp;
+    targetCannon.cannonDestroyed = oldBody.cannonDestroyed;
+    targetCannon.state = "pilot";
+    targetCannon.knockback = null;
+  }
+
+  if (!unit.isPlayer) {
+    unit.aiTimer = 0;
+    unit.aiTargetTimer = 0;
+    unit.aiBurstShots = 0;
+    unit.aiBurstPause = randomRange(0.4, 1.0);
+  }
+}
+
+function updateAmmoPickup() {
+  for (let i = ammoPacks.length - 1; i >= 0; i--) {
+    const pack = ammoPacks[i];
+
+    let picked = false;
+
+    for (const unit of units) {
+      if (
+        unit.state === "alive" &&
+        unit.ammo < getMaxAmmo(unit) &&
+        distance(unit, pack) <=
+          unit.radiusOuter + pack.radius
+      ) {
+        unit.ammo = Math.min(
+          getMaxAmmo(unit),
+          unit.ammo + pack.value
+        );
+
+        ammoPacks.splice(i, 1);
+
+        addScore(unit, 40);
+
+        picked = true;
+        break;
+      }
+    }
+
+    if (picked) continue;
+  }
+}
+
+function updateAmmoPacks(dt) {
+  for (let i = ammoPacks.length - 1; i >= 0; i--) {
+    const pack = ammoPacks[i];
+
+    pack.time += dt;
+
+    if (pack.time >= AMMO_PACK_LIFE_TIME + AMMO_PACK_FADE_TIME) {
+      ammoPacks.splice(i, 1);
+    }
+  }
+}
+
+function updateAmmoSpawning(dt) {
+  ammoSpawnTimer -= dt;
+
+  if (ammoSpawnTimer <= 0) {
+    spawnAmmoPack();
+
+    ammoSpawnTimer = 4 + Math.random() * 3;
+  }
+}
+
+function updateCannonCollisions() {
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const a = units[i];
+      const b = units[j];
+
+      if (a.cannonDestroyed || b.cannonDestroyed) continue;
+
+      const key = pairKey(a, b);
+
+      const d = distance(a, b);
+
+      const minDistance =
+        a.radiusOuter + b.radiusOuter;
+
+      if (
+        d <= minDistance &&
+        !collisionLocks.has(key) &&
+        !a.knockback &&
+        !b.knockback
+      ) {
+        startCannonKnockback(a, b);
+      }
+
+      if (
+        d > minDistance + 20 &&
+        !a.knockback &&
+        !b.knockback
+      ) {
+        collisionLocks.delete(key);
+      }
+    }
+  }
+}
+
+function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
+  if (pilotUnit.isCannonOnly) return;
+  if (pilotUnit.state !== "pilot") return;
+  if (pilotUnit.pilotEject) return;
+  if (isPilotAirborne(pilotUnit)) return;
+  if (otherUnit.cannonDestroyed) return;
+
+  const d = Math.hypot(
+    pilotUnit.pilotX - otherUnit.x,
+    pilotUnit.pilotY - otherUnit.y
+  );
+
+  const minD =
+    pilotUnit.pilotRadius + otherUnit.radiusOuter;
+
+  if (d > minD) return;
+
+  const nx =
+    (pilotUnit.pilotX - otherUnit.x) /
+    (d || 1);
+
+  const ny =
+    (pilotUnit.pilotY - otherUnit.y) /
+    (d || 1);
+
+  // Free repaired cannon -> enter if allowed.
+  const isFreeRepairedCannon =
+    otherUnit.state === "pilot" &&
+    otherUnit.wreckRepair <= 0 &&
+    otherUnit.hp > 0;
+
+  if (isFreeRepairedCannon) {
+    tryEnterRepairedCannon(pilotUnit);
+    return;
+  }
+
+  // Broken cannon -> always bounce, never kill.
+  if (
+    otherUnit.state === "pilot" &&
+    otherUnit.wreckRepair > 0
+  ) {
+    if (!pilotUnit.pilotKnockback) {
+      startPilotKnockback(pilotUnit, nx, ny);
+    }
+
+    return;
+  }
+
+  // Any other empty cannon state -> bounce only.
+  if (otherUnit.state === "pilot") {
+    if (!pilotUnit.pilotKnockback) {
+      startPilotKnockback(pilotUnit, nx, ny);
+    }
+
+    return;
+  }
+}
+
+function updatePilotRunover(cannonUnit, pilotUnit) {
+  if (cannonUnit.cannonDestroyed) return;
+  if (cannonUnit.isCannonOnly) return;
+  if (pilotUnit.isCannonOnly) return;
+  if (isPilotAirborne(pilotUnit)) return;
+
+  // Only occupied/active cannon can kill by contact.
+  if (cannonUnit.state !== "alive") return;
+  if (pilotUnit.state !== "pilot") return;
+  if (pilotUnit.pilotEject) return;
+  if (pilotUnit.pilotImmunity > 0) return;
+
+  const d = Math.hypot(
+    cannonUnit.x - pilotUnit.pilotX,
+    cannonUnit.y - pilotUnit.pilotY
+  );
+
+  if (
+    d <=
+    cannonUnit.radiusOuter +
+      pilotUnit.pilotRadius
+  ) {
+    killPilot(pilotUnit, cannonUnit);
+  }
+}
+
+function updateBullets(dt) {
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bullet = bullets[i];
+
+    bullet.x += bullet.vx * dt;
+    bullet.y += bullet.vy * dt;
+
+    bullet.life -= dt;
+
+    let removed = false;
+
+    if (isOutsideRoom(bullet.x, bullet.y, bullet.radius)) {
+      bullets.splice(i, 1);
+      continue;
+    }
+
+    for (const target of units) {
+      if (target === bullet.owner) continue;
+
+      if (target.state === "alive") {
+        const d = Math.hypot(
+          bullet.x - target.x,
+          bullet.y - target.y
+        );
+
+        if (
+          d <= target.radiusOuter + bullet.radius
+        ) {
+          target.hp = Math.max(0, target.hp - bullet.damage);
+          addScore(bullet.owner, 30);
+
+          bullets.splice(i, 1);
+
+          removed = true;
+
+          if (target.hp <= 0) {
+            destroyCannon(target);
+            addScore(bullet.owner, 50);
+          }
+
+          break;
+        }
+      }
+
+      if (target.state === "pilot") {
+        if (isPilotAirborne(target)) {
+          continue;
+        }
+
+        const pilotD = Math.hypot(
+          bullet.x - target.pilotX,
+          bullet.y - target.pilotY
+        );
+
+        if (
+          !target.isCannonOnly &&
+          pilotD <=
+          target.pilotRadius + bullet.radius
+        ) {
+          addScore(bullet.owner, 30);
+
+          if (
+            !target.pilotEject &&
+            target.pilotImmunity <= 0
+          ) {
+            killPilot(target, bullet.owner);
+          }
+
+          bullets.splice(i, 1);
+
+          removed = true;
+          break;
+        }
+
+        if (!target.cannonDestroyed) {
+          const cannonD = Math.hypot(
+            bullet.x - target.x,
+            bullet.y - target.y
+          );
+
+          if (
+            cannonD <=
+            target.radiusOuter + bullet.radius
+          ) {
+            if (target.wreckRepair > 0) {
+              target.hp = Math.max(
+                0,
+                target.hp - bullet.damage
+              );
+              addScore(bullet.owner, 30);
+
+              target.wreckRepair =
+                WRECK_REPAIR_TIME *
+                (1 - clamp(target.hp / target.maxHp, 0, 1));
+
+              bullets.splice(i, 1);
+
+              removed = true;
+
+              break;
+            }
+
+            if (target.wreckRepair <= 0) {
+              target.hp = Math.max(0, target.hp - bullet.damage);
+              addScore(bullet.owner, 30);
+
+              bullets.splice(i, 1);
+
+              removed = true;
+
+              if (target.hp <= 0) {
+                breakEmptyCannon(target);
+                addScore(bullet.owner, 50);
+              }
+
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (removed) continue;
+
+    if (bullet.life <= 0) {
+      bullets.splice(i, 1);
+    }
+  }
+}
+
+function getBotCombatRange(bot) {
+  return bot.gunType === "doublegun"
+    ? { ideal: 390, min: 210, max: 760 }
+    : { ideal: 560, min: 280, max: 980 };
+}
+
+function getInterceptPoint(shooter, targetUnit, bulletSpeed) {
+  const target = getActivePoint(targetUnit);
+  const velocity = getActiveVelocity(targetUnit);
+
+  const rx = target.x - shooter.x;
+  const ry = target.y - shooter.y;
+  const vx = velocity.x;
+  const vy = velocity.y;
+
+  const a = vx * vx + vy * vy - bulletSpeed * bulletSpeed;
+  const b = 2 * (rx * vx + ry * vy);
+  const c = rx * rx + ry * ry;
+
+  let t = 0;
+
+  if (Math.abs(a) < 0.0001) {
+    t = Math.abs(b) > 0.0001 ? -c / b : 0;
+  } else {
+    const disc = b * b - 4 * a * c;
+
+    if (disc >= 0) {
+      const root = Math.sqrt(disc);
+      const t1 = (-b - root) / (2 * a);
+      const t2 = (-b + root) / (2 * a);
+      const valid = [t1, t2].filter(v => v > 0);
+
+      if (valid.length > 0) {
+        t = Math.min(...valid);
+      }
+    }
+  }
+
+  t = clamp(t, 0, 1.55);
+
+  return {
+    x: target.x + velocity.x * t,
+    y: target.y + velocity.y * t,
+    time: t
+  };
+}
+
+function getBotAimSolution(bot, targetUnit) {
+  const target = getActivePoint(targetUnit);
+  const intercept = getInterceptPoint(
+    bot,
+    targetUnit,
+    BULLET_SPEED
+  );
+
+  const d = distance(bot, target);
+  const velocity = getActiveVelocity(targetUnit);
+  const targetSpeed = Math.hypot(velocity.x, velocity.y);
+  const ranges = getBotCombatRange(bot);
+
+  let confidence = 1;
+
+  confidence -= clamp((d - ranges.ideal) / 1050, 0, 0.36);
+  confidence -= clamp((targetSpeed - 100) / 820, 0, 0.22);
+
+  if (targetUnit.state === "pilot") {
+    confidence += 0.13;
+  }
+
+  if (targetUnit.pilotImmunity > 0 || targetUnit.pilotEject) {
+    confidence -= 0.36;
+  }
+
+  if (bot.gunType === "doublegun") {
+    confidence += 0.08;
+  }
+
+  return {
+    angle: angleToTarget(bot, intercept),
+    distance: d,
+    confidence: clamp(confidence, 0, 1)
+  };
+}
+
+function botCanHopeToHit(bot, solution) {
+  if (bot.state !== "alive") return false;
+  if (bot.ammo <= 0) return false;
+  if (!solution) return false;
+
+  return (
+    solution.distance <= BOT_MAX_SHOOT_DISTANCE &&
+    solution.confidence >= BOT_MIN_SHOT_CONFIDENCE
+  );
+}
+
+function updateBotShooting(bot, dt) {
+  bot.fireCooldown -= dt;
+  bot.aiBurstPause = Math.max(0, bot.aiBurstPause - dt);
+
+  const maxAmmo = getMaxAmmo(bot);
+  const lowAmmo =
+    bot.ammo <= Math.max(2, Math.floor(maxAmmo * 0.10));
+
+  if (lowAmmo && ammoPacks.length > 0) {
+    bot.aiMode = "ammo";
+    return;
+  }
+
+  if (
+    !bot.aiTarget ||
+    bot.aiTargetTimer <= 0 ||
+    bot.aiTarget === bot
+  ) {
+    chooseBotTarget(bot);
+  }
+
+  if (!bot.aiTarget) return;
+
+  const solution =
+    getBotAimSolution(bot, bot.aiTarget);
+
+  bot.turretAngle =
+    rotateTowardAngle(
+      bot.turretAngle,
+      solution.angle,
+      BOT_TURRET_TURN_SPEED * dt
+    );
+
+  const aimError =
+    Math.abs(angleDelta(bot.turretAngle, solution.angle));
+
+  const maxAimError =
+    bot.gunType === "doublegun" ? 0.18 : 0.12;
+
+  if (
+    bot.ammo > 0 &&
+    bot.fireCooldown <= 0 &&
+    bot.aiBurstPause <= 0 &&
+    aimError <= maxAimError &&
+    botCanHopeToHit(bot, solution)
+  ) {
+    if (bot.aiBurstShots <= 0) {
+      bot.aiBurstShots =
+        bot.gunType === "doublegun"
+          ? Math.floor(randomRange(2, 5))
+          : Math.floor(randomRange(1, 4));
+    }
+
+    const spread =
+      randomRange(-0.02, 0.02) +
+      randomRange(-0.095, 0.095) *
+        (1 - solution.confidence);
+
+    fireBullet(
+      bot,
+      bot.turretAngle + spread
+    );
+
+    bot.fireCooldown =
+      bot.gunType === "doublegun"
+        ? randomRange(0.08, 0.14)
+        : randomRange(0.12, 0.22);
+
+    bot.aiBurstShots--;
+
+    if (bot.aiBurstShots <= 0) {
+      bot.aiBurstPause =
+        bot.gunType === "doublegun"
+          ? randomRange(0.35, 0.75)
+          : randomRange(0.48, 1.05);
+    }
+  }
+}
+
+function getNearestFreeCannonForPilot(unit) {
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const cannon of units) {
+    if (cannon.cannonDestroyed) continue;
+    if (cannon.state !== "pilot") continue;
+    if (cannon.wreckRepair > 0) continue;
+    if (cannon.hp <= 0) continue;
+    if (!canEnterCannon(unit, cannon)) continue;
+
+    const d = Math.hypot(
+      unit.pilotX - cannon.x,
+      unit.pilotY - cannon.y
+    );
+
+    let score = d;
+
+    if (!unit.isPlayer && cannon.gunType === "doublegun") {
+      score -= 420;
+    }
+
+    if (!unit.isPlayer && unit.gunType === "doublegun" && cannon.gunType !== "doublegun") {
+      score += 160;
+    }
+
+    if (score < bestScore) {
+      best = cannon;
+      bestScore = score;
+    }
+  }
+
+  return best;
+}
+
+function moveBotPilotTowardSafely(bot, target, dt, stopDistance = 0) {
+  const dx = target.x - bot.pilotX;
+  const dy = target.y - bot.pilotY;
+  const targetDistance = Math.hypot(dx, dy);
+
+  if (targetDistance <= stopDistance) {
+    bot.pilotLastMoveVx = 0;
+    bot.pilotLastMoveVy = 0;
+    return;
+  }
+
+  const oldX = bot.pilotX;
+  const oldY = bot.pilotY;
+
+  let vx = dx / (targetDistance || 1);
+  let vy = dy / (targetDistance || 1);
+
+  for (const enemy of getEnemies(bot)) {
+    if (enemy.state !== "alive") continue;
+    if (enemy.cannonDestroyed) continue;
+
+    const awayX = bot.pilotX - enemy.x;
+    const awayY = bot.pilotY - enemy.y;
+    const d = Math.hypot(awayX, awayY) || 1;
+    const dangerRadius = 300;
+
+    if (d < dangerRadius) {
+      const danger =
+        (dangerRadius - d) / dangerRadius;
+      const panic =
+        d < enemy.radiusOuter + bot.pilotRadius + 70
+          ? 3.3
+          : 2.0;
+
+      vx += (awayX / d) * danger * panic;
+      vy += (awayY / d) * danger * panic;
+    }
+  }
+
+  const len = Math.hypot(vx, vy);
+
+  if (len <= 0.001) return;
+
+  const step =
+    Math.min(bot.pilotSpeed * dt, targetDistance - stopDistance);
+
+  bot.pilotX += (vx / len) * step;
+  bot.pilotY += (vy / len) * step;
+
+  clampPilotToRoom(bot);
+
+  bot.pilotLastMoveVx =
+    (bot.pilotX - oldX) / Math.max(dt, 0.0001);
+  bot.pilotLastMoveVy =
+    (bot.pilotY - oldY) / Math.max(dt, 0.0001);
+}
+
+function updateBotPilotMovement(bot, dt) {
+  if (bot.pilotKnockback || bot.pilotEject) return;
+
+  const oldX = bot.pilotX;
+  const oldY = bot.pilotY;
+
+  const freeCannon = getNearestFreeCannonForPilot(bot);
+
+  if (freeCannon) {
+    moveBotPilotTowardSafely(
+      bot,
+      { x: freeCannon.x, y: freeCannon.y },
+      dt
+    );
+
+    return;
+  }
+
+  const enemy = getNearestEnemy(bot);
+  const enemyPoint = getActivePoint(enemy);
+
+  const toEnemyX =
+    bot.pilotX - enemyPoint.x;
+
+  const toEnemyY =
+    bot.pilotY - enemyPoint.y;
+
+  const enemyDistance =
+    Math.hypot(toEnemyX, toEnemyY) || 1;
+
+  const toWreckX = bot.x - bot.pilotX;
+  const toWreckY = bot.y - bot.pilotY;
+
+  const wreckDistance =
+    Math.hypot(toWreckX, toWreckY) || 1;
+
+  let vx = 0;
+  let vy = 0;
+
+  vx += (toEnemyX / enemyDistance) * 1.8;
+  vy += (toEnemyY / enemyDistance) * 1.8;
+
+  if (wreckDistance > 180) {
+    vx += (toWreckX / wreckDistance) * 1.4;
+    vy += (toWreckY / wreckDistance) * 1.4;
+  }
+
+  if (wreckDistance < 70) {
+    vx -= (toWreckX / wreckDistance) * 1.1;
+    vy -= (toWreckY / wreckDistance) * 1.1;
+  }
+
+  const len = Math.hypot(vx, vy);
+
+  if (len > 0.001) {
+    bot.pilotX +=
+      (vx / len) * bot.pilotSpeed * dt;
+
+    bot.pilotY +=
+      (vy / len) * bot.pilotSpeed * dt;
+  } else {
+    const a = performance.now() * 0.001 + bot.id.length;
+    bot.pilotX += Math.cos(a) * bot.pilotSpeed * 0.35 * dt;
+    bot.pilotY += Math.sin(a) * bot.pilotSpeed * 0.35 * dt;
+  }
+
+  clampPilotToRoom(bot);
+
+  bot.pilotLastMoveVx =
+    (bot.pilotX - oldX) / Math.max(dt, 0.0001);
+  bot.pilotLastMoveVy =
+    (bot.pilotY - oldY) / Math.max(dt, 0.0001);
+}
+
+function startPlayerExitEject() {
+  if (player.state !== "alive") return;
+
+  const target = mouse.active
+    ? screenToWorld(mouse.x, mouse.y)
+    : { x: player.x + Math.cos(player.moveAngle), y: player.y + Math.sin(player.moveAngle) };
+
+  const dx = target.x - player.x;
+  const dy = target.y - player.y;
+  const d = Math.hypot(dx, dy) || 1;
+
+  const speedFactor = player.slowdownRadius > 0
+    ? clamp(
+        (d - player.stopRadius) /
+          Math.max(1, player.slowdownRadius - player.stopRadius),
+        0,
+        1
+      )
+    : 1;
+
+  let driftAngle = player.moveAngle || player.turretAngle || 0;
+  let driftSpeed = player.speed * speedFactor;
+
+  if (keys.space) {
+    driftAngle = Math.atan2(player.y - target.y, player.x - target.x);
+  } else if (mouse.active && d > player.stopRadius) {
+    driftAngle = Math.atan2(dy, dx);
+  }
+
+  player.postEjectBrake = {
+    angle: driftAngle,
+    speed: driftSpeed
+  };
+
+  finishPlayerExitEject();
+}
+
+function finishPlayerExitEject() {
+  if (player.state !== "alive") return;
+
+  const moveSpeed =
+    Math.hypot(player.lastMoveVx || 0, player.lastMoveVy || 0);
+
+  const angle =
+    moveSpeed > 8
+      ? Math.atan2(player.lastMoveVy, player.lastMoveVx)
+      : (player.turretAngle || player.moveAngle || 0);
+
+  player.state = "pilot";
+
+  player.exitRequested = false;
+  player.exitStopTimer = 0;
+
+  player.knockback = null;
+
+  player.pilotX = player.x;
+  player.pilotY = player.y;
+
+  player.pilotHp = 1;
+  player.pilotImmunity = 0;
+
+  player.pilotKnockback = null;
+
+  player.pilotRadius = PILOT_RADIUS;
+  player.pilotFlyState = "ground";
+  player.pilotFlyTime = 0;
+
+  player.pilotEject = {
+    startX: player.x,
+    startY: player.y,
+
+    endX:
+      clamp(
+        player.x +
+          Math.cos(angle + Math.PI) *
+            PILOT_EJECT_DISTANCE,
+        ROOM_LEFT + PILOT_RADIUS,
+        ROOM_RIGHT - PILOT_RADIUS
+      ),
+
+    endY:
+      clamp(
+        player.y +
+          Math.sin(angle + Math.PI) *
+            PILOT_EJECT_DISTANCE,
+        ROOM_TOP + PILOT_RADIUS,
+        ROOM_BOTTOM - PILOT_RADIUS
+      ),
+
+    time: 0,
+    duration: PILOT_EJECT_TIME
+  };
+
+
+}
+
+function updatePostEjectBrake(unit, dt) {
+  if (!unit.postEjectBrake) return;
+
+  const b = unit.postEjectBrake;
+
+  if (b.speed <= 0) {
+    unit.postEjectBrake = null;
+    return;
+  }
+
+  const vx = Math.cos(b.angle) * b.speed;
+  const vy = Math.sin(b.angle) * b.speed;
+
+  unit.x += vx * dt;
+  unit.y += vy * dt;
+
+  clampToRoomPoint(unit, unit.radiusOuter);
+
+  unit.lastMoveVx = vx;
+  unit.lastMoveVy = vy;
+
+  b.speed = Math.max(
+    0,
+    b.speed - unit.speed * 3.2 * dt
+  );
+
+  if (b.speed <= 0) {
+    unit.postEjectBrake = null;
+  }
+}
+
+function updatePlayer(dt) {
+  if (player.pilotImmunity > 0) {
+    player.pilotImmunity = Math.max(
+      0,
+      player.pilotImmunity - dt
+    );
+  }
+
+  if (player.state === "alive") {
+    if (keys.z) {
+      keys.z = false;
+      startPlayerExitEject();
+      return;
+    }
+
+    const inKnockback =
+      updateKnockback(player, dt);
+
+    if (!inKnockback && mouse.active) {
+      const target =
+        screenToWorld(mouse.x, mouse.y);
+
+      const oldX = player.x;
+      const oldY = player.y;
+
+      if (keys.space) {
+        moveAwayFrom(player, target, dt);
+      } else {
+        moveToward(player, target, dt, 0);
+      }
+
+      const dx = player.x - oldX;
+      const dy = player.y - oldY;
+
+      player.lastMoveVx = dx / Math.max(dt, 0.0001);
+      player.lastMoveVy = dy / Math.max(dt, 0.0001);
+
+      if (Math.hypot(dx, dy) > 0.01) {
+        player.moveAngle =
+          Math.atan2(dy, dx);
+      }
+    }
+
+    camera.x = player.x;
+    camera.y = player.y;
+
+    camera.scale +=
+      (CAMERA_BASE_SCALE - camera.scale) *
+      Math.min(1, dt * 8);
+
+    clampCamera();
+
+    return;
+  }
+
+  updateKnockback(player, dt);
+
+  const ejecting =
+    updatePilotEject(player, dt);
+
+  if (player.state === "pilot") {
+    updatePilotFly(player, dt);
+  }
+
+  if (player.pilotEject) {
+    const t = Math.min(
+      1,
+      player.pilotEject.time / player.pilotEject.duration
+    );
+
+    const arc = Math.sin(Math.PI * t);
+
+    camera.scale =
+      CAMERA_BASE_SCALE * (1 - arc * 0.18);
+  } else {
+    const flyAmount =
+      player.state === "pilot"
+        ? getPilotFlyAmount(player)
+        : 0;
+
+    const targetScale =
+      CAMERA_BASE_SCALE * (1 - flyAmount * 0.18);
+
+    camera.scale +=
+      (targetScale - camera.scale) *
+      Math.min(1, dt * 8);
+  }
+
+  if (player.state === "pilot") {
+    const pilotKnock =
+      isPilotAirborne(player)
+        ? false
+        : updatePilotKnockback(player, dt);
+
+    if (
+      !ejecting &&
+      !pilotKnock &&
+      mouse.active
+    ) {
+      const target =
+        screenToWorld(mouse.x, mouse.y);
+
+      movePilotToward(
+        player,
+        target,
+        dt,
+        PILOT_STOP_RADIUS
+      );
+    }
+
+    camera.x = player.pilotX;
+    camera.y = player.pilotY;
+
+    clampCamera();
+  }
+}
+
+function updateBot(bot, dt) {
+  if (bot.pilotImmunity > 0) {
+    bot.pilotImmunity = Math.max(
+      0,
+      bot.pilotImmunity - dt
+    );
+  }
+
+  if (bot.state === "alive") {
+    const inKnockback =
+      updateKnockback(bot, dt);
+
+    if (!inKnockback) {
+      bot.aiTimer -= dt;
+      bot.aiTargetTimer -= dt;
+
+      if (
+        bot.aiTargetTimer <= 0 ||
+        !bot.aiTarget
+      ) {
+        chooseBotTarget(bot);
+      }
+
+      if (bot.aiTimer <= 0) {
+        chooseBotMode(bot);
+      }
+
+      const maxAmmo = getMaxAmmo(bot);
+      const lowAmmo =
+        bot.ammo <= Math.max(4, Math.floor(maxAmmo * 0.22));
+
+      if (lowAmmo && ammoPacks.length > 0) {
+        bot.aiMode = "ammo";
+      }
+
+      let target;
+
+      if (bot.aiMode === "ammo") {
+        target =
+          getNearestAmmo(bot) ||
+          getActivePoint(
+            bot.aiTarget ||
+              getNearestEnemy(bot)
+          );
+      } else {
+        target = getActivePoint(
+          bot.aiTarget ||
+            getNearestEnemy(bot)
+        );
+      }
+
+      const oldX = bot.x;
+      const oldY = bot.y;
+
+      if (bot.aiMode === "ammo") {
+        moveToward(
+          bot,
+          target,
+          dt,
+          35
+        );
+      } else {
+        moveBotCombatCannon(
+          bot,
+          target,
+          dt
+        );
+      }
+
+      const dx = bot.x - oldX;
+      const dy = bot.y - oldY;
+
+      bot.lastMoveVx = dx / Math.max(dt, 0.0001);
+      bot.lastMoveVy = dy / Math.max(dt, 0.0001);
+
+      if (Math.hypot(dx, dy) > 0.01) {
+        bot.moveAngle =
+          Math.atan2(dy, dx);
+      }
+    }
+
+    updateBotShooting(bot, dt);
+
+    return;
+  }
+
+  updateKnockback(bot, dt);
+
+  const ejecting =
+    updatePilotEject(bot, dt);
+
+  if (bot.state === "pilot") {
+    const pilotKnock =
+      updatePilotKnockback(bot, dt);
+
+    if (!ejecting && !pilotKnock) {
+      updateBotPilotMovement(bot, dt);
+    }
+  }
+}
+
+function updatePlayerShooting(dt) {
+  if (player.state !== "alive") return;
+  if (player.exitRequested) return;
+
+  player.fireCooldown -= dt;
+
+  if (
+    mouse.down &&
+    mouse.active &&
+    player.fireCooldown <= 0
+  ) {
+    fireBullet(
+      player,
+      player.turretAngle
+    );
+
+    player.fireCooldown =
+      player.fireRate;
+  }
+}
+
+function updateEffects(dt) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    explosions[i].time += dt;
+
+    if (
+      explosions[i].time >=
+      explosions[i].life
+    ) {
+      explosions.splice(i, 1);
+    }
+  }
+
+  for (let i = smokePuffs.length - 1; i >= 0; i--) {
+    smokePuffs[i].time += dt;
+
+    if (
+      smokePuffs[i].time >=
+      smokePuffs[i].life
+    ) {
+      smokePuffs.splice(i, 1);
+    }
+  }
+
+  for (let i = rearSmokePuffs.length - 1; i >= 0; i--) {
+    const s = rearSmokePuffs[i];
+
+    s.time += dt;
+
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+
+    if (s.time >= s.life) {
+      rearSmokePuffs.splice(i, 1);
+    }
+  }
+
+  for (let i = trails.length - 1; i >= 0; i--) {
+    trails[i].time += dt;
+
+    if (trails[i].time >= trails[i].life) {
+      trails.splice(i, 1);
+    }
+  }
+
+  for (let i = stains.length - 1; i >= 0; i--) {
+    stains[i].time += dt;
+
+    if (stains[i].time >= stains[i].life) {
+      stains.splice(i, 1);
+    }
+  }
+
+  for (let i = deathOverlays.length - 1; i >= 0; i--) {
+    deathOverlays[i].time += dt;
+
+    if (deathOverlays[i].time >= deathOverlays[i].life) {
+      deathOverlays.splice(i, 1);
+    }
+  }
+
+  for (let i = hintMessages.length - 1; i >= 0; i--) {
+    hintMessages[i].time += dt;
+
+    if (hintMessages[i].time >= hintMessages[i].life) {
+      hintMessages.splice(i, 1);
+    }
+  }
+}
+
+function update(dt) {
+  if (
+    player.state !== "pilot" &&
+    player.pilotFlyState !== "ground"
+  ) {
+    player.pilotFlyState = "ground";
+    player.pilotFlyTime = 0;
+    player.pilotRadius = PILOT_RADIUS;
+  }
+
+  updateTurrets(dt);
+
+  updatePlayer(dt);
+
+  updateBot(bot1, dt);
+  updateBot(bot2, dt);
+
+  updateCannonCollisions();
+
+  for (const pilotUnit of units) {
+    for (const otherUnit of units) {
+      updatePilotWreckOrEnemyContact(
+        pilotUnit,
+        otherUnit
+      );
+    }
+  }
+
+  for (const cannonUnit of units) {
+    for (const pilotUnit of units) {
+      if (cannonUnit !== pilotUnit) {
+        updatePilotRunover(
+          cannonUnit,
+          pilotUnit
+        );
+      }
+    }
+  }
+
+  for (const unit of units) {
+    unit.recoilTime = Math.max(
+      0,
+      unit.recoilTime - dt
+    );
+
+    updatePostEjectBrake(unit, dt);
+    updateWreckRepair(unit, dt);
+    tryEnterRepairedCannon(unit);
+    updateHealthRegen(unit, dt);
+  }
+
+  updateRearSmoke(dt);
+  updateMovementTrails();
+
+  updatePlayerShooting(dt);
+
+  updateAmmoSpawning(dt);
+  updateAmmoPacks(dt);
+  updateAmmoPickup();
+
+  updateBullets(dt);
+
+  clampUnitsToRoom();
+
+  updateEffects(dt);
+}
+
+function drawGrid() {
+  ctx.fillStyle = "#223018";
+  ctx.fillRect(
+    0,
+    0,
+    window.innerWidth,
+    window.innerHeight
+  );
+
+  const topLeft = worldToScreen(ROOM_LEFT, ROOM_TOP);
+  const bottomRight = worldToScreen(ROOM_RIGHT, ROOM_BOTTOM);
+
+  const grad = ctx.createLinearGradient(
+    0,
+    topLeft.y,
+    0,
+    bottomRight.y
+  );
+
+  grad.addColorStop(0, LCD_BG_LIGHT);
+  grad.addColorStop(0.52, LCD_BG);
+  grad.addColorStop(1, LCD_BG_DARK);
+
+  ctx.fillStyle = grad;
+  ctx.fillRect(
+    topLeft.x,
+    topLeft.y,
+    bottomRight.x - topLeft.x,
+    bottomRight.y - topLeft.y
+  );
+
+  const left = ROOM_LEFT;
+  const top = ROOM_TOP;
+  const endX = ROOM_RIGHT;
+  const endY = ROOM_BOTTOM;
+
+  const startX =
+    Math.ceil(left / gridSize) *
+    gridSize;
+
+  const startY =
+    Math.ceil(top / gridSize) *
+    gridSize;
+
+  ctx.save();
+
+  ctx.beginPath();
+  ctx.rect(
+    topLeft.x,
+    topLeft.y,
+    bottomRight.x - topLeft.x,
+    bottomRight.y - topLeft.y
+  );
+  ctx.clip();
+
+  ctx.strokeStyle = "rgba(31, 43, 22, 0.08)";
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+
+  for (let x = startX; x <= endX; x += gridSize) {
+    const p1 = worldToScreen(x, ROOM_TOP);
+    const p2 = worldToScreen(x, ROOM_BOTTOM);
+
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+  }
+
+  for (let y = startY; y <= endY; y += gridSize) {
+    const p1 = worldToScreen(ROOM_LEFT, y);
+    const p2 = worldToScreen(ROOM_RIGHT, y);
+
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+  }
+
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(31, 43, 22, 0.14)";
+  ctx.lineWidth = 1;
+
+  const bigGrid = gridSize * 4;
+  const bigStartX = Math.ceil(left / bigGrid) * bigGrid;
+  const bigStartY = Math.ceil(top / bigGrid) * bigGrid;
+
+  ctx.beginPath();
+
+  for (let x = bigStartX; x <= endX; x += bigGrid) {
+    const p1 = worldToScreen(x, ROOM_TOP);
+    const p2 = worldToScreen(x, ROOM_BOTTOM);
+
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+  }
+
+  for (let y = bigStartY; y <= endY; y += bigGrid) {
+    const p1 = worldToScreen(ROOM_LEFT, y);
+    const p2 = worldToScreen(ROOM_RIGHT, y);
+
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+  }
+
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(31, 43, 22, 0.09)";
+
+  for (let x = startX; x <= endX; x += gridSize) {
+    for (let y = startY; y <= endY; y += gridSize) {
+      if (((Math.floor(x / gridSize) + Math.floor(y / gridSize)) % 4) === 0) {
+        const p = worldToScreen(x, y);
+
+        ctx.fillRect(
+          p.x - 1,
+          p.y - 1,
+          2,
+          2
+        );
+      }
+    }
+  }
+
+  ctx.restore();
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 10;
+  ctx.strokeRect(
+    topLeft.x,
+    topLeft.y,
+    bottomRight.x - topLeft.x,
+    bottomRight.y - topLeft.y
+  );
+
+  ctx.strokeStyle = LCD_BG_DARK;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(
+    topLeft.x + 8,
+    topLeft.y + 8,
+    bottomRight.x - topLeft.x - 16,
+    bottomRight.y - topLeft.y - 16
+  );
+}
+
+function drawHealthBar(unit) {
+  const p = worldToScreen(unit.x, unit.y);
+
+  const width = z(70);
+  const height = z(7);
+
+  const x = p.x - width / 2;
+  const y = p.y - z(62);
+
+  const ratio = clamp(unit.hp / unit.maxHp, 0, 1);
+
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.fillRect(x, y, width, height);
+
+  ctx.strokeStyle = CANNON_INK;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, height);
+
+  ctx.fillStyle = CANNON_INK;
+  ctx.fillRect(
+    x,
+    y,
+    width * ratio,
+    height
+  );
+
+  ctx.restore();
+}
+
+function drawAmmoText(unit) {
+  const p = worldToScreen(unit.x, unit.y);
+
+  ctx.fillStyle = unit.color;
+  ctx.font = "12px monospace";
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.fillText(
+    unit.ammo + "/" + getMaxAmmo(unit),
+    p.x,
+    p.y + z(68)
+  );
+}
+
+function getAmmoPackAlpha(pack) {
+  if (pack.time < AMMO_PACK_FADE_TIME) {
+    return clamp(pack.time / AMMO_PACK_FADE_TIME, 0, 1);
+  }
+
+  if (pack.time > AMMO_PACK_LIFE_TIME) {
+    return clamp(
+      1 -
+        (pack.time - AMMO_PACK_LIFE_TIME) /
+          AMMO_PACK_FADE_TIME,
+      0,
+      1
+    );
+  }
+
+  return 1;
+}
+
+function drawAmmoPacks() {
+  for (const pack of ammoPacks) {
+    const p = worldToScreen(pack.x, pack.y);
+    const alpha = getAmmoPackAlpha(pack);
+
+    if (alpha <= 0) continue;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    ctx.beginPath();
+    ctx.arc(
+      p.x,
+      p.y,
+      z(pack.radius),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fillStyle = LCD_BG_LIGHT;
+    ctx.fill();
+
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = LCD_INK;
+
+    ctx.font = "11px monospace";
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    ctx.fillText("+30", p.x, p.y);
+
+    ctx.restore();
+  }
+}
+
+function drawBullets() {
+  for (const bullet of bullets) {
+    const p = worldToScreen(
+      bullet.x,
+      bullet.y
+    );
+
+    ctx.fillStyle = bullet.color;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y,
+      z(bullet.radius),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fill();
+  }
+}
+
+function drawTrails() {
+  for (const tr of trails) {
+    const p = worldToScreen(tr.x, tr.y);
+
+    const t = tr.time / tr.life;
+
+    ctx.save();
+
+    ctx.globalAlpha = 0.18 * (1 - t);
+    ctx.fillStyle = tr.color;
+
+    ctx.beginPath();
+    ctx.arc(
+      p.x,
+      p.y,
+      z(tr.radius * (1 + t * 0.55)),
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+function drawStains() {
+  for (const grave of stains) {
+    const p = worldToScreen(
+      grave.x,
+      grave.y
+    );
+
+    const t =
+      grave.time / grave.life;
+
+    ctx.save();
+
+    ctx.globalAlpha =
+      0.9 * (1 - t);
+
+    ctx.fillStyle = LCD_INK;
+    ctx.strokeStyle = LCD_BG_LIGHT;
+    ctx.lineWidth = Math.max(1, z(1.5));
+
+    const w = z(18);
+    const h = z(24);
+
+    ctx.beginPath();
+    ctx.moveTo(p.x - w / 2, p.y + h / 2);
+    ctx.lineTo(p.x - w / 2, p.y - h / 4);
+    ctx.quadraticCurveTo(
+      p.x,
+      p.y - h / 2,
+      p.x + w / 2,
+      p.y - h / 4
+    );
+    ctx.lineTo(p.x + w / 2, p.y + h / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = LCD_BG;
+    ctx.lineWidth = Math.max(1, z(2));
+
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - z(6));
+    ctx.lineTo(p.x, p.y + z(7));
+    ctx.moveTo(p.x - z(6), p.y - z(1));
+    ctx.lineTo(p.x + z(6), p.y - z(1));
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+function drawCannonBody(unit, angle) {
+  const p = worldToScreen(unit.x, unit.y);
+
+  ctx.save();
+
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+
+  ctx.arc(
+    p.x,
+    p.y,
+    z(unit.radiusOuter),
+    0,
+    Math.PI * 2
+  );
+
+  ctx.arc(
+    p.x,
+    p.y,
+    z(unit.radiusInner + 16),
+    0,
+    Math.PI * 2,
+    true
+  );
+
+  ctx.fillStyle = CANNON_INK;
+  ctx.fill("evenodd");
+
+  ctx.save();
+
+  ctx.translate(p.x, p.y);
+  ctx.scale(camera.scale, camera.scale);
+
+  ctx.rotate(angle + Math.PI / 2);
+
+  const recoil =
+    unit.recoilTime > 0
+      ? Math.sin(
+          (unit.recoilTime / unit.recoilDuration) *
+            Math.PI
+        ) * 9
+      : 0;
+
+  ctx.fillStyle = CANNON_INK;
+
+  if (unit.gunType === "doublegun") {
+    ctx.fillRect(-16, -92 + recoil, 9, 104);
+    ctx.fillRect(7, -92 + recoil, 9, 104);
+
+    ctx.fillStyle = LCD_BG;
+
+    ctx.fillRect(-13, -92 + recoil, 3, 72);
+    ctx.fillRect(10, -92 + recoil, 3, 72);
+
+    ctx.fillStyle = CANNON_INK;
+
+    ctx.beginPath();
+    ctx.arc(-11.5, -92 + recoil, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(11.5, -92 + recoil, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillRect(-5, -85 + recoil, 10, 95);
+
+    ctx.fillStyle = LCD_BG;
+
+    ctx.fillRect(-2, -85 + recoil, 4, 62);
+  }
+
+  ctx.beginPath();
+  ctx.arc(0, 0, 28, 0, Math.PI * 2);
+  ctx.fillStyle = LCD_BG;
+  ctx.fill();
+
+  ctx.save();
+
+  ctx.rotate(
+    Math.sin(performance.now() * 0.003) * 0.25
+  );
+
+  ctx.fillStyle = CANNON_INK;
+
+  ctx.beginPath();
+  ctx.roundRect(-4, -14, 8, 28, 4);
+  ctx.fill();
+
+  ctx.restore();
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawCannon(unit, angle) {
+  drawCannonBody(unit, angle);
+
+  drawHealthBar(unit);
+  drawAmmoText(unit);
+}
+
+function drawWreck(unit) {
+  const angle =
+    unit.wreckRepair > 0
+      ? unit.repairAngle
+      : performance.now() * 0.00065;
+
+  drawCannonBody(unit, angle);
+
+  if (unit.wreckRepair > 0) {
+    const p = worldToScreen(
+      unit.x,
+      unit.y
+    );
+
+    const repairRatio = clamp(
+      1 -
+        unit.wreckRepair /
+          WRECK_REPAIR_TIME,
+      0,
+      1
+    );
+
+    ctx.fillStyle = LCD_BG_LIGHT;
+
+    ctx.fillRect(
+      p.x - z(35),
+      p.y - z(62),
+      z(70),
+      z(7)
+    );
+
+    ctx.strokeStyle = CANNON_INK;
+
+    ctx.strokeRect(
+      p.x - z(35),
+      p.y - z(62),
+      z(70),
+      z(7)
+    );
+
+    ctx.fillStyle = CANNON_INK;
+
+    ctx.fillRect(
+      p.x - z(35),
+      p.y - z(62),
+      z(70) * repairRatio,
+      z(7)
+    );
+  } else {
+    drawHealthBar(unit);
+  }
+}
+
+function drawParachute(unit, p) {
+  if (!unit.pilotEject) return;
+
+  const t = Math.min(
+    1,
+    unit.pilotEject.time / unit.pilotEject.duration
+  );
+
+  if (t <= 0.5) return;
+
+  const open = clamp((t - 0.5) / 0.18, 0, 1);
+  const s = camera.scale;
+
+  const px = p.x;
+  const py = p.y - z(26 + 10 * open);
+
+  ctx.save();
+
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = PILOT_INK;
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.lineWidth = Math.max(1, z(2));
+
+  ctx.beginPath();
+  ctx.arc(
+    px,
+    py,
+    z(18 * open),
+    Math.PI,
+    Math.PI * 2
+  );
+  ctx.lineTo(px + z(18 * open), py);
+  ctx.lineTo(px - z(18 * open), py);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(px - z(14 * open), py + z(2));
+  ctx.lineTo(p.x - z(5), p.y - z(8));
+  ctx.moveTo(px + z(14 * open), py + z(2));
+  ctx.lineTo(p.x + z(5), p.y - z(8));
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawPilot(unit) {
+  const p = worldToScreen(
+    unit.pilotX,
+    unit.pilotY
+  );
+
+  drawParachute(unit, p);
+
+  ctx.save();
+
+  if (unit.pilotImmunity > 0) {
+    ctx.globalAlpha = 0.22;
+  }
+
+  ctx.fillStyle = PILOT_INK;
+
+  ctx.beginPath();
+
+  ctx.arc(
+    p.x,
+    p.y,
+    unit.pilotRadius * camera.scale,
+    0,
+    Math.PI * 2
+  );
+
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawSmoke() {
+  for (const smoke of smokePuffs) {
+    const p = worldToScreen(
+      smoke.x,
+      smoke.y
+    );
+
+    const t =
+      smoke.time / smoke.life;
+
+    ctx.globalAlpha =
+      0.35 * (1 - t);
+
+    ctx.fillStyle = LCD_INK_2;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y - z(t * 58),
+      z(smoke.radius + t * 18),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fill();
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawRearSmoke() {
+  for (const smoke of rearSmokePuffs) {
+    const p = worldToScreen(
+      smoke.x,
+      smoke.y
+    );
+
+    const t =
+      smoke.time / smoke.life;
+
+    ctx.globalAlpha =
+      0.24 * (1 - t);
+
+    ctx.fillStyle = smoke.color;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y,
+      z(smoke.radius + t * 3),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fill();
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawExplosions() {
+  for (const ex of explosions) {
+    const p = worldToScreen(
+      ex.x,
+      ex.y
+    );
+
+    const t =
+      ex.time / ex.life;
+
+    const r =
+      20 + t * 60;
+
+    ctx.globalAlpha = 1 - t;
+
+    ctx.strokeStyle = LCD_INK;
+
+    ctx.lineWidth = 4;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y,
+      z(r),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.stroke();
+
+    ctx.beginPath();
+
+    ctx.arc(
+      p.x,
+      p.y,
+      z(r * 0.45),
+      0,
+      Math.PI * 2
+    );
+
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawScoreboard() {
+  ctx.save();
+
+  ctx.font = "14px monospace";
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  ctx.fillStyle = LCD_PANEL;
+
+  ctx.fillRect(12, 12, 170, 104);
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 1;
+
+  ctx.strokeRect(12, 12, 170, 104);
+
+  ctx.fillStyle = LCD_INK;
+  ctx.textAlign = "left";
+  ctx.fillText(
+    "PILOT",
+    24,
+    24
+  );
+
+  ctx.textAlign = "right";
+  ctx.fillText(
+    "SCORE",
+    170,
+    24
+  );
+
+  const sorted = units
+    .filter(unit => !unit.isCannonOnly)
+    .sort(
+    (a, b) => b.score - a.score
+  );
+
+  for (let i = 0; i < sorted.length; i++) {
+    const unit = sorted[i];
+    const rowY = 46 + i * 22;
+
+    ctx.fillStyle = unit.color;
+    ctx.textAlign = "left";
+    ctx.fillText(
+      unit.id,
+      24,
+      rowY
+    );
+
+    ctx.textAlign = "right";
+    ctx.fillText(
+      Math.floor(unit.score),
+      170,
+      rowY
+    );
+  }
+
+  ctx.restore();
+}
+
+function getNearestPilotlessCannon(fromUnit) {
+  let best = null;
+  let bestD = Infinity;
+
+  for (const cannon of units) {
+    if (cannon.cannonDestroyed) continue;
+    if (cannon.state !== "pilot") continue;
+
+    const d = Math.hypot(
+      fromUnit.pilotX - cannon.x,
+      fromUnit.pilotY - cannon.y
+    );
+
+    if (d < bestD) {
+      best = cannon;
+      bestD = d;
+    }
+  }
+
+  return best;
+}
+
+function drawPlayerCannonMarker() {
+  if (player.state !== "pilot") return;
+
+  const cannon = getNearestPilotlessCannon(player);
+  if (!cannon) return;
+
+  const p = worldToScreen(cannon.x, cannon.y);
+
+  if (
+    p.x >= 30 &&
+    p.x <= window.innerWidth - 30 &&
+    p.y >= 30 &&
+    p.y <= window.innerHeight - 30
+  ) {
+    return;
+  }
+
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+
+  let dx = p.x - cx;
+  let dy = p.y - cy;
+
+  if (
+    Math.abs(dx) < 0.001 &&
+    Math.abs(dy) < 0.001
+  ) {
+    dx = 1;
+  }
+
+  const margin = 24;
+  const scaleX =
+    dx === 0
+      ? Infinity
+      : (window.innerWidth / 2 - margin) / Math.abs(dx);
+
+  const scaleY =
+    dy === 0
+      ? Infinity
+      : (window.innerHeight / 2 - margin) / Math.abs(dy);
+
+  const scale = Math.min(scaleX, scaleY);
+  const mx = cx + dx * scale;
+  const my = cy + dy * scale;
+  const angle = Math.atan2(dy, dx);
+
+  ctx.save();
+  ctx.translate(mx, my);
+  ctx.rotate(angle);
+
+  ctx.fillStyle = cannon.color;
+  ctx.strokeStyle = LCD_BG_LIGHT;
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(14, 0);
+  ctx.lineTo(-8, -9);
+  ctx.lineTo(-4, 0);
+  ctx.lineTo(-8, 9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawLCDOverlay() {
+  ctx.save();
+
+  ctx.globalAlpha = 0.12;
+  ctx.fillStyle = LCD_INK;
+
+  for (let y = 0; y < window.innerHeight; y += 4) {
+    ctx.fillRect(0, y, window.innerWidth, 1);
+  }
+
+  // LCD frame removed.
+
+  // LCD vignette removed.
+
+  ctx.restore();
+}
+
+function drawDeathBlur() {
+  let blur = 0;
+
+  for (const overlay of deathOverlays) {
+    const t = clamp(overlay.time / overlay.life, 0, 1);
+    blur = Math.max(
+      blur,
+      7 * (1 - easeInOutSine(t) * 0.65)
+    );
+  }
+
+  if (blur <= 0) return;
+
+  if (
+    blurCanvas.width !== canvas.width ||
+    blurCanvas.height !== canvas.height
+  ) {
+    blurCanvas.width = canvas.width;
+    blurCanvas.height = canvas.height;
+  }
+
+  blurCtx.setTransform(1, 0, 0, 1, 0, 0);
+  blurCtx.clearRect(
+    0,
+    0,
+    blurCanvas.width,
+    blurCanvas.height
+  );
+  blurCtx.drawImage(canvas, 0, 0);
+
+  ctx.save();
+  ctx.filter = "blur(" + blur + "px)";
+  ctx.drawImage(
+    blurCanvas,
+    0,
+    0,
+    blurCanvas.width,
+    blurCanvas.height,
+    0,
+    0,
+    window.innerWidth,
+    window.innerHeight
+  );
+  ctx.restore();
+}
+
+function drawDeathOverlays() {
+  for (const overlay of deathOverlays) {
+    const t = overlay.time / overlay.life;
+    const alpha = 0.28 * (1 - t);
+
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const s = Math.min(window.innerWidth, window.innerHeight) * 0.42;
+
+    ctx.save();
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = LCD_INK;
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = Math.max(3, s * 0.035);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // crossed bones behind skull
+    ctx.save();
+    ctx.translate(cx, cy + s * 0.24);
+    ctx.rotate(-0.42);
+
+    ctx.fillRect(
+      -s * 0.55,
+      -s * 0.055,
+      s * 1.1,
+      s * 0.11
+    );
+
+    for (const x of [-s * 0.58, s * 0.58]) {
+      ctx.beginPath();
+      ctx.arc(x, -s * 0.055, s * 0.105, 0, Math.PI * 2);
+      ctx.arc(x, s * 0.055, s * 0.105, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(cx, cy + s * 0.24);
+    ctx.rotate(0.42);
+
+    ctx.fillRect(
+      -s * 0.55,
+      -s * 0.055,
+      s * 1.1,
+      s * 0.11
+    );
+
+    for (const x of [-s * 0.58, s * 0.58]) {
+      ctx.beginPath();
+      ctx.arc(x, -s * 0.055, s * 0.105, 0, Math.PI * 2);
+      ctx.arc(x, s * 0.055, s * 0.105, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+
+    // skull
+    ctx.beginPath();
+    ctx.arc(cx, cy - s * 0.18, s * 0.34, Math.PI, Math.PI * 2);
+    ctx.lineTo(cx + s * 0.31, cy + s * 0.18);
+    ctx.quadraticCurveTo(
+      cx + s * 0.19,
+      cy + s * 0.36,
+      cx,
+      cy + s * 0.36
+    );
+    ctx.quadraticCurveTo(
+      cx - s * 0.19,
+      cy + s * 0.36,
+      cx - s * 0.31,
+      cy + s * 0.18
+    );
+    ctx.closePath();
+    ctx.fill();
+
+    // eye holes and nose cut out
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillStyle = "rgba(0,0,0,1)";
+
+    ctx.beginPath();
+    ctx.arc(cx - s * 0.13, cy - s * 0.08, s * 0.075, 0, Math.PI * 2);
+    ctx.arc(cx + s * 0.13, cy - s * 0.08, s * 0.075, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + s * 0.02);
+    ctx.lineTo(cx - s * 0.055, cy + s * 0.14);
+    ctx.lineTo(cx + s * 0.055, cy + s * 0.14);
+    ctx.closePath();
+    ctx.fill();
+
+    // teeth cut lines
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = LCD_BG;
+    ctx.lineWidth = Math.max(2, s * 0.018);
+
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 0.16, cy + s * 0.23);
+    ctx.lineTo(cx + s * 0.16, cy + s * 0.23);
+    ctx.stroke();
+
+    for (const x of [-0.09, -0.03, 0.03, 0.09]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + s * x, cy + s * 0.19);
+      ctx.lineTo(cx + s * x, cy + s * 0.31);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawUnit(unit) {
+  if (unit.state === "alive") {
+    drawCannon(unit, unit.turretAngle);
+  } else {
+    if (!unit.cannonDestroyed) {
+      drawWreck(unit);
+    }
+
+    if (!unit.isCannonOnly) {
+      drawPilot(unit);
+    }
+  }
+}
+
+function drawPauseOverlay() {
+  if (!paused) return;
+
+  ctx.save();
+
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.fillRect(
+    0,
+    0,
+    window.innerWidth,
+    window.innerHeight
+  );
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font =
+    "bold " +
+    Math.floor(
+      Math.min(window.innerWidth, window.innerHeight) * 0.12
+    ) +
+    "px monospace";
+
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 6;
+
+  ctx.strokeText(
+    "PAUSED",
+    window.innerWidth / 2,
+    window.innerHeight / 2
+  );
+
+  ctx.fillText(
+    "PAUSED",
+    window.innerWidth / 2,
+    window.innerHeight / 2
+  );
+
+  ctx.restore();
+}
+
+function drawFlyMode() {
+  if (!isPilotAirborne(player)) return;
+
+  ctx.save();
+
+  ctx.font = "12px monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = LCD_INK;
+
+  ctx.fillText(
+    "FLY MODE",
+    window.innerWidth - 16,
+    16
+  );
+
+  ctx.restore();
+}
+
+function drawHints() {
+  if (hintMessages.length === 0) return;
+
+  const hint = hintMessages[hintMessages.length - 1];
+  const alpha = 1 - hint.time / hint.life;
+
+  ctx.save();
+
+  ctx.globalAlpha = Math.min(1, alpha * 1.6);
+  ctx.font = "14px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = LCD_INK;
+
+  ctx.fillText(
+    hint.text,
+    window.innerWidth / 2,
+    window.innerHeight - 54
+  );
+
+  ctx.restore();
+}
+
+function draw() {
+  drawGrid();
+
+  drawTrails();
+
+  drawStains();
+
+  drawAmmoPacks();
+
+  drawSmoke();
+  drawRearSmoke();
+
+  drawBullets();
+
+  for (const unit of units) {
+    drawUnit(unit);
+  }
+
+  drawExplosions();
+
+  drawPlayerCannonMarker();
+
+  drawLCDOverlay();
+
+  drawDeathBlur();
+
+  drawScoreboard();
+
+  drawFlyMode();
+  drawHints();
+
+  drawPauseOverlay();
+}
+
+function loop(now) {
+  const dt = Math.min(
+    (now - lastTime) / 1000,
+    0.05
+  );
+
+  lastTime = now;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+window.addEventListener("resize", resize);
+
+window.addEventListener("mousemove", e => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+
+  mouse.active = true;
+});
+
+window.addEventListener("mousedown", e => {
+  if (e.button === 0) {
+    mouse.down = true;
+  }
+});
+
+window.addEventListener("mouseup", e => {
+  if (e.button === 0) {
+    mouse.down = false;
+  }
+});
+
+window.addEventListener("keydown", e => {
+  if (e.code === "Space") {
+    keys.space = true;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyZ") {
+    keys.z = true;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyP") {
+    if (!keys.p) {
+      paused = !paused;
+    }
+
+    keys.p = true;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyF") {
+    if (!keys.f) {
+      startPlayerFlyToggle();
+    }
+
+    keys.f = true;
+    e.preventDefault();
+  }
+});
+
+window.addEventListener("keyup", e => {
+  if (e.code === "Space") {
+    keys.space = false;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyZ") {
+    keys.z = false;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyP") {
+    keys.p = false;
+    e.preventDefault();
+  }
+
+  if (e.code === "KeyF") {
+    keys.f = false;
+    e.preventDefault();
+  }
+});
+
+window.addEventListener("blur", () => {
+  mouse.down = false;
+  keys.space = false;
+  keys.z = false;
+  keys.p = false;
+  keys.f = false;
+});
+
+resize();
+
+chooseBotMode(bot1);
+chooseBotMode(bot2);
+
+spawnAmmoPack();
+spawnAmmoPack();
+spawnAmmoPack();
+spawnAmmoPack();
+
+requestAnimationFrame(loop);
