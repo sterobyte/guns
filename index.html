@@ -8,8 +8,12 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<section id="start-screen" aria-label="GUNS start screen">
+<section id="start-screen" aria-label="GUNS start screen" data-i18n-aria="start.aria">
   <div class="start-panel">
+    <div class="language-switch" aria-label="Language" data-i18n-aria="language.aria">
+      <button type="button" data-language-option="ru" data-i18n="language.ru">РУССКИЙ</button>
+      <button type="button" data-language-option="en" data-i18n="language.en">ENGLISH</button>
+    </div>
     <form id="start-form" autocomplete="off">
       <input
         id="pilot-nick"
@@ -18,13 +22,16 @@
         maxlength="14"
         placeholder="PILOT"
         aria-label="PILOT"
+        data-i18n-placeholder="start.nickPlaceholder"
+        data-i18n-aria="start.nickPlaceholder"
       />
-      <button type="submit">ПОЕХАЛИ</button>
-      <div id="start-version" aria-label="Game version"></div>
+      <button type="submit" data-i18n="start.play">GO</button>
+      <div id="start-version" aria-label="Game version" data-i18n-aria="start.versionAria"></div>
     </form>
   </div>
 </section>
 <script src="./src/config/runtime-config.js"></script>
+<script src="./src/i18n/i18n.js"></script>
 <script src="./src/domain/entity-access.js"></script>
 <script src="./src/admin/admin-api.js"></script>
 <script src="./src/net/network-adapter.js"></script>

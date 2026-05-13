@@ -1,11 +1,17 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.0.39",
+    version: "0.1.4",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
     strategy: "preserve-legacy-runtime-first"
+  },
+
+  i18n: {
+    defaultLanguage: "ru",
+    fallbackLanguage: "en",
+    storageKey: "guns.language"
   },
 
   render: {

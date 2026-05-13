@@ -58,6 +58,30 @@ canvas {
   gap: 12px;
 }
 
+.language-switch {
+  width: 254px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.language-switch button {
+  height: 24px;
+  border: 1px solid rgba(27, 36, 20, 0.86);
+  border-radius: 4px;
+  background: rgba(247, 247, 240, 0.58);
+  color: #1f2b16;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.language-switch button.active {
+  background: #315a0b;
+  color: #fff;
+}
+
 #start-version {
   justify-self: center;
   min-height: 16px;

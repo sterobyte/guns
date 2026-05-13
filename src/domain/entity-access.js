@@ -1,57 +1,46 @@
 (function () {
+  function sync() {
+    window.GUNS_LEGACY?.syncDomainEntities?.();
+  }
+
   function allUnits() {
     const units = window.GUNS_LEGACY?.units;
     return Array.isArray(units) ? units : [];
   }
 
   function pilots() {
-    return allUnits().filter(unit => !unit.isCannonOnly);
+    sync();
+    const pilots = window.GUNS_LEGACY?.pilots;
+    return Array.isArray(pilots) ? pilots : [];
   }
 
   function cannons() {
-    return allUnits();
+    sync();
+    const cannons = window.GUNS_LEGACY?.cannons;
+    return Array.isArray(cannons) ? cannons : [];
   }
 
-  function legacyPilotView(unit) {
-    return {
-      id: unit.id,
-      nick: unit.displayName || unit.nick || unit.id,
-      isPlayer: !!unit.isPlayer,
-      controller: unit.isPlayer ? "human" : "bot",
-      state: unit.state,
-      score: unit.score,
-      pilot: {
-        x: unit.pilotX,
-        y: unit.pilotY,
-        radius: unit.pilotRadius,
-        immune: unit.pilotImmunity > 0,
-        flying: unit.pilotFlyState !== "ground"
-      },
-      occupiedCannon: unit.state === "alive" ? unit.id : null
-    };
+  function rawPilots() {
+    return allUnits().filter(unit => !!unit.pilotEntityId);
   }
 
-  function legacyCannonView(unit) {
-    return {
-      id: unit.id,
-      type: unit.gunType,
-      x: unit.x,
-      y: unit.y,
-      hp: unit.hp,
-      maxHp: unit.maxHp,
-      ammo: unit.ammo,
-      broken: unit.wreckRepair > 0,
-      destroyed: !!unit.cannonDestroyed,
-      occupantPilotId: unit.state === "alive" && !unit.isCannonOnly ? unit.id : null,
-      empty: unit.state === "pilot"
-    };
+  function rawCannons() {
+    return allUnits().filter(unit => !!unit.cannonEntityId);
   }
 
   window.GUNS_DOMAIN = {
     allUnits,
-    pilots: () => pilots().map(legacyPilotView),
-    cannons: () => cannons().map(legacyCannonView),
-    rawPilots: pilots,
-    rawCannons: cannons
+    pilots: () => pilots().map(pilot => ({ ...pilot })),
+    cannons: () => cannons().map(cannon => ({ ...cannon })),
+    rawPilots,
+    rawCannons,
+    pilotById(id) {
+      sync();
+      return window.GUNS_LEGACY?.getPilotEntityById?.(id);
+    },
+    cannonById(id) {
+      sync();
+      return window.GUNS_LEGACY?.getCannonEntityById?.(id);
+    }
   };
 })();

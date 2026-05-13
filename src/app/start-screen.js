@@ -30,6 +30,9 @@
     const input = document.getElementById("pilot-nick");
     const version = document.getElementById("start-version");
 
+    window.GUNS_I18N?.apply();
+    syncLanguageButtons();
+
     input.value = savedNick;
     if (version) {
       version.textContent = `v${window.GUNS_CONFIG?.project?.version || "0.0.0"}`;
@@ -40,7 +43,26 @@
       event.preventDefault();
       window.GUNS_APP.start(input.value);
     });
+
+    document.querySelectorAll("[data-language-option]").forEach(button => {
+      button.addEventListener("click", () => {
+        window.GUNS_I18N?.setLanguage(button.dataset.languageOption);
+        syncLanguageButtons();
+      });
+    });
+
+    window.addEventListener("guns:languagechange", syncLanguageButtons);
   });
+
+  function syncLanguageButtons() {
+    const language = window.GUNS_I18N?.language || "en";
+
+    document.querySelectorAll("[data-language-option]").forEach(button => {
+      const isActive = button.dataset.languageOption === language;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+  }
 
   function sanitizeNick(nick) {
     const clean = String(nick || "")
@@ -48,6 +70,6 @@
       .replace(/\s+/g, " ")
       .slice(0, 14);
 
-    return clean || "PILOT";
+    return clean || window.GUNS_I18N?.t("pilot.defaultNick") || "PILOT";
   }
 })();

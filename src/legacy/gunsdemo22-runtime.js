@@ -41,6 +41,10 @@ const HEALTH_BAR_OPACITY =
   window.GUNS_CONFIG?.render?.healthBarOpacity ??
   0.5;
 
+function text(key, params) {
+  return window.GUNS_I18N?.t?.(key, params) || key;
+}
+
 const bullets = [];
 const ammoPacks = [];
 const explosions = [];
@@ -51,6 +55,10 @@ const stains = [];
 const deathOverlays = [];
 const hintMessages = [];
 const scoreboardRows = new Map();
+const pilots = [];
+const cannons = [];
+const pilotUnitById = new Map();
+const cannonUnitById = new Map();
 
 const AMMO_MAX = 30;
 const AMMO_PACK_VALUE = 30;
@@ -165,6 +173,8 @@ function makeUnit(
 
   return {
     id,
+    pilotEntityId: id,
+    cannonEntityId: `${id}-autogun`,
     isPlayer,
     isCannonOnly: false,
 
@@ -319,7 +329,14 @@ const autoGun2 = makeUnit(
   false
 );
 
+player.cannonEntityId = "autogun0";
+bot1.cannonEntityId = "autogun1";
+bot2.cannonEntityId = "autogun2";
+autoGun1.cannonEntityId = "autogun3";
+autoGun2.cannonEntityId = "autogun4";
+
 function makePilotOnly(unit) {
+  unit.cannonEntityId = null;
   unit.cannonDestroyed = true;
   unit.hp = 0;
   unit.wreckHp = 0;
@@ -331,6 +348,7 @@ function makePilotOnly(unit) {
 
 function makeCannonOnly(unit) {
   unit.isCannonOnly = true;
+  unit.pilotEntityId = null;
   unit.pilotImmunity = 0;
   return unit;
 }
@@ -353,6 +371,93 @@ const units = [
   autoGun2
 ];
 
+function syncDomainEntities() {
+  pilots.length = 0;
+  cannons.length = 0;
+  pilotUnitById.clear();
+  cannonUnitById.clear();
+
+  const occupantByCannonId = new Map();
+
+  for (const unit of units) {
+    if (
+      unit.pilotEntityId &&
+      unit.state === "alive" &&
+      unit.cannonEntityId
+    ) {
+      occupantByCannonId.set(
+        unit.cannonEntityId,
+        unit.pilotEntityId
+      );
+    }
+  }
+
+  for (const unit of units) {
+    if (unit.pilotEntityId) {
+      pilotUnitById.set(unit.pilotEntityId, unit);
+
+      pilots.push({
+        id: unit.pilotEntityId,
+        unitId: unit.id,
+        nick: getUnitDisplayName(unit),
+        controller: unit.isPlayer ? "human" : "bot",
+        isPlayer: !!unit.isPlayer,
+        color: unit.color,
+        state: unit.state === "alive" ? "in-cannon" : "on-foot",
+        occupiedCannonId:
+          unit.state === "alive" ? unit.cannonEntityId : null,
+        x: unit.state === "alive" ? unit.x : unit.pilotX,
+        y: unit.state === "alive" ? unit.y : unit.pilotY,
+        score: unit.score,
+        pilotKills: unit.pilotKills || 0,
+        cannonBreaks: unit.cannonBreaks || 0,
+        pilotDeaths: unit.pilotDeaths || 0,
+        carriedAmmoValue: unit.carriedAmmoValue || 0,
+        carriedRepairValue: unit.carriedRepairValue || 0,
+        immune: unit.pilotImmunity > 0,
+        flying: unit.pilotFlyState !== "ground"
+      });
+    }
+
+    if (unit.cannonEntityId) {
+      cannonUnitById.set(unit.cannonEntityId, unit);
+
+      cannons.push({
+        id: unit.cannonEntityId,
+        unitId: unit.id,
+        type: unit.gunType,
+        x: unit.x,
+        y: unit.y,
+        hp: unit.hp,
+        maxHp: unit.maxHp,
+        ammo: unit.ammo,
+        maxAmmo: getMaxAmmo(unit),
+        entryScoreRequired: getEntryScoreRequired(unit),
+        entryLocked: !!unit.entryLocked,
+        broken: unit.wreckRepair > 0,
+        destroyed: !!unit.cannonDestroyed,
+        occupantPilotId:
+          occupantByCannonId.get(unit.cannonEntityId) || null,
+        free:
+          unit.state === "pilot" &&
+          !unit.cannonDestroyed &&
+          unit.wreckRepair <= 0 &&
+          unit.hp > 0
+      });
+    }
+  }
+}
+
+function getPilotEntityById(id) {
+  syncDomainEntities();
+  return pilots.find(pilot => pilot.id === id) || null;
+}
+
+function getCannonEntityById(id) {
+  syncDomainEntities();
+  return cannons.find(cannon => cannon.id === id) || null;
+}
+
 window.GUNS_LEGACY = {
   player,
   bot1,
@@ -363,6 +468,13 @@ window.GUNS_LEGACY = {
   autoGun1,
   autoGun2,
   units,
+  pilots,
+  cannons,
+  pilotUnitById,
+  cannonUnitById,
+  syncDomainEntities,
+  getPilotEntityById,
+  getCannonEntityById,
   bullets,
   ammoPacks,
   explosions,
@@ -1624,9 +1736,9 @@ function tryEnterRepairedCannon(unit) {
   if (!canEnterCannon(unit, targetCannon)) {
     if (unit.isPlayer) {
       addHint(
-        "CANNON REQUIRES " +
-          getEntryScoreRequired(targetCannon) +
-          " SCORE"
+        text("hint.cannonRequiresScore", {
+          score: getEntryScoreRequired(targetCannon)
+        })
       );
     }
 
@@ -1657,6 +1769,7 @@ function tryEnterRepairedCannon(unit) {
     maxHp: unit.maxHp,
     ammo: unit.ammo,
     gunType: unit.gunType,
+    cannonEntityId: unit.cannonEntityId,
     entryScoreRequired: unit.entryScoreRequired,
     entryLocked: unit.entryLocked,
     damageMultiplier: unit.damageMultiplier,
@@ -1678,6 +1791,7 @@ function tryEnterRepairedCannon(unit) {
     maxHp: targetCannon.maxHp,
     ammo: targetCannon.ammo,
     gunType: targetCannon.gunType,
+    cannonEntityId: targetCannon.cannonEntityId,
     entryScoreRequired: targetCannon.entryScoreRequired,
     entryLocked: targetCannon.entryLocked,
     damageMultiplier: targetCannon.damageMultiplier,
@@ -1701,6 +1815,7 @@ function tryEnterRepairedCannon(unit) {
   unit.entryLocked = newBody.entryLocked;
   unit.damageMultiplier = newBody.damageMultiplier;
   unit.ammo = Math.min(getMaxAmmo(unit), Math.max(newBody.ammo, 10));
+  unit.cannonEntityId = newBody.cannonEntityId;
   unit.wreckRepair = 0;
   unit.wreckHp = 0;
   unit.cannonDestroyed = false;
@@ -1740,6 +1855,7 @@ function tryEnterRepairedCannon(unit) {
     targetCannon.maxHp = oldBody.maxHp;
     targetCannon.ammo = oldBody.ammo;
     targetCannon.gunType = oldBody.gunType;
+    targetCannon.cannonEntityId = oldBody.cannonEntityId;
     targetCannon.entryScoreRequired = oldBody.entryScoreRequired;
     targetCannon.entryLocked = oldBody.entryLocked;
     targetCannon.damageMultiplier = oldBody.damageMultiplier;
@@ -3226,7 +3342,7 @@ function drawFreeCannonLabel(unit) {
 
   drawCannonStateLabel(
     unit,
-    "FREE",
+    text("cannon.free"),
     LCD_INK
   );
 }
@@ -3237,7 +3353,7 @@ function drawLockedCannonLabel(unit) {
 
   drawCannonStateLabel(
     unit,
-    "LOCK",
+    text("cannon.lock"),
     LCD_INK_3
   );
 }
@@ -3255,7 +3371,7 @@ function drawWaitingCannonLabel(unit) {
 
   drawCannonStateLabel(
     unit,
-    "WAIT",
+    text("cannon.wait"),
     LCD_INK_2
   );
 }
@@ -3959,13 +4075,13 @@ function drawScoreboard() {
   ctx.font = "14px monospace";
   ctx.textAlign = "left";
   ctx.fillText(
-    "#",
+    text("scoreboard.rank"),
     panelX + 12,
     headerY
   );
 
   ctx.fillText(
-    "PILOT",
+    text("scoreboard.pilot"),
     panelX + 40,
     headerY
   );
@@ -3976,7 +4092,7 @@ function drawScoreboard() {
 
   ctx.textAlign = "right";
   ctx.fillText(
-    "SCORE",
+    text("scoreboard.score"),
     panelX + panelW - 12,
     headerY
   );
@@ -4385,7 +4501,7 @@ function drawFlyMode() {
   ctx.fillStyle = LCD_INK;
 
   ctx.fillText(
-    "FLY MODE",
+    text("mode.fly"),
     window.innerWidth - 16,
     16
   );
@@ -4462,6 +4578,7 @@ function loop(now) {
 
   if (window.GUNS_APP?.started !== false) {
     update(dt);
+    syncDomainEntities();
     draw();
   }
 
@@ -4590,5 +4707,7 @@ spawnPowerup();
 spawnPowerup();
 spawnPowerup();
 spawnPowerup();
+
+syncDomainEntities();
 
 requestAnimationFrame(loop);
