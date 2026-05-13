@@ -54,8 +54,11 @@ const scoreboardRows = new Map();
 
 const AMMO_MAX = 30;
 const AMMO_PACK_VALUE = 30;
+const REPAIR_PACK_HEAL_RATIO = 0.25;
 const AMMO_PACK_FADE_TIME = 2;
 const AMMO_PACK_LIFE_TIME = 60;
+const POWERUP_AMMO = "ammo";
+const POWERUP_REPAIR = "repair";
 const BULLET_SPEED = 720;
 
 const BOT_TURRET_TURN_SPEED = 5.8;
@@ -229,6 +232,7 @@ function makeUnit(
     pilotFlyState: "ground",
     pilotFlyTime: 0,
     carriedAmmoValue: 0,
+    carriedRepairValue: 0,
 
     wreckRepair: 0,
 
@@ -693,7 +697,7 @@ function startPlayerFlyToggle() {
     player.pilotFlyState === "ground" ||
     player.pilotFlyState === "falling"
   ) {
-    dropCarriedAmmo(player);
+    dropCarriedPowerups(player);
     player.pilotFlyState = "rising";
     player.pilotFlyTime = 0;
     player.pilotKnockback = null;
@@ -815,14 +819,23 @@ function fireBullet(owner, angle) {
   owner.ammo = Math.max(0, owner.ammo - 1);
 }
 
-function addAmmoPack(x, y, value = AMMO_PACK_VALUE) {
+function addPowerup(x, y, type, value) {
   ammoPacks.push({
     x,
     y,
     radius: 16,
+    type,
     value,
     time: 0
   });
+}
+
+function addAmmoPack(x, y, value = AMMO_PACK_VALUE) {
+  addPowerup(x, y, POWERUP_AMMO, value);
+}
+
+function addRepairPack(x, y, value = REPAIR_PACK_HEAL_RATIO) {
+  addPowerup(x, y, POWERUP_REPAIR, value);
 }
 
 function spawnAmmoPack() {
@@ -830,6 +843,21 @@ function spawnAmmoPack() {
     randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
     randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90)
   );
+}
+
+function spawnRepairPack() {
+  addRepairPack(
+    randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
+    randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90)
+  );
+}
+
+function spawnPowerup() {
+  if (Math.random() < 0.28) {
+    spawnRepairPack();
+  } else {
+    spawnAmmoPack();
+  }
 }
 
 function dropCarriedAmmo(unit) {
@@ -842,6 +870,23 @@ function dropCarriedAmmo(unit) {
   );
 
   unit.carriedAmmoValue = 0;
+}
+
+function dropCarriedRepair(unit) {
+  if (unit.carriedRepairValue <= 0) return;
+
+  addRepairPack(
+    clamp(unit.pilotX, ROOM_LEFT + 90, ROOM_RIGHT - 90),
+    clamp(unit.pilotY, ROOM_TOP + 90, ROOM_BOTTOM - 90),
+    unit.carriedRepairValue
+  );
+
+  unit.carriedRepairValue = 0;
+}
+
+function dropCarriedPowerups(unit) {
+  dropCarriedAmmo(unit);
+  dropCarriedRepair(unit);
 }
 
 function addExplosion(x, y) {
@@ -1093,42 +1138,21 @@ function moveAwayFrom(unit, target, dt) {
 function moveBotCombatCannon(bot, target, dt) {
   const ranges = getBotCombatRange(bot);
   const d = distance(bot, target);
+  const deadZone = 34;
 
   if (d < ranges.min) {
     moveAwayFrom(bot, target, dt);
     return;
   }
 
-  if (d > ranges.max) {
+  if (d > ranges.ideal + deadZone) {
     moveToward(bot, target, dt, ranges.ideal);
     return;
   }
 
-  const angle =
-    angleToTarget(target, bot) +
-    Math.PI / 2 +
-    Math.sin(performance.now() * 0.002 + bot.id.length) * 0.34;
-
-  const rangeBias =
-    d < ranges.ideal * 0.82
-      ? 0.42
-      : d > ranges.ideal * 1.16
-        ? -0.32
-        : 0;
-
-  bot.x +=
-    (Math.cos(angle) + Math.cos(angleToTarget(target, bot)) * rangeBias) *
-      bot.speed *
-      0.76 *
-      dt;
-
-  bot.y +=
-    (Math.sin(angle) + Math.sin(angleToTarget(target, bot)) * rangeBias) *
-      bot.speed *
-      0.76 *
-      dt;
-
-  clampToRoomPoint(bot, bot.radiusOuter);
+  if (d < ranges.ideal - deadZone) {
+    moveAwayFrom(bot, target, dt);
+  }
 }
 
 function movePilotToward(unit, target, dt, stopDistance = 0) {
@@ -1293,6 +1317,7 @@ function killPilot(victim, killer) {
   victim.pilotFlyState = "ground";
   victim.pilotFlyTime = 0;
   victim.carriedAmmoValue = 0;
+  victim.carriedRepairValue = 0;
   victim.pilotLastMoveVx = 0;
   victim.pilotLastMoveVy = 0;
 
@@ -1733,6 +1758,28 @@ function tryEnterRepairedCannon(unit) {
   }
 }
 
+function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
+  if (pilotUnit.carriedRepairValue <= 0) return false;
+  if (cannonUnit.hp >= cannonUnit.maxHp) return false;
+
+  cannonUnit.hp = Math.min(
+    cannonUnit.maxHp,
+    cannonUnit.hp + cannonUnit.maxHp * pilotUnit.carriedRepairValue
+  );
+
+  if (cannonUnit.wreckRepair > 0) {
+    cannonUnit.wreckRepair =
+      cannonUnit.hp >= cannonUnit.maxHp
+        ? 0
+        : WRECK_REPAIR_TIME *
+          (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
+  }
+
+  pilotUnit.carriedRepairValue = 0;
+
+  return true;
+}
+
 function updateAmmoPickup() {
   for (let i = ammoPacks.length - 1; i >= 0; i--) {
     const pack = ammoPacks[i];
@@ -1742,18 +1789,28 @@ function updateAmmoPickup() {
     for (const unit of units) {
       if (
         unit.state === "alive" &&
-        unit.ammo < getMaxAmmo(unit) &&
         distance(unit, pack) <=
           unit.radiusOuter + pack.radius
       ) {
-        unit.ammo = Math.min(
-          getMaxAmmo(unit),
-          unit.ammo + pack.value
-        );
+        if (pack.type === POWERUP_AMMO) {
+          if (unit.ammo >= getMaxAmmo(unit)) continue;
+
+          unit.ammo = Math.min(
+            getMaxAmmo(unit),
+            unit.ammo + pack.value
+          );
+
+          addScore(unit, 40);
+        } else if (pack.type === POWERUP_REPAIR) {
+          if (unit.hp >= unit.maxHp) continue;
+
+          unit.hp = Math.min(
+            unit.maxHp,
+            unit.hp + unit.maxHp * pack.value
+          );
+        }
 
         ammoPacks.splice(i, 1);
-
-        addScore(unit, 40);
 
         picked = true;
         break;
@@ -1764,12 +1821,17 @@ function updateAmmoPickup() {
         !unit.isCannonOnly &&
         !isPilotAirborne(unit) &&
         unit.carriedAmmoValue <= 0 &&
+        unit.carriedRepairValue <= 0 &&
         Math.hypot(
           unit.pilotX - pack.x,
           unit.pilotY - pack.y
         ) <= unit.pilotRadius + pack.radius
       ) {
-        unit.carriedAmmoValue = pack.value;
+        if (pack.type === POWERUP_AMMO) {
+          unit.carriedAmmoValue = pack.value;
+        } else if (pack.type === POWERUP_REPAIR) {
+          unit.carriedRepairValue = pack.value;
+        }
 
         ammoPacks.splice(i, 1);
 
@@ -1798,7 +1860,7 @@ function updateAmmoSpawning(dt) {
   ammoSpawnTimer -= dt;
 
   if (ammoSpawnTimer <= 0) {
-    spawnAmmoPack();
+    spawnPowerup();
 
     ammoSpawnTimer = 4 + Math.random() * 3;
   }
@@ -1871,6 +1933,21 @@ function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
     otherUnit.hp > 0;
 
   if (isFreeRepairedCannon) {
+    if (
+      pilotUnit.carriedRepairValue > 0 &&
+      otherUnit.hp < otherUnit.maxHp
+    ) {
+      applyCarriedRepairToCannon(pilotUnit, otherUnit);
+
+      if (otherUnit.hp < otherUnit.maxHp) {
+        if (!pilotUnit.pilotKnockback) {
+          startPilotKnockback(pilotUnit, nx, ny);
+        }
+
+        return;
+      }
+    }
+
     tryEnterRepairedCannon(pilotUnit);
     return;
   }
@@ -1880,6 +1957,20 @@ function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
     otherUnit.state === "pilot" &&
     otherUnit.wreckRepair > 0
   ) {
+    if (pilotUnit.carriedRepairValue > 0) {
+      applyCarriedRepairToCannon(pilotUnit, otherUnit);
+
+      if (
+        otherUnit.wreckRepair <= 0 &&
+        otherUnit.hp >= otherUnit.maxHp
+      ) {
+        otherUnit.hp = otherUnit.maxHp;
+        otherUnit.turretAngle = otherUnit.repairAngle;
+        tryEnterRepairedCannon(pilotUnit);
+        return;
+      }
+    }
+
     if (!pilotUnit.pilotKnockback) {
       startPilotKnockback(pilotUnit, nx, ny);
     }
@@ -3203,6 +3294,34 @@ function getAmmoPackAlpha(pack) {
   return 1;
 }
 
+function drawRepairPackIcon(x, y) {
+  ctx.save();
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.fillStyle = LCD_INK;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.translate(x, y);
+  ctx.rotate(-Math.PI / 4);
+
+  ctx.beginPath();
+  ctx.moveTo(-7, 0);
+  ctx.lineTo(6, 0);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(8, 0, 4, -0.9, 0.9);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(-9, 0, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 function drawAmmoPacks() {
   for (const pack of ammoPacks) {
     const p = worldToScreen(pack.x, pack.y);
@@ -3236,7 +3355,11 @@ function drawAmmoPacks() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    ctx.fillText("30", p.x, p.y);
+    if (pack.type === POWERUP_REPAIR) {
+      drawRepairPackIcon(p.x, p.y);
+    } else {
+      ctx.fillText("30", p.x, p.y);
+    }
 
     ctx.restore();
   }
@@ -3572,7 +3695,7 @@ function drawPilot(unit) {
 
   ctx.restore();
 
-  if (unit.carriedAmmoValue > 0) {
+  if (unit.carriedAmmoValue > 0 || unit.carriedRepairValue > 0) {
     ctx.save();
 
     const ax = p.x + z(unit.pilotRadius + 10);
@@ -3595,7 +3718,12 @@ function drawPilot(unit) {
     ctx.font = `${Math.max(8, Math.round(9 * camera.scale))}px monospace`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(unit.carriedAmmoValue, ax, ay);
+
+    if (unit.carriedRepairValue > 0) {
+      drawRepairPackIcon(ax, ay);
+    } else {
+      ctx.fillText(unit.carriedAmmoValue, ax, ay);
+    }
 
     ctx.restore();
   }
@@ -4458,9 +4586,9 @@ for (const bot of units) {
   }
 }
 
-spawnAmmoPack();
-spawnAmmoPack();
-spawnAmmoPack();
-spawnAmmoPack();
+spawnPowerup();
+spawnPowerup();
+spawnPowerup();
+spawnPowerup();
 
 requestAnimationFrame(loop);
