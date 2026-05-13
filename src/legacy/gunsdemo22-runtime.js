@@ -78,15 +78,22 @@ const PILOT_EJECT_TIME = 2.5;
 const PILOT_EJECT_DISTANCE = 510;
 const PILOT_EJECT_PEAK_RADIUS = 27;
 const PILOT_FLY_PEAK_RADIUS = 17;
-const DOUBLEGUN_SCORE_REQUIREMENT = 3000;
 const PILOT_FLY_TRANSITION_TIME = 0.75;
+const GRAVE_NAME_TRIGGER_RADIUS = 32;
+const GRAVE_NAME_SHOW_TIME = 1;
 
-const STAIN_LIFE = 300;
+const CANNON_TYPE_CONFIG = {
+  autogun: {
+    maxAmmo: AMMO_MAX,
+    entryScoreRequired: 0
+  }
+};
+
+const STAIN_LIFE = 60;
 
 const PLAYER_COLOR = "#1f2b16";
 const RED_COLOR = "#33451f";
 const GREEN_COLOR = "#4b5f2f";
-const PURPLE_COLOR = "#5e7340";
 const BOT3_COLOR = "#26391b";
 const BOT4_COLOR = "#6a7f47";
 const BOT5_COLOR = "#405629";
@@ -106,7 +113,7 @@ const keys = {
 };
 
 let paused = false;
-let cameraUserZoom = 1;
+let cameraUserZoom = CAMERA_ZOOM_MIN;
 
 const camera = {
   x: 0,
@@ -148,6 +155,9 @@ function makeUnit(
   gunType = "autogun"
 ) {
   const offset = randomPilotOffset();
+  const cannonConfig =
+    CANNON_TYPE_CONFIG[gunType] ||
+    CANNON_TYPE_CONFIG.autogun;
 
   return {
     id,
@@ -187,7 +197,7 @@ function makeUnit(
     wreckHp: 0,
     cannonDestroyed: false,
 
-    ammo: gunType === "doublegun" ? 60 : 30,
+    ammo: cannonConfig.maxAmmo,
 
     frags: 0,
     score: 0,
@@ -214,6 +224,7 @@ function makeUnit(
     pilotLastMoveVy: 0,
     pilotFlyState: "ground",
     pilotFlyTime: 0,
+    carriedAmmoValue: 0,
 
     wreckRepair: 0,
 
@@ -228,6 +239,8 @@ function makeUnit(
     aiBurstPause: 0,
 
     gunType,
+    entryScoreRequired: cannonConfig.entryScoreRequired,
+    entryLocked: false,
     damageMultiplier:
       1
   };
@@ -280,16 +293,6 @@ const bot5 = makeUnit(
   false
 );
 
-const doubleGun = makeUnit(
-  "doublegun",
-  0,
-  0,
-  PURPLE_COLOR,
-  0,
-  false,
-  "doublegun"
-);
-
 const autoGun1 = makeUnit(
   "autogun1",
   -520,
@@ -328,8 +331,6 @@ makePilotOnly(bot3);
 makePilotOnly(bot4);
 makePilotOnly(bot5);
 
-doubleGun.isCannonOnly = true;
-doubleGun.pilotImmunity = 0;
 makeCannonOnly(autoGun1);
 makeCannonOnly(autoGun2);
 
@@ -340,7 +341,6 @@ const units = [
   bot3,
   bot4,
   bot5,
-  doubleGun,
   autoGun1,
   autoGun2
 ];
@@ -352,7 +352,6 @@ window.GUNS_LEGACY = {
   bot3,
   bot4,
   bot5,
-  doubleGun,
   autoGun1,
   autoGun2,
   units,
@@ -546,7 +545,20 @@ function randomRange(min, max) {
 }
 
 function getMaxAmmo(unit) {
-  return unit.gunType === "doublegun" ? 60 : AMMO_MAX;
+  return (
+    CANNON_TYPE_CONFIG[unit.gunType]?.maxAmmo ||
+    AMMO_MAX
+  );
+}
+
+function getEntryScoreRequired(cannon) {
+  return Math.max(
+    0,
+    cannon.entryScoreRequired ??
+      CANNON_TYPE_CONFIG[cannon.gunType]
+        ?.entryScoreRequired ??
+      0
+  );
 }
 
 function z(v) {
@@ -619,8 +631,8 @@ function updatePassiveScore(unit, dt) {
 
 function canEnterCannon(unit, cannon) {
   return (
-    cannon.gunType !== "doublegun" ||
-    unit.score >= DOUBLEGUN_SCORE_REQUIREMENT
+    !cannon.entryLocked &&
+    unit.score >= getEntryScoreRequired(cannon)
   );
 }
 
@@ -793,12 +805,7 @@ function fireBullet(owner, angle) {
 
   owner.recoilTime = owner.recoilDuration;
 
-  if (owner.gunType === "doublegun") {
-    makeBullet(-9);
-    makeBullet(9);
-  } else {
-    makeBullet(0);
-  }
+  makeBullet(0);
 
   owner.ammo = Math.max(0, owner.ammo - 1);
 }
@@ -921,11 +928,13 @@ function updateMovementTrails() {
   }
 }
 
-function addStain(x, y, color) {
+function addStain(x, y, color, pilotName) {
   stains.push({
     x,
     y,
     color,
+    pilotName,
+    nameTime: 0,
 
     time: 0,
     life: STAIN_LIFE
@@ -957,8 +966,6 @@ function chooseBotTarget(bot) {
     if (enemy.state === "pilot" && enemy.pilotImmunity <= 0 && !enemy.pilotEject) score -= 140;
     if (enemy.pilotImmunity > 0) score += 120;
     if (enemy.pilotEject) score += 220;
-    if (enemy.gunType === "doublegun" && enemy.state === "alive") score -= 60;
-
     score += Math.random() * 35;
 
     if (score < bestScore) {
@@ -1232,7 +1239,12 @@ function killPilot(victim, killer) {
   if (victim.pilotImmunity > 0) return;
   if (isPilotAirborne(victim)) return;
 
-  addStain(victim.pilotX, victim.pilotY, victim.color);
+  addStain(
+    victim.pilotX,
+    victim.pilotY,
+    victim.color,
+    getUnitDisplayName(victim)
+  );
 
   if (victim.isPlayer) {
     addDeathOverlay();
@@ -1252,6 +1264,7 @@ function killPilot(victim, killer) {
   victim.pilotRadius = PILOT_RADIUS;
   victim.pilotFlyState = "ground";
   victim.pilotFlyTime = 0;
+  victim.carriedAmmoValue = 0;
   victim.pilotLastMoveVx = 0;
   victim.pilotLastMoveVy = 0;
 
@@ -1558,8 +1571,8 @@ function tryEnterRepairedCannon(unit) {
   if (!canEnterCannon(unit, targetCannon)) {
     if (unit.isPlayer) {
       addHint(
-        "DOUBLEGUN REQUIRES " +
-          DOUBLEGUN_SCORE_REQUIREMENT +
+        "CANNON REQUIRES " +
+          getEntryScoreRequired(targetCannon) +
           " SCORE"
       );
     }
@@ -1591,6 +1604,8 @@ function tryEnterRepairedCannon(unit) {
     maxHp: unit.maxHp,
     ammo: unit.ammo,
     gunType: unit.gunType,
+    entryScoreRequired: unit.entryScoreRequired,
+    entryLocked: unit.entryLocked,
     damageMultiplier: unit.damageMultiplier,
     wreckRepair: unit.wreckRepair,
     wreckHp: unit.wreckHp,
@@ -1610,6 +1625,8 @@ function tryEnterRepairedCannon(unit) {
     maxHp: targetCannon.maxHp,
     ammo: targetCannon.ammo,
     gunType: targetCannon.gunType,
+    entryScoreRequired: targetCannon.entryScoreRequired,
+    entryLocked: targetCannon.entryLocked,
     damageMultiplier: targetCannon.damageMultiplier,
     wreckRepair: targetCannon.wreckRepair,
     wreckHp: targetCannon.wreckHp,
@@ -1627,6 +1644,8 @@ function tryEnterRepairedCannon(unit) {
   unit.hp = Math.max(1, newBody.hp);
   unit.maxHp = newBody.maxHp;
   unit.gunType = newBody.gunType;
+  unit.entryScoreRequired = newBody.entryScoreRequired;
+  unit.entryLocked = newBody.entryLocked;
   unit.damageMultiplier = newBody.damageMultiplier;
   unit.ammo = Math.min(getMaxAmmo(unit), Math.max(newBody.ammo, 10));
   unit.wreckRepair = 0;
@@ -1642,6 +1661,19 @@ function tryEnterRepairedCannon(unit) {
   unit.pilotFlyState = "ground";
   unit.pilotFlyTime = 0;
 
+  if (unit.carriedAmmoValue > 0) {
+    if (unit.ammo < getMaxAmmo(unit)) {
+      unit.ammo = Math.min(
+        getMaxAmmo(unit),
+        unit.ammo + unit.carriedAmmoValue
+      );
+
+      addScore(unit, 40);
+    }
+
+    unit.carriedAmmoValue = 0;
+  }
+
   if (targetCannon !== unit) {
     targetCannon.x = oldBody.x;
     targetCannon.y = oldBody.y;
@@ -1655,6 +1687,8 @@ function tryEnterRepairedCannon(unit) {
     targetCannon.maxHp = oldBody.maxHp;
     targetCannon.ammo = oldBody.ammo;
     targetCannon.gunType = oldBody.gunType;
+    targetCannon.entryScoreRequired = oldBody.entryScoreRequired;
+    targetCannon.entryLocked = oldBody.entryLocked;
     targetCannon.damageMultiplier = oldBody.damageMultiplier;
     targetCannon.wreckRepair = oldBody.wreckRepair;
     targetCannon.wreckHp = oldBody.wreckHp;
@@ -1692,6 +1726,24 @@ function updateAmmoPickup() {
         ammoPacks.splice(i, 1);
 
         addScore(unit, 40);
+
+        picked = true;
+        break;
+      }
+
+      if (
+        unit.state === "pilot" &&
+        !unit.isCannonOnly &&
+        !isPilotAirborne(unit) &&
+        unit.carriedAmmoValue <= 0 &&
+        Math.hypot(
+          unit.pilotX - pack.x,
+          unit.pilotY - pack.y
+        ) <= unit.pilotRadius + pack.radius
+      ) {
+        unit.carriedAmmoValue = pack.value;
+
+        ammoPacks.splice(i, 1);
 
         picked = true;
         break;
@@ -1974,9 +2026,7 @@ function updateBullets(dt) {
 }
 
 function getBotCombatRange(bot) {
-  return bot.gunType === "doublegun"
-    ? { ideal: 390, min: 210, max: 760 }
-    : { ideal: 560, min: 280, max: 980 };
+  return { ideal: 560, min: 280, max: 980 };
 }
 
 function getInterceptPoint(shooter, targetUnit, bulletSpeed) {
@@ -2046,10 +2096,6 @@ function getBotAimSolution(bot, targetUnit) {
     confidence -= 0.36;
   }
 
-  if (bot.gunType === "doublegun") {
-    confidence += 0.08;
-  }
-
   return {
     angle: angleToTarget(bot, intercept),
     distance: d,
@@ -2104,8 +2150,7 @@ function updateBotShooting(bot, dt) {
   const aimError =
     Math.abs(angleDelta(bot.turretAngle, solution.angle));
 
-  const maxAimError =
-    bot.gunType === "doublegun" ? 0.18 : 0.12;
+  const maxAimError = 0.12;
 
   if (
     bot.ammo > 0 &&
@@ -2115,10 +2160,7 @@ function updateBotShooting(bot, dt) {
     botCanHopeToHit(bot, solution)
   ) {
     if (bot.aiBurstShots <= 0) {
-      bot.aiBurstShots =
-        bot.gunType === "doublegun"
-          ? Math.floor(randomRange(2, 5))
-          : Math.floor(randomRange(1, 4));
+      bot.aiBurstShots = Math.floor(randomRange(1, 4));
     }
 
     const spread =
@@ -2131,18 +2173,12 @@ function updateBotShooting(bot, dt) {
       bot.turretAngle + spread
     );
 
-    bot.fireCooldown =
-      bot.gunType === "doublegun"
-        ? randomRange(0.08, 0.14)
-        : randomRange(0.12, 0.22);
+    bot.fireCooldown = randomRange(0.12, 0.22);
 
     bot.aiBurstShots--;
 
     if (bot.aiBurstShots <= 0) {
-      bot.aiBurstPause =
-        bot.gunType === "doublegun"
-          ? randomRange(0.35, 0.75)
-          : randomRange(0.48, 1.05);
+      bot.aiBurstPause = randomRange(0.48, 1.05);
     }
   }
 }
@@ -2164,14 +2200,6 @@ function getNearestFreeCannonForPilot(unit) {
     );
 
     let score = d;
-
-    if (!unit.isPlayer && cannon.gunType === "doublegun") {
-      score -= 420;
-    }
-
-    if (!unit.isPlayer && unit.gunType === "doublegun" && cannon.gunType !== "doublegun") {
-      score += 160;
-    }
 
     if (score < bestScore) {
       best = cannon;
@@ -2724,9 +2752,26 @@ function updateEffects(dt) {
   }
 
   for (let i = stains.length - 1; i >= 0; i--) {
-    stains[i].time += dt;
+    const grave = stains[i];
 
-    if (stains[i].time >= stains[i].life) {
+    grave.time += dt;
+    grave.nameTime = Math.max(
+      0,
+      (grave.nameTime || 0) - dt
+    );
+
+    if (
+      player.state === "pilot" &&
+      !isPilotAirborne(player) &&
+      Math.hypot(
+        player.pilotX - grave.x,
+        player.pilotY - grave.y
+      ) <= GRAVE_NAME_TRIGGER_RADIUS + player.pilotRadius
+    ) {
+      grave.nameTime = GRAVE_NAME_SHOW_TIME;
+    }
+
+    if (grave.time >= grave.life) {
       stains.splice(i, 1);
     }
   }
@@ -2997,10 +3042,10 @@ function getUnitDisplayName(unit) {
   return unit.displayName || unit.id;
 }
 
-function drawNameLabel(text, x, y, color = LCD_INK) {
+function drawNameLabel(text, x, y, color = LCD_INK, scale = 1) {
   ctx.save();
 
-  ctx.font = "12px monospace";
+  ctx.font = `${Math.round(12 * scale)}px monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.lineWidth = 3;
@@ -3024,6 +3069,73 @@ function drawCannonPilotName(unit) {
     p.x,
     p.y - z(68),
     unit.color
+  );
+}
+
+function isFreeCannonForLabel(unit) {
+  return (
+    unit.state === "pilot" &&
+    !unit.cannonDestroyed &&
+    unit.wreckRepair <= 0 &&
+    unit.hp > 0
+  );
+}
+
+function isCannonEntryLocked(unit) {
+  return unit.entryLocked === true;
+}
+
+function drawCannonStateLabel(unit, text, color) {
+  const p = worldToScreen(unit.x, unit.y);
+  const bob =
+    Math.sin(performance.now() * 0.004) * z(7);
+
+  drawNameLabel(
+    text,
+    p.x,
+    p.y - z(88) + bob,
+    color,
+    1.2
+  );
+}
+
+function drawFreeCannonLabel(unit) {
+  if (!isFreeCannonForLabel(unit)) return;
+  if (isCannonEntryLocked(unit)) return;
+
+  drawCannonStateLabel(
+    unit,
+    "FREE",
+    LCD_INK
+  );
+}
+
+function drawLockedCannonLabel(unit) {
+  if (!isFreeCannonForLabel(unit)) return;
+  if (!isCannonEntryLocked(unit)) return;
+
+  drawCannonStateLabel(
+    unit,
+    "LOCK",
+    LCD_INK_3
+  );
+}
+
+function isWaitingCannonForLabel(unit) {
+  return (
+    unit.state === "pilot" &&
+    !unit.cannonDestroyed &&
+    unit.wreckRepair > 0
+  );
+}
+
+function drawWaitingCannonLabel(unit) {
+  if (!isWaitingCannonForLabel(unit)) return;
+
+  drawCannonStateLabel(
+    unit,
+    "WAIT",
+    LCD_INK_2
   );
 }
 
@@ -3094,7 +3206,7 @@ function drawAmmoPacks() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    ctx.fillText("+30", p.x, p.y);
+    ctx.fillText("30", p.x, p.y);
 
     ctx.restore();
   }
@@ -3195,6 +3307,16 @@ function drawStains() {
     ctx.stroke();
 
     ctx.restore();
+
+    if (grave.pilotName && grave.nameTime > 0) {
+      drawNameLabel(
+        grave.pilotName,
+        p.x,
+        p.y - z(28),
+        grave.color,
+        1.05
+      );
+    }
   }
 }
 
@@ -3244,31 +3366,11 @@ function drawCannonBody(unit, angle) {
 
   ctx.fillStyle = CANNON_INK;
 
-  if (unit.gunType === "doublegun") {
-    ctx.fillRect(-16, -92 + recoil, 9, 104);
-    ctx.fillRect(7, -92 + recoil, 9, 104);
+  ctx.fillRect(-5, -85 + recoil, 10, 95);
 
-    ctx.fillStyle = LCD_BG;
+  ctx.fillStyle = LCD_BG;
 
-    ctx.fillRect(-13, -92 + recoil, 3, 72);
-    ctx.fillRect(10, -92 + recoil, 3, 72);
-
-    ctx.fillStyle = CANNON_INK;
-
-    ctx.beginPath();
-    ctx.arc(-11.5, -92 + recoil, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(11.5, -92 + recoil, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    ctx.fillRect(-5, -85 + recoil, 10, 95);
-
-    ctx.fillStyle = LCD_BG;
-
-    ctx.fillRect(-2, -85 + recoil, 4, 62);
-  }
+  ctx.fillRect(-2, -85 + recoil, 4, 62);
 
   ctx.beginPath();
   ctx.arc(0, 0, 28, 0, Math.PI * 2);
@@ -3307,6 +3409,9 @@ function drawWreck(unit) {
       : performance.now() * 0.00065;
 
   drawCannonBody(unit, angle);
+  drawFreeCannonLabel(unit);
+  drawLockedCannonLabel(unit);
+  drawWaitingCannonLabel(unit);
 
   if (unit.wreckRepair > 0) {
     const p = worldToScreen(
@@ -3435,11 +3540,40 @@ function drawPilot(unit) {
 
   ctx.restore();
 
+  if (unit.carriedAmmoValue > 0) {
+    ctx.save();
+
+    const ax = p.x + z(unit.pilotRadius + 10);
+    const ay = p.y + z(unit.pilotRadius + 4);
+    const r = z(8);
+
+    ctx.globalAlpha =
+      unit.pilotImmunity > 0 ? 0.22 : 1;
+
+    ctx.beginPath();
+    ctx.arc(ax, ay, r, 0, Math.PI * 2);
+    ctx.fillStyle = LCD_BG_LIGHT;
+    ctx.fill();
+
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = Math.max(1, z(1.5));
+    ctx.stroke();
+
+    ctx.fillStyle = LCD_INK;
+    ctx.font = `${Math.max(8, Math.round(9 * camera.scale))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(unit.carriedAmmoValue, ax, ay);
+
+    ctx.restore();
+  }
+
   drawNameLabel(
     getUnitDisplayName(unit),
     p.x,
     p.y - z(unit.pilotRadius + 15),
-    unit.color
+    unit.color,
+    unit.pilotRadius / PILOT_RADIUS
   );
 }
 
@@ -4075,9 +4209,21 @@ window.addEventListener("mouseup", e => {
   }
 });
 
+function shouldIgnoreGameKeyboard(e) {
+  const target = e.target;
+
+  return (
+    window.GUNS_APP?.started === false ||
+    target?.tagName === "INPUT" ||
+    target?.tagName === "TEXTAREA" ||
+    target?.isContentEditable
+  );
+}
+
 window.addEventListener("keydown", e => {
+  if (shouldIgnoreGameKeyboard(e)) return;
+
   if (
-    window.GUNS_APP?.started !== false &&
     (e.code === "Equal" || e.code === "NumpadAdd")
   ) {
     adjustCameraZoom(1);
@@ -4085,7 +4231,6 @@ window.addEventListener("keydown", e => {
   }
 
   if (
-    window.GUNS_APP?.started !== false &&
     (e.code === "Minus" || e.code === "NumpadSubtract")
   ) {
     adjustCameraZoom(-1);
@@ -4122,6 +4267,8 @@ window.addEventListener("keydown", e => {
 });
 
 window.addEventListener("keyup", e => {
+  if (shouldIgnoreGameKeyboard(e)) return;
+
   if (e.code === "Space") {
     keys.space = false;
     e.preventDefault();

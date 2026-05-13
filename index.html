@@ -3,29 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GUNS Next1</title>
+<title>guns.gs</title>
 <link rel="stylesheet" href="./src/styles.css" />
 </head>
 <body>
 <canvas id="game"></canvas>
 <section id="start-screen" aria-label="GUNS start screen">
   <div class="start-panel">
-    <img
-      class="start-logo"
-      src="./assets/guns-gs-logo.png"
-      alt="GUNS.GS"
-    />
-
     <form id="start-form" autocomplete="off">
       <input
         id="pilot-nick"
         name="pilotNick"
         type="text"
         maxlength="14"
-        placeholder="Введи ник"
-        aria-label="Введи ник"
+        placeholder="PILOT"
+        aria-label="PILOT"
       />
-      <button type="submit">ИГРАТЬ</button>
+      <button type="submit">ПОЕХАЛИ</button>
+      <div id="start-version" aria-label="Game version"></div>
     </form>
   </div>
 </section>

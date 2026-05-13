@@ -28,8 +28,12 @@
   window.addEventListener("DOMContentLoaded", () => {
     const form = document.getElementById("start-form");
     const input = document.getElementById("pilot-nick");
+    const version = document.getElementById("start-version");
 
     input.value = savedNick;
+    if (version) {
+      version.textContent = `v${window.GUNS_CONFIG?.project?.version || "0.0.0"}`;
+    }
     requestAnimationFrame(() => input.focus());
 
     form.addEventListener("submit", event => {
