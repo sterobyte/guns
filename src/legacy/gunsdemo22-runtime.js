@@ -133,6 +133,23 @@ const camera = {
   scale: getCameraBaseScale()
 };
 
+const tutorial = {
+  initialized: false,
+  stepIndex: 0,
+  enteredStep: -1,
+  shotCount: 0,
+  targetBroken: false,
+  ammoSpawned: false,
+  ammoPicked: false,
+  completed: false
+};
+
+const TUTORIAL_TOTAL_STEPS = 6;
+
+function isTutorialMode() {
+  return window.GUNS_APP?.mode === "tutorial";
+}
+
 function getCameraBaseScale() {
   return CAMERA_BASE_SCALE * cameraUserZoom;
 }
@@ -380,6 +397,8 @@ function syncDomainEntities() {
   const occupantByCannonId = new Map();
 
   for (const unit of units) {
+    if (unit.tutorialHidden) continue;
+
     if (
       unit.pilotEntityId &&
       unit.state === "alive" &&
@@ -393,6 +412,8 @@ function syncDomainEntities() {
   }
 
   for (const unit of units) {
+    if (unit.tutorialHidden) continue;
+
     if (unit.pilotEntityId) {
       pilotUnitById.set(unit.pilotEntityId, unit);
 
@@ -493,6 +514,112 @@ if (window.GUNS_APP?.playerNick) {
   window.GUNS_LEGACY.setPlayerNick(
     window.GUNS_APP.playerNick
   );
+}
+
+function resetUnitForTutorial(unit) {
+  unit.tutorialHidden = false;
+  unit.knockback = null;
+  unit.pilotKnockback = null;
+  unit.pilotEject = null;
+  unit.postEjectBrake = null;
+  unit.exitRequested = false;
+  unit.exitStopTimer = 0;
+  unit.recoilTime = 0;
+  unit.fireCooldown = 0;
+  unit.aiTarget = null;
+  unit.aiTimer = 0;
+  unit.aiTargetTimer = 0;
+  unit.aiBurstShots = 0;
+  unit.aiBurstPause = 0;
+  unit.pilotFlyState = "ground";
+  unit.pilotFlyTime = 0;
+  unit.pilotRadius = PILOT_RADIUS;
+  unit.pilotImmunity = 0;
+  unit.carriedAmmoValue = 0;
+  unit.carriedRepairValue = 0;
+  unit.wreckRepair = 0;
+  unit.cannonDestroyed = false;
+  unit.hp = unit.maxHp;
+  unit.wreckHp = 0;
+  unit.ammo = getMaxAmmo(unit);
+}
+
+function hideTutorialUnit(unit) {
+  resetUnitForTutorial(unit);
+  unit.tutorialHidden = true;
+  unit.state = "pilot";
+  unit.cannonDestroyed = true;
+  unit.wreckRepair = 0;
+  unit.hp = 0;
+  unit.ammo = 0;
+  unit.pilotX = ROOM_RIGHT - 80;
+  unit.pilotY = ROOM_BOTTOM - 80;
+  unit.x = ROOM_RIGHT - 80;
+  unit.y = ROOM_BOTTOM - 80;
+}
+
+function setupTutorialScenario() {
+  tutorial.initialized = true;
+  tutorial.stepIndex = 0;
+  tutorial.enteredStep = -1;
+  tutorial.shotCount = 0;
+  tutorial.targetBroken = false;
+  tutorial.ammoSpawned = false;
+  tutorial.ammoPicked = false;
+  tutorial.completed = false;
+
+  bullets.length = 0;
+  ammoPacks.length = 0;
+  explosions.length = 0;
+  smokePuffs.length = 0;
+  rearSmokePuffs.length = 0;
+  trails.length = 0;
+  stains.length = 0;
+  deathOverlays.length = 0;
+  hintMessages.length = 0;
+
+  paused = false;
+  mouse.down = false;
+  cameraUserZoom = CAMERA_ZOOM_MIN;
+  camera.scale = getCameraBaseScale();
+
+  resetUnitForTutorial(player);
+  player.state = "pilot";
+  player.x = -30;
+  player.y = 0;
+  player.pilotX = -310;
+  player.pilotY = 0;
+  player.turretAngle = 0;
+  player.moveAngle = 0;
+  player.ammo = 30;
+  player.score = 0;
+  player.pilotKills = 0;
+  player.cannonBreaks = 0;
+  player.pilotDeaths = 0;
+
+  resetUnitForTutorial(bot1);
+  bot1.state = "alive";
+  bot1.x = 520;
+  bot1.y = 0;
+  bot1.speed = 0;
+  bot1.turretAngle = Math.PI;
+  bot1.moveAngle = Math.PI;
+  bot1.ammo = 0;
+  bot1.score = 0;
+  bot1.pilotKills = 0;
+  bot1.cannonBreaks = 0;
+  bot1.pilotDeaths = 0;
+  bot1.displayName = "TARGET";
+
+  hideTutorialUnit(bot2);
+  hideTutorialUnit(bot3);
+  hideTutorialUnit(bot4);
+  hideTutorialUnit(bot5);
+  hideTutorialUnit(autoGun1);
+  hideTutorialUnit(autoGun2);
+
+  camera.x = player.pilotX;
+  camera.y = player.pilotY;
 }
 
 for (const unit of units) {
@@ -714,6 +841,7 @@ function getEnemies(unit) {
 
   return units.filter(u => {
     if (u === unit) return false;
+    if (u.tutorialHidden) return false;
     if (u.isCannonOnly) return false;
 
     if (
@@ -929,6 +1057,10 @@ function fireBullet(owner, angle) {
   makeBullet(0);
 
   owner.ammo = Math.max(0, owner.ammo - 1);
+
+  if (isTutorialMode() && owner === player) {
+    tutorial.shotCount++;
+  }
 }
 
 function addPowerup(x, y, type, value) {
@@ -1711,6 +1843,7 @@ function tryEnterRepairedCannon(unit) {
   let bestD = Infinity;
 
   for (const cannon of units) {
+    if (cannon.tutorialHidden) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
@@ -1903,6 +2036,8 @@ function updateAmmoPickup() {
     let picked = false;
 
     for (const unit of units) {
+      if (unit.tutorialHidden) continue;
+
       if (
         unit.state === "alive" &&
         distance(unit, pack) <=
@@ -1917,6 +2052,10 @@ function updateAmmoPickup() {
           );
 
           addScore(unit, 40);
+
+          if (isTutorialMode() && unit === player) {
+            tutorial.ammoPicked = true;
+          }
         } else if (pack.type === POWERUP_REPAIR) {
           if (unit.hp >= unit.maxHp) continue;
 
@@ -1945,6 +2084,10 @@ function updateAmmoPickup() {
       ) {
         if (pack.type === POWERUP_AMMO) {
           unit.carriedAmmoValue = pack.value;
+
+          if (isTutorialMode() && unit === player) {
+            tutorial.ammoPicked = true;
+          }
         } else if (pack.type === POWERUP_REPAIR) {
           unit.carriedRepairValue = pack.value;
         }
@@ -1988,6 +2131,7 @@ function updateCannonCollisions() {
       const a = units[i];
       const b = units[j];
 
+      if (a.tutorialHidden || b.tutorialHidden) continue;
       if (a.cannonDestroyed || b.cannonDestroyed) continue;
 
       const key = pairKey(a, b);
@@ -2018,6 +2162,7 @@ function updateCannonCollisions() {
 }
 
 function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
+  if (pilotUnit.tutorialHidden || otherUnit.tutorialHidden) return;
   if (pilotUnit.isCannonOnly) return;
   if (pilotUnit.state !== "pilot") return;
   if (pilotUnit.pilotEject) return;
@@ -2105,6 +2250,7 @@ function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
 }
 
 function updatePilotRunover(cannonUnit, pilotUnit) {
+  if (cannonUnit.tutorialHidden || pilotUnit.tutorialHidden) return;
   if (cannonUnit.cannonDestroyed) return;
   if (cannonUnit.isCannonOnly) return;
   if (pilotUnit.isCannonOnly) return;
@@ -2148,6 +2294,7 @@ function updateBullets(dt) {
 
     for (const target of units) {
       if (target === bullet.owner) continue;
+      if (target.tutorialHidden) continue;
 
       if (target.state === "alive") {
         const d = Math.hypot(
@@ -2425,6 +2572,7 @@ function getNearestFreeCannonForPilot(unit) {
   let bestScore = Infinity;
 
   for (const cannon of units) {
+    if (cannon.tutorialHidden) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
     if (cannon.wreckRepair > 0) continue;
@@ -3030,7 +3178,67 @@ function updateEffects(dt) {
   }
 }
 
+function enterTutorialStep(stepIndex) {
+  if (tutorial.enteredStep === stepIndex) return;
+
+  tutorial.enteredStep = stepIndex;
+
+  if (stepIndex === 3 && !tutorial.ammoSpawned) {
+    tutorial.ammoSpawned = true;
+    player.ammo = 0;
+    addAmmoPack(player.x + 120, player.y - 115, AMMO_PACK_VALUE);
+  }
+}
+
+function updateTutorial(dt) {
+  if (!tutorial.initialized) {
+    setupTutorialScenario();
+  }
+
+  enterTutorialStep(tutorial.stepIndex);
+
+  if (tutorial.completed) return;
+
+  if (tutorial.stepIndex === 0 && player.state === "alive") {
+    tutorial.stepIndex = 1;
+    return;
+  }
+
+  if (tutorial.stepIndex === 1 && tutorial.shotCount > 0) {
+    tutorial.stepIndex = 2;
+    return;
+  }
+
+  if (
+    tutorial.stepIndex === 2 &&
+    (bot1.state !== "alive" || bot1.wreckRepair > 0 || bot1.hp <= 0)
+  ) {
+    tutorial.targetBroken = true;
+    tutorial.stepIndex = 3;
+    return;
+  }
+
+  if (tutorial.stepIndex === 3 && tutorial.ammoPicked) {
+    tutorial.stepIndex = 4;
+    return;
+  }
+
+  if (tutorial.stepIndex === 4 && player.state === "pilot") {
+    tutorial.stepIndex = 5;
+    return;
+  }
+
+  if (tutorial.stepIndex === 5 && isPilotAirborne(player)) {
+    tutorial.completed = true;
+    tutorial.stepIndex = 6;
+  }
+}
+
 function update(dt) {
+  if (isTutorialMode() && !tutorial.initialized) {
+    setupTutorialScenario();
+  }
+
   if (
     player.state !== "pilot" &&
     player.pilotFlyState !== "ground"
@@ -3045,6 +3253,9 @@ function update(dt) {
   updatePlayer(dt);
 
   for (const bot of units) {
+    if (bot.tutorialHidden) continue;
+    if (isTutorialMode()) continue;
+
     if (!bot.isPlayer && !bot.isCannonOnly) {
       updateBot(bot, dt);
     }
@@ -3089,11 +3300,18 @@ function update(dt) {
 
   updatePlayerShooting(dt);
 
-  updateAmmoSpawning(dt);
+  if (!isTutorialMode()) {
+    updateAmmoSpawning(dt);
+  }
+
   updateAmmoPacks(dt);
   updateAmmoPickup();
 
   updateBullets(dt);
+
+  if (isTutorialMode()) {
+    updateTutorial(dt);
+  }
 
   clampUnitsToRoom();
 
@@ -4028,7 +4246,7 @@ function drawScoreboard() {
   ctx.textBaseline = "top";
 
   const sorted = units
-    .filter(unit => !unit.isCannonOnly)
+    .filter(unit => !unit.isCannonOnly && !unit.tutorialHidden)
     .sort(
     (a, b) => b.score - a.score
   );
@@ -4159,6 +4377,7 @@ function getNearestPilotlessCannon(fromUnit) {
   let bestD = Infinity;
 
   for (const cannon of units) {
+    if (cannon.tutorialHidden) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
 
@@ -4421,6 +4640,8 @@ function drawDeathOverlays() {
 }
 
 function drawUnit(unit) {
+  if (unit.tutorialHidden) return;
+
   if (unit.state === "alive") {
     drawCannon(unit, unit.turretAngle);
   } else {
@@ -4440,6 +4661,7 @@ function drawUnit(unit) {
 function drawAirbornePilots() {
   for (const unit of units) {
     if (
+      !unit.tutorialHidden &&
       !unit.isCannonOnly &&
       isPilotAirborne(unit)
     ) {
@@ -4532,6 +4754,99 @@ function drawHints() {
   ctx.restore();
 }
 
+function getTutorialMessageKey() {
+  if (tutorial.completed) return "tutorial.ready";
+
+  const keys = [
+    "tutorial.moveToCannon",
+    "tutorial.driveAndAim",
+    "tutorial.breakTarget",
+    "tutorial.pickAmmo",
+    "tutorial.eject",
+    "tutorial.fly"
+  ];
+
+  return keys[tutorial.stepIndex] || "tutorial.ready";
+}
+
+function wrapCanvasText(message, maxWidth) {
+  const words = String(message).split(" ");
+  const lines = [];
+  let line = "";
+
+  for (const word of words) {
+    const next = line ? line + " " + word : word;
+
+    if (ctx.measureText(next).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+
+  if (line) lines.push(line);
+
+  return lines;
+}
+
+function drawTutorialOverlay() {
+  if (!isTutorialMode()) return;
+  if (!tutorial.initialized) return;
+
+  const panelW = Math.min(520, window.innerWidth - 32);
+  const panelX = (window.innerWidth - panelW) / 2;
+  const panelY = window.innerHeight - 128;
+  const panelH = 88;
+
+  const stepNumber =
+    tutorial.completed
+      ? TUTORIAL_TOTAL_STEPS
+      : Math.min(tutorial.stepIndex + 1, TUTORIAL_TOTAL_STEPS);
+
+  const title = text("tutorial.progress", {
+    step: stepNumber,
+    total: TUTORIAL_TOTAL_STEPS
+  });
+
+  const message = text(getTutorialMessageKey());
+
+  ctx.save();
+
+  ctx.fillStyle = "rgba(189, 208, 138, 0.86)";
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.roundRect(panelX, panelY, panelW, panelH, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = LCD_INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+
+  ctx.font = "12px monospace";
+  ctx.fillText(title, window.innerWidth / 2, panelY + 12);
+
+  ctx.font = tutorial.completed ? "bold 18px monospace" : "15px monospace";
+
+  const lines = wrapCanvasText(message, panelW - 34);
+  const lineHeight = tutorial.completed ? 22 : 19;
+  const firstLineY =
+    panelY + 39 + Math.max(0, 2 - lines.length) * 8;
+
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(
+      lines[i],
+      window.innerWidth / 2,
+      firstLineY + i * lineHeight
+    );
+  }
+
+  ctx.restore();
+}
+
 function draw() {
   drawGrid();
 
@@ -4564,6 +4879,7 @@ function draw() {
 
   drawFlyMode();
   drawHints();
+  drawTutorialOverlay();
 
   drawPauseOverlay();
 }

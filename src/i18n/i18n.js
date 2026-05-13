@@ -9,6 +9,7 @@
       "start.aria": "GUNS start screen",
       "start.nickPlaceholder": "PILOT",
       "start.play": "GO",
+      "start.tutorial": "TUTORIAL",
       "start.versionAria": "Game version",
       "language.aria": "Language",
       "language.ru": "РУССКИЙ",
@@ -21,13 +22,22 @@
       "scoreboard.rank": "#",
       "scoreboard.pilot": "PILOT",
       "scoreboard.score": "SCORE",
-      "mode.fly": "FLY MODE"
+      "mode.fly": "FLY MODE",
+      "tutorial.progress": "TUTORIAL {step}/{total}",
+      "tutorial.moveToCannon": "Move your pilot to the FREE cannon.",
+      "tutorial.driveAndAim": "You are inside. Move the mouse to drive and aim.",
+      "tutorial.breakTarget": "Hold the left mouse button and break the target cannon.",
+      "tutorial.pickAmmo": "Ammo is marked 30. Drive over it to reload.",
+      "tutorial.eject": "Press Z to eject from the cannon.",
+      "tutorial.fly": "Now press F. Fly mode lets the pilot cross danger safely.",
+      "tutorial.ready": "READY FOR BATTLE"
     },
 
     ru: {
       "start.aria": "GUNS стартовый экран",
       "start.nickPlaceholder": "ПИЛОТ",
       "start.play": "ПОЕХАЛИ",
+      "start.tutorial": "ТУТОРИАЛ",
       "start.versionAria": "Версия",
       "language.aria": "Язык",
       "language.ru": "РУССКИЙ",
@@ -40,7 +50,15 @@
       "scoreboard.rank": "#",
       "scoreboard.pilot": "ПИЛОТ",
       "scoreboard.score": "ОЧКИ",
-      "mode.fly": "РЕЖИМ ПОЛЁТА"
+      "mode.fly": "РЕЖИМ ПОЛЁТА",
+      "tutorial.progress": "ТУТОРИАЛ {step}/{total}",
+      "tutorial.moveToCannon": "Подведи пилота к свободной пушке.",
+      "tutorial.driveAndAim": "Ты внутри. Двигай мышью, чтобы ехать и целиться.",
+      "tutorial.breakTarget": "Зажми левую кнопку мыши и сломай учебную пушку.",
+      "tutorial.pickAmmo": "Патроны отмечены числом 30. Наедь на них для перезарядки.",
+      "tutorial.eject": "Нажми Z, чтобы катапультироваться из пушки.",
+      "tutorial.fly": "Теперь нажми F. Режим полёта позволяет безопасно пересекать опасные зоны.",
+      "tutorial.ready": "ГОТОВ К БОЮ"
     }
   };
 
