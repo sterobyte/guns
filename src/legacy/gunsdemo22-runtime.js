@@ -13,6 +13,15 @@ const ROOM_TOP = -ROOM_HEIGHT / 2;
 const ROOM_BOTTOM = ROOM_HEIGHT / 2;
 const CAMERA_WALL_OVERSCAN = 140;
 const CAMERA_BASE_SCALE = 0.86;
+const CAMERA_ZOOM_MIN =
+  window.GUNS_CONFIG?.render?.cameraZoom?.min ??
+  0.72;
+const CAMERA_ZOOM_MAX =
+  window.GUNS_CONFIG?.render?.cameraZoom?.max ??
+  1.22;
+const CAMERA_ZOOM_STEP =
+  window.GUNS_CONFIG?.render?.cameraZoom?.step ??
+  0.06;
 
 const LCD_BG = "#a9bd78";
 const LCD_BG_LIGHT = "#bdd08a";
@@ -25,6 +34,12 @@ const LCD_SOFT = "rgba(31, 43, 22, 0.32)";
 const LCD_PANEL = "rgba(189, 208, 138, 0.62)";
 const CANNON_INK = LCD_INK;
 const PILOT_INK = LCD_INK;
+const GAME_VERSION =
+  window.GUNS_CONFIG?.project?.version ||
+  "0.0.1";
+const HEALTH_BAR_OPACITY =
+  window.GUNS_CONFIG?.render?.healthBarOpacity ??
+  0.5;
 
 const bullets = [];
 const ammoPacks = [];
@@ -72,6 +87,9 @@ const PLAYER_COLOR = "#1f2b16";
 const RED_COLOR = "#33451f";
 const GREEN_COLOR = "#4b5f2f";
 const PURPLE_COLOR = "#5e7340";
+const BOT3_COLOR = "#26391b";
+const BOT4_COLOR = "#6a7f47";
+const BOT5_COLOR = "#405629";
 
 const mouse = {
   x: 0,
@@ -88,12 +106,25 @@ const keys = {
 };
 
 let paused = false;
+let cameraUserZoom = 1;
 
 const camera = {
   x: 0,
   y: 0,
-  scale: CAMERA_BASE_SCALE
+  scale: getCameraBaseScale()
 };
+
+function getCameraBaseScale() {
+  return CAMERA_BASE_SCALE * cameraUserZoom;
+}
+
+function adjustCameraZoom(direction) {
+  cameraUserZoom = clamp(
+    cameraUserZoom + direction * CAMERA_ZOOM_STEP,
+    CAMERA_ZOOM_MIN,
+    CAMERA_ZOOM_MAX
+  );
+}
 
 function randomPilotOffset() {
   const maxScreen = Math.max(window.innerWidth, window.innerHeight);
@@ -222,31 +253,108 @@ const bot2 = makeUnit(
   false
 );
 
+const bot3 = makeUnit(
+  "bot3",
+  -760,
+  520,
+  BOT3_COLOR,
+  126,
+  false
+);
+
+const bot4 = makeUnit(
+  "bot4",
+  760,
+  -520,
+  BOT4_COLOR,
+  126,
+  false
+);
+
+const bot5 = makeUnit(
+  "bot5",
+  0,
+  620,
+  BOT5_COLOR,
+  126,
+  false
+);
+
 const doubleGun = makeUnit(
   "doublegun",
   0,
-  -520,
+  0,
   PURPLE_COLOR,
   0,
   false,
   "doublegun"
 );
 
+const autoGun1 = makeUnit(
+  "autogun1",
+  -520,
+  0,
+  RED_COLOR,
+  0,
+  false
+);
+
+const autoGun2 = makeUnit(
+  "autogun2",
+  520,
+  0,
+  GREEN_COLOR,
+  0,
+  false
+);
+
+function makePilotOnly(unit) {
+  unit.cannonDestroyed = true;
+  unit.hp = 0;
+  unit.wreckHp = 0;
+  unit.wreckRepair = 0;
+  unit.knockback = null;
+  unit.postEjectBrake = null;
+  return unit;
+}
+
+function makeCannonOnly(unit) {
+  unit.isCannonOnly = true;
+  unit.pilotImmunity = 0;
+  return unit;
+}
+
+makePilotOnly(bot3);
+makePilotOnly(bot4);
+makePilotOnly(bot5);
+
 doubleGun.isCannonOnly = true;
 doubleGun.pilotImmunity = 0;
+makeCannonOnly(autoGun1);
+makeCannonOnly(autoGun2);
 
 const units = [
   player,
   bot1,
   bot2,
-  doubleGun
+  bot3,
+  bot4,
+  bot5,
+  doubleGun,
+  autoGun1,
+  autoGun2
 ];
 
 window.GUNS_LEGACY = {
   player,
   bot1,
   bot2,
+  bot3,
+  bot4,
+  bot5,
   doubleGun,
+  autoGun1,
+  autoGun2,
   units,
   bullets,
   ammoPacks,
@@ -256,8 +364,17 @@ window.GUNS_LEGACY = {
   trails,
   stains,
   deathOverlays,
-  hintMessages
+  hintMessages,
+  setPlayerNick(nick) {
+    player.displayName = nick;
+  }
 };
+
+if (window.GUNS_APP?.playerNick) {
+  window.GUNS_LEGACY.setPlayerNick(
+    window.GUNS_APP.playerNick
+  );
+}
 
 for (const unit of units) {
   unit.state = "pilot";
@@ -749,6 +866,8 @@ function addTrail(x, y, radius, color, life = 0.34) {
 
 function updateMovementTrails() {
   for (const unit of units) {
+    if (unit.isCannonOnly) continue;
+
     const cannonMoving =
       Math.hypot(unit.lastMoveVx || 0, unit.lastMoveVy || 0) > 18;
 
@@ -769,11 +888,13 @@ function updateMovementTrails() {
     const pilotMoving =
       unit.state === "pilot" &&
       !unit.pilotEject &&
-      Math.hypot(unit.pilotKnockback ? 1 : 0, 0) === 0;
+      Math.hypot(
+        unit.pilotLastMoveVx || 0,
+        unit.pilotLastMoveVy || 0
+      ) > 18;
 
     if (
-      unit.state === "pilot" &&
-      !unit.pilotEject &&
+      pilotMoving &&
       Math.random() < 0.22
     ) {
       addTrail(
@@ -2366,7 +2487,7 @@ function updatePlayer(dt) {
     camera.y = player.y;
 
     camera.scale +=
-      (CAMERA_BASE_SCALE - camera.scale) *
+      (getCameraBaseScale() - camera.scale) *
       Math.min(1, dt * 8);
 
     clampCamera();
@@ -2392,7 +2513,7 @@ function updatePlayer(dt) {
     const arc = Math.sin(Math.PI * t);
 
     camera.scale =
-      CAMERA_BASE_SCALE * (1 - arc * 0.18);
+      getCameraBaseScale() * (1 - arc * 0.18);
   } else {
     const flyAmount =
       player.state === "pilot"
@@ -2400,7 +2521,7 @@ function updatePlayer(dt) {
         : 0;
 
     const targetScale =
-      CAMERA_BASE_SCALE * (1 - flyAmount * 0.18);
+      getCameraBaseScale() * (1 - flyAmount * 0.18);
 
     camera.scale +=
       (targetScale - camera.scale) *
@@ -2641,8 +2762,11 @@ function update(dt) {
 
   updatePlayer(dt);
 
-  updateBot(bot1, dt);
-  updateBot(bot2, dt);
+  for (const bot of units) {
+    if (!bot.isPlayer && !bot.isCannonOnly) {
+      updateBot(bot, dt);
+    }
+  }
 
   updateCannonCollisions();
 
@@ -2844,12 +2968,12 @@ function drawHealthBar(unit) {
   const height = z(7);
 
   const x = p.x - width / 2;
-  const y = p.y - z(62);
+  const y = p.y - z(52);
 
   const ratio = clamp(unit.hp / unit.maxHp, 0, 1);
 
   ctx.save();
-  ctx.globalAlpha = 0.5;
+  ctx.globalAlpha = HEALTH_BAR_OPACITY;
 
   ctx.fillStyle = LCD_BG_LIGHT;
   ctx.fillRect(x, y, width, height);
@@ -2867,6 +2991,40 @@ function drawHealthBar(unit) {
   );
 
   ctx.restore();
+}
+
+function getUnitDisplayName(unit) {
+  return unit.displayName || unit.id;
+}
+
+function drawNameLabel(text, x, y, color = LCD_INK) {
+  ctx.save();
+
+  ctx.font = "12px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = LCD_BG_LIGHT;
+  ctx.fillStyle = color;
+
+  ctx.strokeText(text, x, y);
+  ctx.fillText(text, x, y);
+
+  ctx.restore();
+}
+
+function drawCannonPilotName(unit) {
+  if (unit.isCannonOnly) return;
+  if (unit.state !== "alive") return;
+
+  const p = worldToScreen(unit.x, unit.y);
+
+  drawNameLabel(
+    getUnitDisplayName(unit),
+    p.x,
+    p.y - z(68),
+    unit.color
+  );
 }
 
 function drawAmmoText(unit) {
@@ -3138,6 +3296,7 @@ function drawCannon(unit, angle) {
   drawCannonBody(unit, angle);
 
   drawHealthBar(unit);
+  drawCannonPilotName(unit);
   drawAmmoText(unit);
 }
 
@@ -3163,11 +3322,14 @@ function drawWreck(unit) {
       1
     );
 
+    ctx.save();
+    ctx.globalAlpha = HEALTH_BAR_OPACITY;
+
     ctx.fillStyle = LCD_BG_LIGHT;
 
     ctx.fillRect(
       p.x - z(35),
-      p.y - z(62),
+      p.y - z(52),
       z(70),
       z(7)
     );
@@ -3176,7 +3338,7 @@ function drawWreck(unit) {
 
     ctx.strokeRect(
       p.x - z(35),
-      p.y - z(62),
+      p.y - z(52),
       z(70),
       z(7)
     );
@@ -3185,10 +3347,12 @@ function drawWreck(unit) {
 
     ctx.fillRect(
       p.x - z(35),
-      p.y - z(62),
+      p.y - z(52),
       z(70) * repairRatio,
       z(7)
     );
+
+    ctx.restore();
   } else {
     drawHealthBar(unit);
   }
@@ -3270,6 +3434,13 @@ function drawPilot(unit) {
   ctx.fill();
 
   ctx.restore();
+
+  drawNameLabel(
+    getUnitDisplayName(unit),
+    p.x,
+    p.y - z(unit.pilotRadius + 15),
+    unit.color
+  );
 }
 
 function drawSmoke() {
@@ -3389,44 +3560,55 @@ function drawScoreboard() {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
 
-  ctx.fillStyle = LCD_PANEL;
-
-  ctx.fillRect(12, 12, 170, 104);
-
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = 1;
-
-  ctx.strokeRect(12, 12, 170, 104);
-
-  ctx.fillStyle = LCD_INK;
-  ctx.textAlign = "left";
-  ctx.fillText(
-    "PILOT",
-    24,
-    24
-  );
-
-  ctx.textAlign = "right";
-  ctx.fillText(
-    "SCORE",
-    170,
-    24
-  );
-
   const sorted = units
     .filter(unit => !unit.isCannonOnly)
     .sort(
     (a, b) => b.score - a.score
   );
 
+  const panelHeight = 76 + sorted.length * 22;
+
+  ctx.fillStyle = LCD_PANEL;
+
+  ctx.fillRect(12, 12, 170, panelHeight);
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 1;
+
+  ctx.strokeRect(12, 12, 170, panelHeight);
+
+  ctx.fillStyle = LCD_INK;
+  ctx.font = "12px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(
+    "v" + GAME_VERSION,
+    24,
+    22
+  );
+
+  ctx.font = "14px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText(
+    "PILOT",
+    24,
+    44
+  );
+
+  ctx.textAlign = "right";
+  ctx.fillText(
+    "SCORE",
+    170,
+    44
+  );
+
   for (let i = 0; i < sorted.length; i++) {
     const unit = sorted[i];
-    const rowY = 46 + i * 22;
+    const rowY = 66 + i * 22;
 
     ctx.fillStyle = unit.color;
     ctx.textAlign = "left";
     ctx.fillText(
-      unit.id,
+      getUnitDisplayName(unit),
       24,
       rowY
     );
@@ -3716,7 +3898,21 @@ function drawUnit(unit) {
       drawWreck(unit);
     }
 
-    if (!unit.isCannonOnly) {
+    if (
+      !unit.isCannonOnly &&
+      !isPilotAirborne(unit)
+    ) {
+      drawPilot(unit);
+    }
+  }
+}
+
+function drawAirbornePilots() {
+  for (const unit of units) {
+    if (
+      !unit.isCannonOnly &&
+      isPilotAirborne(unit)
+    ) {
       drawPilot(unit);
     }
   }
@@ -3828,6 +4024,8 @@ function draw() {
 
   drawPlayerCannonMarker();
 
+  drawAirbornePilots();
+
   drawLCDOverlay();
 
   drawDeathBlur();
@@ -3848,8 +4046,10 @@ function loop(now) {
 
   lastTime = now;
 
-  update(dt);
-  draw();
+  if (window.GUNS_APP?.started !== false) {
+    update(dt);
+    draw();
+  }
 
   requestAnimationFrame(loop);
 }
@@ -3876,6 +4076,22 @@ window.addEventListener("mouseup", e => {
 });
 
 window.addEventListener("keydown", e => {
+  if (
+    window.GUNS_APP?.started !== false &&
+    (e.code === "Equal" || e.code === "NumpadAdd")
+  ) {
+    adjustCameraZoom(1);
+    e.preventDefault();
+  }
+
+  if (
+    window.GUNS_APP?.started !== false &&
+    (e.code === "Minus" || e.code === "NumpadSubtract")
+  ) {
+    adjustCameraZoom(-1);
+    e.preventDefault();
+  }
+
   if (e.code === "Space") {
     keys.space = true;
     e.preventDefault();
@@ -3937,8 +4153,11 @@ window.addEventListener("blur", () => {
 
 resize();
 
-chooseBotMode(bot1);
-chooseBotMode(bot2);
+for (const bot of units) {
+  if (!bot.isPlayer && !bot.isCannonOnly) {
+    chooseBotMode(bot);
+  }
+}
 
 spawnAmmoPack();
 spawnAmmoPack();

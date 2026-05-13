@@ -8,10 +8,32 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<section id="start-screen" aria-label="GUNS start screen">
+  <div class="start-panel">
+    <img
+      class="start-logo"
+      src="./assets/guns-gs-logo.png"
+      alt="GUNS.GS"
+    />
+
+    <form id="start-form" autocomplete="off">
+      <input
+        id="pilot-nick"
+        name="pilotNick"
+        type="text"
+        maxlength="14"
+        placeholder="Введи ник"
+        aria-label="Введи ник"
+      />
+      <button type="submit">ИГРАТЬ</button>
+    </form>
+  </div>
+</section>
 <script src="./src/config/runtime-config.js"></script>
 <script src="./src/domain/entity-access.js"></script>
 <script src="./src/admin/admin-api.js"></script>
 <script src="./src/net/network-adapter.js"></script>
+<script src="./src/app/start-screen.js"></script>
 <script src="./src/legacy/gunsdemo22-runtime.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 # GUNS Next1
 
 This project inherits `gunsdemo22.html`.
+The public brand/domain target is `guns.gs`.
 
 The first goal is preservation: keep the existing graphics, feel, scoring, fly mode,
 doublegun gate, blur, ammo powerups, bot behavior, and LCD style.
@@ -35,6 +36,10 @@ GUNS_ADMIN.setScore("player", 3000)
 GUNS_ADMIN.repairCannons()
 GUNS_NET.describe()
 ```
+
+The start screen stores the local nickname in `localStorage` under
+`guns.playerNick`. The internal legacy player id remains `player`, while the
+scoreboard shows the chosen nickname.
 
 ## Migration Rule
 

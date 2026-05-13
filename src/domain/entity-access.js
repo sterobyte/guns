@@ -15,7 +15,7 @@
   function legacyPilotView(unit) {
     return {
       id: unit.id,
-      nick: unit.nick,
+      nick: unit.displayName || unit.nick || unit.id,
       isPlayer: !!unit.isPlayer,
       controller: unit.isPlayer ? "human" : "bot",
       state: unit.state,
