@@ -23,17 +23,87 @@ const CAMERA_ZOOM_STEP =
   window.GUNS_CONFIG?.render?.cameraZoom?.step ??
   0.06;
 
-const LCD_BG = "#a9bd78";
-const LCD_BG_LIGHT = "#bdd08a";
-const LCD_BG_DARK = "#7f9558";
-const LCD_INK = "#1f2b16";
-const LCD_INK_2 = "#33451f";
-const LCD_INK_3 = "#4b5f2f";
-const LCD_FAINT = "rgba(31, 43, 22, 0.16)";
-const LCD_SOFT = "rgba(31, 43, 22, 0.32)";
-const LCD_PANEL = "rgba(189, 208, 138, 0.62)";
-const CANNON_INK = LCD_INK;
-const PILOT_INK = LCD_INK;
+const DEFAULT_SKIN = {
+  name: "LCD",
+  pageBackground: "#1b2414",
+  roomOutside: "#223018",
+  roomTop: "#bdd08a",
+  roomMiddle: "#a9bd78",
+  roomBottom: "#7f9558",
+  ink: "#1f2b16",
+  ink2: "#33451f",
+  ink3: "#4b5f2f",
+  faint: "rgba(31, 43, 22, 0.16)",
+  soft: "rgba(31, 43, 22, 0.32)",
+  panel: "rgba(189, 208, 138, 0.62)",
+  tutorialPanel: "rgba(189, 208, 138, 0.86)",
+  gridMinor: "rgba(31, 43, 22, 0.08)",
+  gridMajor: "rgba(31, 43, 22, 0.14)",
+  roomVignette: "rgba(31, 43, 22, 0.09)",
+  headerShade: "rgba(31, 43, 22, 0.12)",
+  player: "#1f2b16",
+  bot1: "#33451f",
+  bot2: "#4b5f2f",
+  bot3: "#26391b",
+  bot4: "#6a7f47",
+  bot5: "#405629"
+};
+
+function getSkinById(skinId) {
+  const visual = window.GUNS_CONFIG?.visual || {};
+  const skin =
+    visual.skins?.[skinId] ||
+    visual.skins?.lcd ||
+    {};
+
+  return { ...DEFAULT_SKIN, ...skin };
+}
+
+function getActiveSkin() {
+  return getSkinById(window.GUNS_CONFIG?.visual?.activeSkin);
+}
+
+let SKIN = getActiveSkin();
+let LCD_BG;
+let LCD_BG_LIGHT;
+let LCD_BG_DARK;
+let LCD_INK;
+let LCD_INK_2;
+let LCD_INK_3;
+let LCD_FAINT;
+let LCD_SOFT;
+let LCD_PANEL;
+let CANNON_INK;
+let PILOT_INK;
+let PLAYER_COLOR;
+let RED_COLOR;
+let GREEN_COLOR;
+let BOT3_COLOR;
+let BOT4_COLOR;
+let BOT5_COLOR;
+
+function applySkinPalette(skin) {
+  SKIN = { ...DEFAULT_SKIN, ...skin };
+  LCD_BG = SKIN.roomMiddle;
+  LCD_BG_LIGHT = SKIN.roomTop;
+  LCD_BG_DARK = SKIN.roomBottom;
+  LCD_INK = SKIN.ink;
+  LCD_INK_2 = SKIN.ink2;
+  LCD_INK_3 = SKIN.ink3;
+  LCD_FAINT = SKIN.faint;
+  LCD_SOFT = SKIN.soft;
+  LCD_PANEL = SKIN.panel;
+  CANNON_INK = LCD_INK;
+  PILOT_INK = LCD_INK;
+  PLAYER_COLOR = SKIN.player;
+  RED_COLOR = SKIN.bot1;
+  GREEN_COLOR = SKIN.bot2;
+  BOT3_COLOR = SKIN.bot3;
+  BOT4_COLOR = SKIN.bot4;
+  BOT5_COLOR = SKIN.bot5;
+}
+
+applySkinPalette(SKIN);
 const GAME_VERSION =
   window.GUNS_CONFIG?.project?.version ||
   "0.0.1";
@@ -102,13 +172,6 @@ const CANNON_TYPE_CONFIG = {
 };
 
 const STAIN_LIFE = 60;
-
-const PLAYER_COLOR = "#1f2b16";
-const RED_COLOR = "#33451f";
-const GREEN_COLOR = "#4b5f2f";
-const BOT3_COLOR = "#26391b";
-const BOT4_COLOR = "#6a7f47";
-const BOT5_COLOR = "#405629";
 
 const mouse = {
   x: 0,
@@ -352,6 +415,37 @@ bot2.cannonEntityId = "autogun2";
 autoGun1.cannonEntityId = "autogun3";
 autoGun2.cannonEntityId = "autogun4";
 
+bot1.displayName = "Yuriy";
+bot2.displayName = "Sidorova";
+bot3.displayName = "Kirk";
+bot4.displayName = "Lara";
+bot5.displayName = "Danila";
+
+function setActiveSkin(skinId) {
+  const visual = window.GUNS_CONFIG?.visual;
+
+  if (!visual?.skins?.[skinId]) return null;
+
+  visual.activeSkin = skinId;
+  applySkinPalette(getSkinById(skinId));
+
+  player.color = PLAYER_COLOR;
+  bot1.color = RED_COLOR;
+  bot2.color = GREEN_COLOR;
+  bot3.color = BOT3_COLOR;
+  bot4.color = BOT4_COLOR;
+  bot5.color = BOT5_COLOR;
+  autoGun1.color = RED_COLOR;
+  autoGun2.color = GREEN_COLOR;
+
+  if (window.GUNS_LEGACY) {
+    window.GUNS_LEGACY.skin = SKIN;
+    window.GUNS_LEGACY.skins = visual.skins;
+  }
+
+  return SKIN;
+}
+
 function makePilotOnly(unit) {
   unit.cannonEntityId = null;
   unit.cannonDestroyed = true;
@@ -505,6 +599,10 @@ window.GUNS_LEGACY = {
   stains,
   deathOverlays,
   hintMessages,
+  skin: SKIN,
+  skins: window.GUNS_CONFIG?.visual?.skins || { lcd: SKIN },
+  setActiveSkin,
+  getActiveSkin: () => SKIN,
   setPlayerNick(nick) {
     player.displayName = nick;
   }
@@ -3319,7 +3417,7 @@ function update(dt) {
 }
 
 function drawGrid() {
-  ctx.fillStyle = "#223018";
+  ctx.fillStyle = SKIN.roomOutside;
   ctx.fillRect(
     0,
     0,
@@ -3373,7 +3471,7 @@ function drawGrid() {
   );
   ctx.clip();
 
-  ctx.strokeStyle = "rgba(31, 43, 22, 0.08)";
+  ctx.strokeStyle = SKIN.gridMinor;
   ctx.lineWidth = 1;
 
   ctx.beginPath();
@@ -3396,7 +3494,7 @@ function drawGrid() {
 
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(31, 43, 22, 0.14)";
+  ctx.strokeStyle = SKIN.gridMajor;
   ctx.lineWidth = 1;
 
   const bigGrid = gridSize * 4;
@@ -3423,7 +3521,7 @@ function drawGrid() {
 
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(31, 43, 22, 0.09)";
+  ctx.fillStyle = SKIN.roomVignette;
 
   for (let x = startX; x <= endX; x += gridSize) {
     for (let y = startY; y <= endY; y += gridSize) {
@@ -4270,7 +4368,7 @@ function drawScoreboard() {
 
   ctx.strokeRect(panelX, panelY, panelW, panelHeight);
 
-  ctx.fillStyle = "rgba(31, 43, 22, 0.12)";
+  ctx.fillStyle = SKIN.headerShade;
   ctx.fillRect(panelX + 1, headerY - 6, panelW - 2, 24);
 
   ctx.strokeStyle = LCD_INK;
@@ -4813,7 +4911,7 @@ function drawTutorialOverlay() {
 
   ctx.save();
 
-  ctx.fillStyle = "rgba(189, 208, 138, 0.86)";
+  ctx.fillStyle = SKIN.tutorialPanel;
   ctx.strokeStyle = LCD_INK;
   ctx.lineWidth = 2;
 
