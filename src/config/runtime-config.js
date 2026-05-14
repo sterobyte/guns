@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.3.3",
+    version: "0.4.4",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
@@ -24,7 +24,7 @@ window.GUNS_CONFIG = {
   },
 
   visual: {
-    activeSkin: "cgaNight",
+    activeSkin: "lcd",
     storageKey: "guns.skin",
     skins: {
       lcd: {

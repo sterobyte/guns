@@ -5,13 +5,14 @@ const blurCtx = blurCanvas.getContext("2d");
 
 const gridSize = 40;
 
-const ROOM_WIDTH = 2400;
-const ROOM_HEIGHT = 1600;
-const ROOM_LEFT = -ROOM_WIDTH / 2;
-const ROOM_RIGHT = ROOM_WIDTH / 2;
-const ROOM_TOP = -ROOM_HEIGHT / 2;
-const ROOM_BOTTOM = ROOM_HEIGHT / 2;
-const CAMERA_WALL_OVERSCAN = 140;
+const ROOM_RADIUS = 1200;
+const ROOM_WIDTH = ROOM_RADIUS * 2;
+const ROOM_HEIGHT = ROOM_RADIUS * 2;
+const ROOM_LEFT = -ROOM_RADIUS;
+const ROOM_RIGHT = ROOM_RADIUS;
+const ROOM_TOP = -ROOM_RADIUS;
+const ROOM_BOTTOM = ROOM_RADIUS;
+const CAMERA_WALL_OVERSCAN = 340;
 const CAMERA_BASE_SCALE = 0.86;
 const CAMERA_ZOOM_MIN =
   window.GUNS_CONFIG?.render?.cameraZoom?.min ??
@@ -724,18 +725,7 @@ for (const unit of units) {
   unit.state = "pilot";
 
   clampToRoomPoint(unit, unit.radiusOuter);
-
-  unit.pilotX = clamp(
-    unit.pilotX,
-    ROOM_LEFT + unit.pilotRadius,
-    ROOM_RIGHT - unit.pilotRadius
-  );
-
-  unit.pilotY = clamp(
-    unit.pilotY,
-    ROOM_TOP + unit.pilotRadius,
-    ROOM_BOTTOM - unit.pilotRadius
-  );
+  clampPilotToRoom(unit);
 }
 
 let ammoSpawnTimer = 0;
@@ -760,45 +750,53 @@ function clamp(v, min, max) {
 }
 
 function clampToRoomPoint(obj, radius = 0) {
-  obj.x = clamp(obj.x, ROOM_LEFT + radius, ROOM_RIGHT - radius);
-  obj.y = clamp(obj.y, ROOM_TOP + radius, ROOM_BOTTOM - radius);
+  const maxDistance = Math.max(0, ROOM_RADIUS - radius);
+  const d = Math.hypot(obj.x, obj.y);
+
+  if (d <= maxDistance || d === 0) return;
+
+  obj.x = (obj.x / d) * maxDistance;
+  obj.y = (obj.y / d) * maxDistance;
 }
 
 function isOutsideRoom(x, y, margin = 0) {
-  return (
-    x < ROOM_LEFT - margin ||
-    x > ROOM_RIGHT + margin ||
-    y < ROOM_TOP - margin ||
-    y > ROOM_BOTTOM + margin
-  );
+  return Math.hypot(x, y) > ROOM_RADIUS + margin;
 }
 
+function clampPointToRoom(x, y, radius = 0) {
+  const point = { x, y };
+  clampToRoomPoint(point, radius);
+  return point;
+}
+
+function randomPointInRoom(padding = 0) {
+  const maxDistance = Math.max(0, ROOM_RADIUS - padding);
+  const angle = Math.random() * Math.PI * 2;
+  const distance = Math.sqrt(Math.random()) * maxDistance;
+
+  return {
+    x: Math.cos(angle) * distance,
+    y: Math.sin(angle) * distance
+  };
+}
 
 function clampPilotToRoom(unit) {
-  unit.pilotX = clamp(
-    unit.pilotX,
-    ROOM_LEFT + unit.pilotRadius,
-    ROOM_RIGHT - unit.pilotRadius
-  );
+  const pilotPoint =
+    clampPointToRoom(unit.pilotX, unit.pilotY, unit.pilotRadius);
 
-  unit.pilotY = clamp(
-    unit.pilotY,
-    ROOM_TOP + unit.pilotRadius,
-    ROOM_BOTTOM - unit.pilotRadius
-  );
+  unit.pilotX = pilotPoint.x;
+  unit.pilotY = pilotPoint.y;
 
   if (unit.pilotEject) {
-    unit.pilotEject.endX = clamp(
-      unit.pilotEject.endX,
-      ROOM_LEFT + unit.pilotRadius,
-      ROOM_RIGHT - unit.pilotRadius
-    );
+    const ejectEnd =
+      clampPointToRoom(
+        unit.pilotEject.endX,
+        unit.pilotEject.endY,
+        unit.pilotRadius
+      );
 
-    unit.pilotEject.endY = clamp(
-      unit.pilotEject.endY,
-      ROOM_TOP + unit.pilotRadius,
-      ROOM_BOTTOM - unit.pilotRadius
-    );
+    unit.pilotEject.endX = ejectEnd.x;
+    unit.pilotEject.endY = ejectEnd.y;
   }
 }
 
@@ -855,25 +853,27 @@ function screenToWorld(x, y) {
 function clampCamera() {
   const halfW = window.innerWidth / 2 / camera.scale;
   const halfH = window.innerHeight / 2 / camera.scale;
+  const visibleRadius =
+    Math.hypot(halfW, halfH) -
+    CAMERA_WALL_OVERSCAN / camera.scale;
 
-  if (ROOM_WIDTH <= halfW * 2) {
+  if (visibleRadius >= ROOM_RADIUS) {
     camera.x = 0;
-  } else {
-    camera.x = clamp(
-      camera.x,
-      ROOM_LEFT + halfW - CAMERA_WALL_OVERSCAN / camera.scale,
-      ROOM_RIGHT - halfW + CAMERA_WALL_OVERSCAN / camera.scale
-    );
+    camera.y = 0;
+    return;
   }
 
-  if (ROOM_HEIGHT <= halfH * 2) {
+  const maxCameraDistance = ROOM_RADIUS - Math.max(0, visibleRadius);
+  const d = Math.hypot(camera.x, camera.y);
+
+  if (d > maxCameraDistance && d > 0) {
+    camera.x = (camera.x / d) * maxCameraDistance;
+    camera.y = (camera.y / d) * maxCameraDistance;
+  }
+
+  if (ROOM_WIDTH <= halfW * 2 && ROOM_HEIGHT <= halfH * 2) {
     camera.y = 0;
-  } else {
-    camera.y = clamp(
-      camera.y,
-      ROOM_TOP + halfH - CAMERA_WALL_OVERSCAN / camera.scale,
-      ROOM_BOTTOM - halfH + CAMERA_WALL_OVERSCAN / camera.scale
-    );
+    camera.x = 0;
   }
 }
 
@@ -1181,17 +1181,13 @@ function addRepairPack(x, y, value = REPAIR_PACK_HEAL_RATIO) {
 }
 
 function spawnAmmoPack() {
-  addAmmoPack(
-    randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
-    randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90)
-  );
+  const point = randomPointInRoom(90);
+  addAmmoPack(point.x, point.y);
 }
 
 function spawnRepairPack() {
-  addRepairPack(
-    randomRange(ROOM_LEFT + 90, ROOM_RIGHT - 90),
-    randomRange(ROOM_TOP + 90, ROOM_BOTTOM - 90)
-  );
+  const point = randomPointInRoom(90);
+  addRepairPack(point.x, point.y);
 }
 
 function spawnPowerup() {
@@ -1205,11 +1201,8 @@ function spawnPowerup() {
 function dropCarriedAmmo(unit) {
   if (unit.carriedAmmoValue <= 0) return;
 
-  addAmmoPack(
-    clamp(unit.pilotX, ROOM_LEFT + 90, ROOM_RIGHT - 90),
-    clamp(unit.pilotY, ROOM_TOP + 90, ROOM_BOTTOM - 90),
-    unit.carriedAmmoValue
-  );
+  const point = clampPointToRoom(unit.pilotX, unit.pilotY, 90);
+  addAmmoPack(point.x, point.y, unit.carriedAmmoValue);
 
   unit.carriedAmmoValue = 0;
 }
@@ -1217,11 +1210,8 @@ function dropCarriedAmmo(unit) {
 function dropCarriedRepair(unit) {
   if (unit.carriedRepairValue <= 0) return;
 
-  addRepairPack(
-    clamp(unit.pilotX, ROOM_LEFT + 90, ROOM_RIGHT - 90),
-    clamp(unit.pilotY, ROOM_TOP + 90, ROOM_BOTTOM - 90),
-    unit.carriedRepairValue
-  );
+  const point = clampPointToRoom(unit.pilotX, unit.pilotY, 90);
+  addRepairPack(point.x, point.y, unit.carriedRepairValue);
 
   unit.carriedRepairValue = 0;
 }
@@ -1519,17 +1509,7 @@ function movePilotToward(unit, target, dt, stopDistance = 0) {
   unit.pilotX += (dx / d) * step;
   unit.pilotY += (dy / d) * step;
 
-  unit.pilotX = clamp(
-    unit.pilotX,
-    ROOM_LEFT + unit.pilotRadius,
-    ROOM_RIGHT - unit.pilotRadius
-  );
-
-  unit.pilotY = clamp(
-    unit.pilotY,
-    ROOM_TOP + unit.pilotRadius,
-    ROOM_BOTTOM - unit.pilotRadius
-  );
+  clampPilotToRoom(unit);
 
   unit.pilotLastMoveVx =
     (unit.pilotX - oldX) / Math.max(dt, 0.0001);
@@ -1577,20 +1557,18 @@ function destroyCannon(unit) {
   unit.pilotFlyState = "ground";
   unit.pilotFlyTime = 0;
 
+  const ejectEnd =
+    clampPointToRoom(
+      unit.x + Math.cos(angle) * PILOT_EJECT_DISTANCE,
+      unit.y + Math.sin(angle) * PILOT_EJECT_DISTANCE,
+      PILOT_RADIUS
+    );
+
   unit.pilotEject = {
     startX: unit.x,
     startY: unit.y,
-
-    endX: clamp(
-      unit.x + Math.cos(angle) * PILOT_EJECT_DISTANCE,
-      ROOM_LEFT + PILOT_RADIUS,
-      ROOM_RIGHT - PILOT_RADIUS
-    ),
-    endY: clamp(
-      unit.y + Math.sin(angle) * PILOT_EJECT_DISTANCE,
-      ROOM_TOP + PILOT_RADIUS,
-      ROOM_BOTTOM - PILOT_RADIUS
-    ),
+    endX: ejectEnd.x,
+    endY: ejectEnd.y,
 
     time: 0,
     duration: PILOT_EJECT_TIME
@@ -1663,17 +1641,7 @@ function killPilot(victim, killer) {
   victim.pilotLastMoveVx = 0;
   victim.pilotLastMoveVy = 0;
 
-  victim.pilotX = clamp(
-    victim.pilotX,
-    ROOM_LEFT + victim.pilotRadius,
-    ROOM_RIGHT - victim.pilotRadius
-  );
-
-  victim.pilotY = clamp(
-    victim.pilotY,
-    ROOM_TOP + victim.pilotRadius,
-    ROOM_BOTTOM - victim.pilotRadius
-  );
+  clampPilotToRoom(victim);
 
   victim.state = "pilot";
 }
@@ -1768,17 +1736,7 @@ function updatePilotKnockback(unit, dt) {
     unit.pilotKnockback.startY +
     (unit.pilotKnockback.endY - unit.pilotKnockback.startY) * k;
 
-  unit.pilotX = clamp(
-    unit.pilotX,
-    ROOM_LEFT + unit.pilotRadius,
-    ROOM_RIGHT - unit.pilotRadius
-  );
-
-  unit.pilotY = clamp(
-    unit.pilotY,
-    ROOM_TOP + unit.pilotRadius,
-    ROOM_BOTTOM - unit.pilotRadius
-  );
+  clampPilotToRoom(unit);
 
   unit.pilotLastMoveVx =
     (unit.pilotX - oldX) / Math.max(dt, 0.0001);
@@ -1815,17 +1773,7 @@ function updatePilotEject(unit, dt) {
     unit.pilotEject.startY +
     (unit.pilotEject.endY - unit.pilotEject.startY) * k;
 
-  unit.pilotX = clamp(
-    unit.pilotX,
-    ROOM_LEFT + unit.pilotRadius,
-    ROOM_RIGHT - unit.pilotRadius
-  );
-
-  unit.pilotY = clamp(
-    unit.pilotY,
-    ROOM_TOP + unit.pilotRadius,
-    ROOM_BOTTOM - unit.pilotRadius
-  );
+  clampPilotToRoom(unit);
 
   const arc = Math.sin(Math.PI * t);
 
@@ -2891,27 +2839,22 @@ function finishPlayerExitEject() {
   player.pilotFlyState = "ground";
   player.pilotFlyTime = 0;
 
+  const ejectEnd =
+    clampPointToRoom(
+      player.x +
+        Math.cos(angle + Math.PI) *
+          PILOT_EJECT_DISTANCE,
+      player.y +
+        Math.sin(angle + Math.PI) *
+          PILOT_EJECT_DISTANCE,
+      PILOT_RADIUS
+    );
+
   player.pilotEject = {
     startX: player.x,
     startY: player.y,
-
-    endX:
-      clamp(
-        player.x +
-          Math.cos(angle + Math.PI) *
-            PILOT_EJECT_DISTANCE,
-        ROOM_LEFT + PILOT_RADIUS,
-        ROOM_RIGHT - PILOT_RADIUS
-      ),
-
-    endY:
-      clamp(
-        player.y +
-          Math.sin(angle + Math.PI) *
-            PILOT_EJECT_DISTANCE,
-        ROOM_TOP + PILOT_RADIUS,
-        ROOM_BOTTOM - PILOT_RADIUS
-      ),
+    endX: ejectEnd.x,
+    endY: ejectEnd.y,
 
     time: 0,
     duration: PILOT_EJECT_TIME
@@ -3427,6 +3370,8 @@ function drawGrid() {
 
   const topLeft = worldToScreen(ROOM_LEFT, ROOM_TOP);
   const bottomRight = worldToScreen(ROOM_RIGHT, ROOM_BOTTOM);
+  const center = worldToScreen(0, 0);
+  const arenaRadius = z(ROOM_RADIUS);
 
   const grad = ctx.createLinearGradient(
     0,
@@ -3440,12 +3385,10 @@ function drawGrid() {
   grad.addColorStop(1, LCD_BG_DARK);
 
   ctx.fillStyle = grad;
-  ctx.fillRect(
-    topLeft.x,
-    topLeft.y,
-    bottomRight.x - topLeft.x,
-    bottomRight.y - topLeft.y
-  );
+
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
+  ctx.fill();
 
   const left = ROOM_LEFT;
   const top = ROOM_TOP;
@@ -3463,12 +3406,7 @@ function drawGrid() {
   ctx.save();
 
   ctx.beginPath();
-  ctx.rect(
-    topLeft.x,
-    topLeft.y,
-    bottomRight.x - topLeft.x,
-    bottomRight.y - topLeft.y
-  );
+  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
   ctx.clip();
 
   ctx.strokeStyle = SKIN.gridMinor;
@@ -3542,21 +3480,15 @@ function drawGrid() {
 
   ctx.strokeStyle = LCD_INK;
   ctx.lineWidth = 10;
-  ctx.strokeRect(
-    topLeft.x,
-    topLeft.y,
-    bottomRight.x - topLeft.x,
-    bottomRight.y - topLeft.y
-  );
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
+  ctx.stroke();
 
   ctx.strokeStyle = LCD_BG_DARK;
   ctx.lineWidth = 3;
-  ctx.strokeRect(
-    topLeft.x + 8,
-    topLeft.y + 8,
-    bottomRight.x - topLeft.x - 16,
-    bottomRight.y - topLeft.y - 16
-  );
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, Math.max(0, arenaRadius - 8), 0, Math.PI * 2);
+  ctx.stroke();
 }
 
 function drawHealthBar(unit) {
