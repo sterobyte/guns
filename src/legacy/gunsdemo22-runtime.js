@@ -126,6 +126,7 @@ const stains = [];
 const deathOverlays = [];
 const hintMessages = [];
 const scoreboardRows = new Map();
+const remoteRenderStates = new Map();
 const pilots = [];
 const cannons = [];
 const pilotUnitById = new Map();
@@ -3555,6 +3556,12 @@ function getLocalNetworkSnapshot() {
     state: inCannon ? "in-cannon" : "on-foot",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,
+    hp: inCannon ? player.hp : 0,
+    maxHp: inCannon ? player.maxHp : 100,
+    ammo: inCannon ? player.ammo : 0,
+    maxAmmo: inCannon ? getMaxAmmo(player) : 0,
+    radiusOuter: player.radiusOuter,
+    radiusInner: player.radiusInner,
     score: player.score || 0,
     pilotKills: player.pilotKills || 0,
     cannonBreaks: player.cannonBreaks || 0,
@@ -3897,12 +3904,12 @@ function drawStains() {
   }
 }
 
-function drawCannonBody(unit, angle) {
+function drawCannonBody(unit, angle, alpha = 1) {
   const p = worldToScreen(unit.x, unit.y);
 
   ctx.save();
 
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha = alpha;
 
   ctx.beginPath();
 
@@ -4161,41 +4168,129 @@ function drawPilot(unit) {
   );
 }
 
-function drawRemotePilot(snapshot) {
-  if (!snapshot || snapshot.alive === false) return;
+function angleDelta(from, to) {
+  let delta = to - from;
 
-  const p = worldToScreen(
-    Number(snapshot.x) || 0,
-    Number(snapshot.y) || 0
-  );
-  const radius = z(snapshot.state === "in-cannon" ? 18 : PILOT_RADIUS);
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+
+  return delta;
+}
+
+function smoothRemoteSnapshot(snapshot) {
+  const id =
+    snapshot.clientId ||
+    snapshot.id ||
+    snapshot.nick ||
+    "remote";
+  const x = Number(snapshot.x) || 0;
+  const y = Number(snapshot.y) || 0;
   const angle = Number(snapshot.angle) || 0;
-  const alpha =
+  const current = remoteRenderStates.get(id);
+
+  if (!current) {
+    const initial = {
+      ...snapshot,
+      id,
+      x,
+      y,
+      angle,
+      lastSeenAt: performance.now()
+    };
+
+    remoteRenderStates.set(id, initial);
+    return initial;
+  }
+
+  current.x += (x - current.x) * 0.28;
+  current.y += (y - current.y) * 0.28;
+  current.angle += angleDelta(current.angle, angle) * 0.32;
+  current.state = snapshot.state;
+  current.flying = snapshot.flying;
+  current.alive = snapshot.alive;
+  current.nick = snapshot.nick;
+  current.hp = snapshot.hp;
+  current.maxHp = snapshot.maxHp;
+  current.ammo = snapshot.ammo;
+  current.maxAmmo = snapshot.maxAmmo;
+  current.radiusOuter = snapshot.radiusOuter;
+  current.radiusInner = snapshot.radiusInner;
+  current.receivedAt = snapshot.receivedAt;
+  current.lastSeenAt = performance.now();
+
+  return current;
+}
+
+function pruneRemoteRenderStates(activeIds) {
+  for (const [id, state] of remoteRenderStates) {
+    if (!activeIds.has(id) && performance.now() - state.lastSeenAt > 1800) {
+      remoteRenderStates.delete(id);
+    }
+  }
+}
+
+function drawRemoteCannon(snapshot) {
+  const unit = {
+    x: snapshot.x,
+    y: snapshot.y,
+    radiusOuter: Number(snapshot.radiusOuter) || 34,
+    radiusInner: Number(snapshot.radiusInner) || 13,
+    recoilTime: 0,
+    recoilDuration: 1,
+    hp: Number(snapshot.hp) || 0,
+    maxHp: Number(snapshot.maxHp) || 100,
+    ammo: Math.max(0, Math.floor(Number(snapshot.ammo) || 0)),
+    color: LCD_INK_2
+  };
+  const p = worldToScreen(unit.x, unit.y);
+
+  drawCannonBody(unit, snapshot.angle, 0.82);
+
+  if (unit.hp > 0) {
+    drawHealthBar(unit);
+  }
+
+  if (Number(snapshot.maxAmmo) > 0) {
+    ctx.save();
+    ctx.fillStyle = LCD_INK_2;
+    ctx.font = "12px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      unit.ammo + "/" + Math.floor(Number(snapshot.maxAmmo)),
+      p.x,
+      p.y + z(68)
+    );
+    ctx.restore();
+  }
+
+  drawNameLabel(
+    snapshot.nick || "remote",
+    p.x,
+    p.y - z(68),
+    LCD_INK_2
+  );
+}
+
+function drawRemoteFootPilot(snapshot) {
+  const p = worldToScreen(snapshot.x, snapshot.y);
+  const baseRadius =
     snapshot.flying
-      ? 0.35
-      : snapshot.state === "in-cannon"
-        ? 0.55
-        : 0.7;
+      ? PILOT_RADIUS * 1.8
+      : PILOT_RADIUS;
+  const radius = z(baseRadius);
+  const alpha = snapshot.flying ? 0.45 : 0.78;
 
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.strokeStyle = LCD_INK_2;
-  ctx.fillStyle = LCD_BG_LIGHT;
-  ctx.lineWidth = Math.max(1, z(2));
+  ctx.fillStyle = PILOT_INK;
 
   ctx.beginPath();
   ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.stroke();
 
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = Math.max(1, z(3));
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y);
-  ctx.lineTo(
-    p.x + Math.cos(angle) * radius * 1.45,
-    p.y + Math.sin(angle) * radius * 1.45
-  );
+  ctx.strokeStyle = LCD_INK_2;
+  ctx.lineWidth = Math.max(1, z(1.5));
   ctx.stroke();
   ctx.restore();
 
@@ -4204,16 +4299,38 @@ function drawRemotePilot(snapshot) {
     p.x,
     p.y - radius - z(15),
     LCD_INK_2,
-    snapshot.flying ? 1.15 : 1
+    snapshot.flying ? 1.12 : 1
   );
+}
+
+function drawRemotePilot(snapshot) {
+  if (!snapshot || snapshot.alive === false) return;
+
+  const rendered = smoothRemoteSnapshot(snapshot);
+
+  if (rendered.state === "in-cannon") {
+    drawRemoteCannon(rendered);
+    return;
+  }
+
+  drawRemoteFootPilot(rendered);
 }
 
 function drawRemotePilots() {
   const snapshots = window.GUNS_NET?.getRemoteSnapshots?.() || [];
+  const activeIds = new Set();
 
   for (const snapshot of snapshots) {
+    activeIds.add(
+      snapshot.clientId ||
+        snapshot.id ||
+        snapshot.nick ||
+        "remote"
+    );
     drawRemotePilot(snapshot);
   }
+
+  pruneRemoteRenderStates(activeIds);
 }
 
 function drawSmoke() {

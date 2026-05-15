@@ -106,6 +106,10 @@ automatically restarts `server/index.mjs` if it exits.
 In `0.7.11`, public HTTPS pages do not attempt to call local `127.0.0.1`
 HTTP/WebSocket endpoints, avoiding browser mixed-content warnings.
 
+In `0.8.0`, remote human players are drawn as arena participants instead of
+ghost markers: on-foot pilots show a pilot body and nick, and pilots inside
+cannons show a cannon body, nick, health bar, and ammo count.
+
 When a pilot starts the game, the client also sends the nick to:
 
 ```txt

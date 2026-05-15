@@ -6,7 +6,7 @@ import { UserRegistry } from "./users.mjs";
 
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.7.11";
+const version = "0.8.0";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
 });

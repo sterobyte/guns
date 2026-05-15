@@ -40,6 +40,12 @@ export class ArenaRoomState {
         state: "on-foot",
         flying: false,
         alive: true,
+        hp: 0,
+        maxHp: 100,
+        ammo: 0,
+        maxAmmo: 0,
+        radiusOuter: 34,
+        radiusInner: 13,
         score: 0,
         pilotKills: 0,
         cannonBreaks: 0,
@@ -72,6 +78,12 @@ export class ArenaRoomState {
     player.state = snapshot.state === "in-cannon" ? "in-cannon" : "on-foot";
     player.flying = Boolean(snapshot.flying);
     player.alive = snapshot.alive !== false;
+    player.hp = Math.max(0, finiteNumber(snapshot.hp));
+    player.maxHp = Math.max(1, finiteNumber(snapshot.maxHp) || 100);
+    player.ammo = Math.max(0, Math.floor(finiteNumber(snapshot.ammo)));
+    player.maxAmmo = Math.max(0, Math.floor(finiteNumber(snapshot.maxAmmo)));
+    player.radiusOuter = Math.max(1, finiteNumber(snapshot.radiusOuter) || 34);
+    player.radiusInner = Math.max(1, finiteNumber(snapshot.radiusInner) || 13);
     player.score = Math.max(0, Math.floor(finiteNumber(snapshot.score)));
     player.pilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.cannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
