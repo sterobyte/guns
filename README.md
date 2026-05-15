@@ -19,6 +19,101 @@ Open:
 http://127.0.0.1:5178/
 ```
 
+To start the full local stack in one terminal:
+
+```cmd
+cd C:\Users\stero\Documents\Codex\2026-05-12\files-mentioned-by-the-user-guns\guns-next1
+npm run dev:all
+```
+
+This starts or reuses:
+
+```txt
+http://127.0.0.1:3000/health
+http://127.0.0.1:5178/
+http://127.0.0.1:5179/
+```
+
+## Multiplayer server
+
+The first multiplayer layer is a local Node.js WebSocket room server. It does
+not own game physics yet. It is the connection, room, and input relay foundation
+for the later authoritative server.
+
+Start it in a second terminal:
+
+```cmd
+cd C:\Users\stero\Documents\Codex\2026-05-12\files-mentioned-by-the-user-guns\guns-next1
+npm run server
+```
+
+Server endpoints:
+
+```txt
+http://127.0.0.1:3000/health
+http://127.0.0.1:3000/rooms
+http://127.0.0.1:3000/admin/users
+ws://127.0.0.1:3000/ws?room=main&nick=pilot
+```
+
+Manual browser console smoke test:
+
+```js
+await GUNS_NET.connect({ roomId: "main", nick: "kuni1" })
+GUNS_NET.describe()
+GUNS_NET.sendInput({ fire: true, aimX: 100, aimY: 200 })
+```
+
+In `0.6.0`, game clients auto-connect on game start and exchange lightweight
+player snapshots. A second browser tab in the same room is drawn as a remote
+pilot ghost on the arena.
+
+In `0.7.0`, each room also has a first server-authoritative arena state. The
+server owns the connected human players and shared scoreboard rows. The old
+local simulation still owns bots, cannons, bullets, and pickups until those
+systems are migrated one by one.
+
+In `0.7.1`, the server arena owns shared bot rows in the scoreboard too:
+Yuriy, Sidorova, Kirk, Lara, and Danila.
+
+In `0.7.2`, nickname registration no longer marks an active WebSocket player
+offline. Online status is owned by WebSocket connect/disconnect events.
+
+In `0.7.3`, the client accepts arena scoreboard updates from both the stable
+`arena:state` message and the temporary local `arena` message.
+
+In `0.7.4`, `npm run dev:all` starts the backend, game, and admin panel as one
+local stack with readiness checks.
+
+In `0.7.5`, clients send local bot scoreboard stats to the server so bot rows
+keep gaining points while the bot simulation is still client-side.
+
+In `0.7.6`, `dev:all` verifies backend WebSocket readiness instead of only
+checking HTTP health.
+
+In `0.7.7`, the Windows local launcher uses `start-local.cmd` to start only
+missing ports through stable `cmd /k` service windows.
+
+In `0.7.8`, the Windows launcher starts a backend watchdog that checks HTTP
+and WebSocket readiness and restarts the backend if it drops.
+
+In `0.7.9`, the Windows launcher returns to the stable direct backend window
+after the watchdog proved unreliable in hidden shell mode.
+
+In `0.7.10`, the backend runs through `backend-loop.cmd`, which writes logs and
+automatically restarts `server/index.mjs` if it exits.
+
+In `0.7.11`, public HTTPS pages do not attempt to call local `127.0.0.1`
+HTTP/WebSocket endpoints, avoiding browser mixed-content warnings.
+
+When a pilot starts the game, the client also sends the nick to:
+
+```txt
+POST http://127.0.0.1:3000/users/register
+```
+
+This feeds the separate local admin panel in `..\guns-panel`.
+
 ## Structure
 
 - `src/legacy/gunsdemo22-runtime.js` is the preserved game runtime.
@@ -27,6 +122,8 @@ http://127.0.0.1:5178/
 - `src/domain/entity-access.js` exposes pilot/cannon views over the legacy `units`.
 - `src/admin/admin-api.js` exposes console admin helpers.
 - `src/net/network-adapter.js` is the future multiplayer adapter slot.
+- `server/index.mjs` is the local multiplayer room server.
+- `server/users.mjs` is the in-memory user registry for the admin panel.
 
 ## Console helpers
 

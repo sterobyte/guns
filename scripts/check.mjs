@@ -1,15 +1,31 @@
-import fs from "node:fs";
 import path from "node:path";
-import vm from "node:vm";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const runtimePath = path.join(root, "src", "legacy", "gunsdemo22-runtime.js");
-const runtime = fs.readFileSync(runtimePath, "utf8");
+const files = [
+  path.join(root, "src", "legacy", "gunsdemo22-runtime.js"),
+  path.join(root, "src", "app", "start-screen.js"),
+  path.join(root, "src", "net", "network-adapter.js"),
+  path.join(root, "src", "config", "runtime-config.js"),
+  path.join(root, "scripts", "dev-all.mjs"),
+  path.join(root, "scripts", "watch-backend.mjs"),
+  path.join(root, "server", "protocol.mjs"),
+  path.join(root, "server", "arena.mjs"),
+  path.join(root, "server", "rooms.mjs"),
+  path.join(root, "server", "users.mjs"),
+  path.join(root, "server", "index.mjs")
+];
 
-new vm.Script(runtime, {
-  filename: runtimePath,
-  displayErrors: true
-});
+for (const file of files) {
+  const result = spawnSync(process.execPath, ["--check", file], {
+    encoding: "utf8"
+  });
 
-console.log("legacy runtime syntax ok");
+  if (result.status !== 0) {
+    process.stderr.write(result.stderr || result.stdout);
+    process.exit(result.status || 1);
+  }
+}
+
+console.log("syntax ok");

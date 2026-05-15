@@ -730,6 +730,7 @@ for (const unit of units) {
 
 let ammoSpawnTimer = 0;
 let lastTime = performance.now();
+let lastNetworkSnapshotAt = 0;
 
 const collisionLocks = new Set();
 
@@ -3527,6 +3528,65 @@ function getUnitDisplayName(unit) {
   return unit.displayName || unit.id;
 }
 
+function getServerScoreboardRowColor(row) {
+  if (row.id === window.GUNS_NET?.describe?.().clientId) {
+    return PLAYER_COLOR;
+  }
+
+  if (row.color && SKIN[row.color]) {
+    return SKIN[row.color];
+  }
+
+  if (row.kind === "bot") {
+    return LCD_INK_2;
+  }
+
+  return LCD_INK;
+}
+
+function getLocalNetworkSnapshot() {
+  const inCannon = player.state === "alive";
+
+  return {
+    nick: getUnitDisplayName(player),
+    x: inCannon ? player.x : player.pilotX,
+    y: inCannon ? player.y : player.pilotY,
+    angle: inCannon ? player.turretAngle : player.pilotAngle,
+    state: inCannon ? "in-cannon" : "on-foot",
+    flying: isPilotAirborne(player),
+    alive: player.pilotAlive !== false,
+    score: player.score || 0,
+    pilotKills: player.pilotKills || 0,
+    cannonBreaks: player.cannonBreaks || 0,
+    pilotDeaths: player.pilotDeaths || 0,
+    bots: getLocalBotNetworkSnapshots()
+  };
+}
+
+function getLocalBotNetworkSnapshots() {
+  return units
+    .filter(unit => !unit.isPlayer && !unit.isCannonOnly && !unit.tutorialHidden)
+    .map(unit => ({
+      id: unit.id,
+      nick: getUnitDisplayName(unit),
+      score: unit.score || 0,
+      pilotKills: unit.pilotKills || 0,
+      cannonBreaks: unit.cannonBreaks || 0,
+      pilotDeaths: unit.pilotDeaths || 0
+    }));
+}
+
+function sendNetworkSnapshot(now) {
+  if (!window.GUNS_NET?.connected) return;
+  const rate =
+    window.GUNS_CONFIG?.multiplayer?.snapshotRateMs ||
+    100;
+  if (now - lastNetworkSnapshotAt < rate) return;
+
+  lastNetworkSnapshotAt = now;
+  window.GUNS_NET.sendSnapshot?.(getLocalNetworkSnapshot());
+}
+
 function drawNameLabel(text, x, y, color = LCD_INK, scale = 1) {
   ctx.save();
 
@@ -4101,6 +4161,61 @@ function drawPilot(unit) {
   );
 }
 
+function drawRemotePilot(snapshot) {
+  if (!snapshot || snapshot.alive === false) return;
+
+  const p = worldToScreen(
+    Number(snapshot.x) || 0,
+    Number(snapshot.y) || 0
+  );
+  const radius = z(snapshot.state === "in-cannon" ? 18 : PILOT_RADIUS);
+  const angle = Number(snapshot.angle) || 0;
+  const alpha =
+    snapshot.flying
+      ? 0.35
+      : snapshot.state === "in-cannon"
+        ? 0.55
+        : 0.7;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = LCD_INK_2;
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.lineWidth = Math.max(1, z(2));
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = Math.max(1, z(3));
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y);
+  ctx.lineTo(
+    p.x + Math.cos(angle) * radius * 1.45,
+    p.y + Math.sin(angle) * radius * 1.45
+  );
+  ctx.stroke();
+  ctx.restore();
+
+  drawNameLabel(
+    snapshot.nick || "remote",
+    p.x,
+    p.y - radius - z(15),
+    LCD_INK_2,
+    snapshot.flying ? 1.15 : 1
+  );
+}
+
+function drawRemotePilots() {
+  const snapshots = window.GUNS_NET?.getRemoteSnapshots?.() || [];
+
+  for (const snapshot of snapshots) {
+    drawRemotePilot(snapshot);
+  }
+}
+
 function drawSmoke() {
   for (const smoke of smokePuffs) {
     const p = worldToScreen(
@@ -4275,11 +4390,23 @@ function drawScoreboard() {
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
 
-  const sorted = units
-    .filter(unit => !unit.isCannonOnly && !unit.tutorialHidden)
-    .sort(
-    (a, b) => b.score - a.score
-  );
+  const serverRows = window.GUNS_NET?.getScoreboardRows?.();
+  const sorted =
+    serverRows && serverRows.length > 0
+      ? serverRows.map(row => ({
+          id: row.id,
+          displayName: row.nick,
+          color: getServerScoreboardRowColor(row),
+          score: row.score || 0,
+          pilotKills: row.pilotKills || 0,
+          cannonBreaks: row.cannonBreaks || 0,
+          pilotDeaths: row.pilotDeaths || 0
+        }))
+      : units
+          .filter(unit => !unit.isCannonOnly && !unit.tutorialHidden)
+          .sort(
+          (a, b) => b.score - a.score
+        );
 
   const panelX = 12;
   const panelY = 12;
@@ -4900,6 +5027,7 @@ function draw() {
   drawPlayerCannonMarker();
 
   drawAirbornePilots();
+  drawRemotePilots();
 
   drawLCDOverlay();
 
@@ -4925,6 +5053,7 @@ function loop(now) {
   if (window.GUNS_APP?.started !== false) {
     update(dt);
     syncDomainEntities();
+    sendNetworkSnapshot(now);
     draw();
   }
 

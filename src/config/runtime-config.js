@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.4.4",
+    version: "0.7.11",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
@@ -91,6 +91,18 @@ window.GUNS_CONFIG = {
       authority: "server-authoritative later",
       localMode: true
     }
+  },
+
+  multiplayer: {
+    enabled: true,
+    localHttpUrl: "http://127.0.0.1:3000",
+    localWebSocketUrl: "ws://127.0.0.1:3000/ws",
+    defaultRoomId: "main",
+    maxRoomPlayers: 16,
+    protocolVersion: 1,
+    snapshotRateMs: 100,
+    authoritativeArena: true,
+    serverAuthorityTarget: true
   },
 
   admin: {

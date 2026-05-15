@@ -20,9 +20,14 @@
     },
 
     start(nick, mode = "game") {
-      this.setPlayerNick(nick);
+      const cleanNick = this.setPlayerNick(nick);
       this.mode = mode;
       this.started = true;
+      window.GUNS_NET?.registerUser?.(cleanNick);
+      window.GUNS_NET?.connect?.({
+        roomId: window.GUNS_CONFIG?.multiplayer?.defaultRoomId || "main",
+        nick: cleanNick
+      }).catch(() => {});
       document.getElementById("start-screen")?.classList.add("hidden");
     }
   };

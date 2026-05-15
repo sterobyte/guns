@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.PORT || 5178);
 
+process.stdout?.on?.("error", () => {});
+process.stderr?.on?.("error", () => {});
+
 const types = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -40,5 +43,13 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`GUNS Next1: http://127.0.0.1:${port}/`);
+  safeLog(`GUNS Next1: http://127.0.0.1:${port}/`);
 });
+
+function safeLog(message) {
+  try {
+    console.log(message);
+  } catch {
+    // The server can run detached without a writable console.
+  }
+}
