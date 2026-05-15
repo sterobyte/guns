@@ -119,6 +119,38 @@ In `0.9.1`, a free real nickname can be used once without claiming it. The
 anonymous visit stores that nickname as `unclaimedNick`, and if the visitor
 types it again later the start screen suggests claiming it.
 
+In `0.9.2`, clearing the pilot input no longer silently falls back to the
+anonymous callsign. Empty pilot input blocks game start until the visitor types
+a callsign or refreshes the page.
+
+In `0.9.3`, the pilot input no longer shows a gray `PILOT` placeholder after
+the visitor manually clears the callsign field.
+
+In `0.9.4`, pilot/cannon contact and powerup handling are more physical:
+moving cannons only crush pilots when driving toward them, crushed pilots apply
+carried powerups to the crushing cannon, cannon collisions remove 5% HP from
+each body, and pilots swap carried powerups when running over a new one.
+
+In `0.9.5`, bots keep fighting with 3 ammo instead of immediately switching to
+ammo-seeking mode, and camera clamping uses per-axis overscan so the north and
+south arena edges reveal more outside area.
+
+In `0.9.6`, pilots killed by bullets drop carried powerups back onto the field,
+and immune/faded pilots cannot pick up powerups until immunity ends.
+
+In `0.9.7`, the start screen randomly chooses one background from a configured
+set of three images on each page load.
+
+In `0.9.8`, every start background carries its own accent color, and the start
+screen controls inherit that accent from the randomly selected image.
+
+In `0.9.9`, the legacy tutorial is disabled. The start button remains visible,
+but it is a no-op until the new tutorial flow is scripted.
+
+In `0.9.10`, mobile, tablet, touch-only, and mobile in-app browsers are blocked
+on the start screen with a bilingual desktop-only warning instead of the nick
+form and buttons.
+
 The identity prototype uses these local endpoints:
 
 ```txt

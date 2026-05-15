@@ -15,15 +15,17 @@
       <button type="button" data-language-option="en" data-i18n="language.en">ENGLISH</button>
     </div>
     <!-- <div id="skin-switch" class="skin-switch" aria-label="Skin" data-i18n-aria="skin.aria"></div> -->
+    <div id="unsupported-device" class="unsupported-device hidden" role="status" aria-live="polite">
+      <strong data-i18n="unsupported.title">DESKTOP ONLY</strong>
+      <span data-i18n="unsupported.message">Sorry, GUNS.GS currently supports only desktop systems with a mouse and keyboard.</span>
+    </div>
     <form id="start-form" autocomplete="off">
       <input
         id="pilot-nick"
         name="pilotNick"
         type="text"
         maxlength="14"
-        placeholder="PILOT"
         aria-label="PILOT"
-        data-i18n-placeholder="start.nickPlaceholder"
         data-i18n-aria="start.nickPlaceholder"
       />
       <div id="auth-panel" class="auth-panel hidden" aria-live="polite">

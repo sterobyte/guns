@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.9.1",
+    version: "0.9.10",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
@@ -26,6 +26,20 @@ window.GUNS_CONFIG = {
   visual: {
     activeSkin: "lcd",
     storageKey: "guns.skin",
+    startBackgrounds: [
+      {
+        image: "./assets/start-background.png",
+        accent: "#363a14"
+      },
+      {
+        image: "./assets/start-background-2.png",
+        accent: "#550b0b"
+      },
+      {
+        image: "./assets/start-background-3.png",
+        accent: "#183f4d"
+      }
+    ],
     skins: {
       lcd: {
         name: "LCD",

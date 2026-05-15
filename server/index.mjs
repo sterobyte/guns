@@ -6,7 +6,7 @@ import { AUTH_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
 
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.9.1";
+const version = "0.9.10";
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)

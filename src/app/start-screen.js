@@ -60,6 +60,7 @@
     const authCancel = document.getElementById("auth-cancel");
     const logout = document.getElementById("auth-logout");
 
+    applyRandomStartBackground();
     buildSkinButtons();
     window.GUNS_I18N?.apply();
     syncLanguageButtons();
@@ -67,6 +68,20 @@
 
     if (version) {
       version.textContent = `v${window.GUNS_CONFIG?.project?.version || "0.0.0"}`;
+    }
+
+    document.querySelectorAll("[data-language-option]").forEach(button => {
+      button.addEventListener("click", () => {
+        window.GUNS_I18N?.setLanguage(button.dataset.languageOption);
+        syncLanguageButtons();
+      });
+    });
+
+    window.addEventListener("guns:languagechange", syncLanguageButtons);
+
+    if (isUnsupportedPlayDevice()) {
+      showUnsupportedDeviceWarning();
+      return;
     }
 
     input.value = "";
@@ -81,7 +96,7 @@
     });
 
     tutorialButton?.addEventListener("click", () => {
-      handlePlay("tutorial");
+      // Legacy tutorial is intentionally disabled while the new guided flow is designed.
     });
 
     input.addEventListener("input", () => {
@@ -119,14 +134,6 @@
         });
     });
 
-    document.querySelectorAll("[data-language-option]").forEach(button => {
-      button.addEventListener("click", () => {
-        window.GUNS_I18N?.setLanguage(button.dataset.languageOption);
-        syncLanguageButtons();
-      });
-    });
-
-    window.addEventListener("guns:languagechange", syncLanguageButtons);
   });
 
   async function initializeIdentity() {
@@ -162,6 +169,14 @@
   async function handlePlay(mode) {
     const input = document.getElementById("pilot-nick");
     const nick = sanitizeNick(input.value);
+
+    if (!nick) {
+      input.value = "";
+      hideAuthPanel();
+      setStatus(t("identity.emptyNick"));
+      requestAnimationFrame(() => input.focus());
+      return;
+    }
 
     input.value = nick;
 
@@ -402,6 +417,50 @@
     });
   }
 
+  function applyRandomStartBackground() {
+    const screen = document.getElementById("start-screen");
+    const backgrounds = window.GUNS_CONFIG?.visual?.startBackgrounds || [];
+
+    if (!screen || !backgrounds.length) return;
+
+    const selected = backgrounds[Math.floor(Math.random() * backgrounds.length)];
+    const path = typeof selected === "string" ? selected : selected.image;
+    const accent = typeof selected === "string" ? "" : selected.accent;
+
+    if (!path) return;
+
+    const url = new URL(path, window.location.href).href;
+    screen.style.setProperty("--start-background-image", `url("${url}")`);
+
+    if (accent) {
+      screen.style.setProperty("--start-accent", accent);
+    }
+  }
+
+  function showUnsupportedDeviceWarning() {
+    document.getElementById("start-form")?.classList.add("hidden");
+    document.getElementById("unsupported-device")?.classList.remove("hidden");
+  }
+
+  function isUnsupportedPlayDevice() {
+    const ua = navigator.userAgent || "";
+    const platform = navigator.platform || "";
+    const touchPoints = navigator.maxTouchPoints || 0;
+    const mobileUa = /Android|webOS|iPhone|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
+    const tabletUa = /iPad|Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua));
+    const iPadDesktopMode = /Macintosh/i.test(ua) && /Mac/i.test(platform) && touchPoints > 1;
+    const coarsePrimary = hasMediaQuery("(pointer: coarse)");
+    const anyFinePointer = hasMediaQuery("(any-pointer: fine)");
+    const anyHover = hasMediaQuery("(any-hover: hover)");
+    const touchOnly = touchPoints > 0 && coarsePrimary && !anyFinePointer && !anyHover;
+
+    return mobileUa || tabletUa || iPadDesktopMode || touchOnly;
+  }
+
+  function hasMediaQuery(query) {
+    return Boolean(window.matchMedia && window.matchMedia(query).matches);
+  }
+
   function syncLanguageButtons() {
     const language = window.GUNS_I18N?.language || "en";
 
@@ -423,12 +482,10 @@
   }
 
   function sanitizeNick(nick) {
-    const clean = String(nick || "")
+    return String(nick || "")
       .trim()
       .replace(/\s+/g, " ")
       .slice(0, 14);
-
-    return clean || getCallsign() || window.GUNS_I18N?.t("pilot.defaultNick") || "PILOT";
   }
 
   function normalize(value) {
@@ -445,6 +502,7 @@
       en: {
         "identity.loading": "CONTACTING SERVER...",
         "identity.guestReady": "TEMPORARY PILOT READY",
+        "identity.emptyNick": "ENTER PILOT CALLSIGN",
         "identity.welcome": "WELCOME BACK, {nick}",
         "identity.nickChanged": "ENTER PASSWORD OR CLAIM THIS PILOT",
         "identity.unclaimedHint": "YOU PLAYED AS {nick}. TYPE IT TO CLAIM.",
@@ -465,6 +523,7 @@
       ru: {
         "identity.loading": "СВЯЗЬ С СЕРВЕРОМ...",
         "identity.guestReady": "ВРЕМЕННЫЙ ПИЛОТ ГОТОВ",
+        "identity.emptyNick": "ВВЕДИ ПОЗЫВНОЙ ПИЛОТА",
         "identity.welcome": "С ВОЗВРАЩЕНИЕМ, {nick}",
         "identity.nickChanged": "ВВЕДИ ПАРОЛЬ ИЛИ ЗАСТОЛБИ ПИЛОТА",
         "identity.unclaimedHint": "ТЫ ИГРАЛ КАК {nick}. ВВЕДИ ЕГО, ЧТОБЫ ЗАСТОЛБИТЬ.",

@@ -144,9 +144,13 @@ const BULLET_SPEED = 720;
 const BOT_TURRET_TURN_SPEED = 5.8;
 const BOT_MAX_SHOOT_DISTANCE = 1320;
 const BOT_MIN_SHOT_CONFIDENCE = 0.46;
+const BOT_AMMO_SEEK_THRESHOLD = 2;
 
 const KNOCKBACK_TIME = 0.75;
 const KNOCKBACK_DISTANCE = 170;
+const CANNON_COLLISION_DAMAGE_RATIO = 0.05;
+const CANNON_RUNOVER_MIN_SPEED = 45;
+const CANNON_RUNOVER_DOT = 0.3;
 
 const WRECK_REPAIR_TIME = 16;
 const WRECK_HP = 500;
@@ -209,10 +213,11 @@ const tutorial = {
   completed: false
 };
 
+const LEGACY_TUTORIAL_ENABLED = false;
 const TUTORIAL_TOTAL_STEPS = 6;
 
 function isTutorialMode() {
-  return window.GUNS_APP?.mode === "tutorial";
+  return LEGACY_TUTORIAL_ENABLED && window.GUNS_APP?.mode === "tutorial";
 }
 
 function getCameraBaseScale() {
@@ -855,28 +860,19 @@ function screenToWorld(x, y) {
 function clampCamera() {
   const halfW = window.innerWidth / 2 / camera.scale;
   const halfH = window.innerHeight / 2 / camera.scale;
-  const visibleRadius =
-    Math.hypot(halfW, halfH) -
-    CAMERA_WALL_OVERSCAN / camera.scale;
+  const overscan = CAMERA_WALL_OVERSCAN / camera.scale;
 
-  if (visibleRadius >= ROOM_RADIUS) {
-    camera.x = 0;
-    camera.y = 0;
-    return;
-  }
+  const maxX = Math.max(
+    0,
+    ROOM_RADIUS - Math.max(0, halfW - overscan)
+  );
+  const maxY = Math.max(
+    0,
+    ROOM_RADIUS - Math.max(0, halfH - overscan)
+  );
 
-  const maxCameraDistance = ROOM_RADIUS - Math.max(0, visibleRadius);
-  const d = Math.hypot(camera.x, camera.y);
-
-  if (d > maxCameraDistance && d > 0) {
-    camera.x = (camera.x / d) * maxCameraDistance;
-    camera.y = (camera.y / d) * maxCameraDistance;
-  }
-
-  if (ROOM_WIDTH <= halfW * 2 && ROOM_HEIGHT <= halfH * 2) {
-    camera.y = 0;
-    camera.x = 0;
-  }
+  camera.x = clamp(camera.x, -maxX, maxX);
+  camera.y = clamp(camera.y, -maxY, maxY);
 }
 
 function easeOutCubic(t) {
@@ -1223,6 +1219,59 @@ function dropCarriedPowerups(unit) {
   dropCarriedRepair(unit);
 }
 
+function getCarriedPowerup(unit) {
+  if (unit.carriedAmmoValue > 0) {
+    return {
+      type: POWERUP_AMMO,
+      value: unit.carriedAmmoValue
+    };
+  }
+
+  if (unit.carriedRepairValue > 0) {
+    return {
+      type: POWERUP_REPAIR,
+      value: unit.carriedRepairValue
+    };
+  }
+
+  return null;
+}
+
+function clearCarriedPowerups(unit) {
+  unit.carriedAmmoValue = 0;
+  unit.carriedRepairValue = 0;
+}
+
+function setCarriedPowerup(unit, type, value) {
+  clearCarriedPowerups(unit);
+
+  if (type === POWERUP_AMMO) {
+    unit.carriedAmmoValue = value;
+  } else if (type === POWERUP_REPAIR) {
+    unit.carriedRepairValue = value;
+  }
+}
+
+function getPowerupSwapDropPoint(unit, pack) {
+  const speed = Math.hypot(
+    unit.pilotLastMoveVx || 0,
+    unit.pilotLastMoveVy || 0
+  );
+  const angle =
+    speed > 4
+      ? Math.atan2(unit.pilotLastMoveVy, unit.pilotLastMoveVx) + Math.PI
+      : Math.atan2(
+          unit.pilotY - pack.y,
+          unit.pilotX - pack.x
+        );
+
+  return clampPointToRoom(
+    unit.pilotX + Math.cos(angle) * 42,
+    unit.pilotY + Math.sin(angle) * 42,
+    pack.radius
+  );
+}
+
 function addExplosion(x, y) {
   explosions.push({
     x,
@@ -1384,9 +1433,8 @@ function chooseBotTarget(bot) {
 function chooseBotMode(bot) {
   chooseBotTarget(bot);
 
-  const maxAmmo = getMaxAmmo(bot);
   const lowAmmo =
-    bot.ammo <= Math.max(4, Math.floor(maxAmmo * 0.22));
+    bot.ammo <= BOT_AMMO_SEEK_THRESHOLD;
 
   if (lowAmmo && ammoPacks.length > 0) {
     bot.aiMode = "ammo";
@@ -1688,6 +1736,34 @@ function startCannonKnockback(a, b) {
   startKnockbackUnit(b, -nx, -ny);
 
   collisionLocks.add(pairKey(a, b));
+}
+
+function applyCannonCollisionDamage(unit) {
+  if (unit.cannonDestroyed) return;
+  if (unit.hp <= 0) return;
+
+  unit.hp = Math.max(
+    0,
+    unit.hp - unit.maxHp * CANNON_COLLISION_DAMAGE_RATIO
+  );
+
+  if (unit.hp > 0) return;
+
+  if (unit.state === "alive") {
+    destroyCannon(unit);
+    return;
+  }
+
+  if (unit.state === "pilot" && unit.wreckRepair <= 0) {
+    breakEmptyCannon(unit);
+    return;
+  }
+
+  if (unit.state === "pilot" && unit.wreckRepair > 0) {
+    unit.wreckRepair =
+      WRECK_REPAIR_TIME *
+      (1 - clamp(unit.hp / unit.maxHp, 0, 1));
+  }
 }
 
 function updateKnockback(unit, dt) {
@@ -2077,6 +2153,38 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
   return true;
 }
 
+function applyCarriedPowerupToCannon(pilotUnit, cannonUnit) {
+  const carried = getCarriedPowerup(pilotUnit);
+
+  if (!carried) return false;
+
+  if (carried.type === POWERUP_AMMO) {
+    cannonUnit.ammo = Math.min(
+      getMaxAmmo(cannonUnit),
+      cannonUnit.ammo + carried.value
+    );
+
+    addScore(cannonUnit, 40);
+  } else if (carried.type === POWERUP_REPAIR) {
+    cannonUnit.hp = Math.min(
+      cannonUnit.maxHp,
+      cannonUnit.hp + cannonUnit.maxHp * carried.value
+    );
+
+    if (cannonUnit.wreckRepair > 0) {
+      cannonUnit.wreckRepair =
+        cannonUnit.hp >= cannonUnit.maxHp
+          ? 0
+          : WRECK_REPAIR_TIME *
+            (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
+    }
+  }
+
+  clearCarriedPowerups(pilotUnit);
+
+  return true;
+}
+
 function updateAmmoPickup() {
   for (let i = ammoPacks.length - 1; i >= 0; i--) {
     const pack = ammoPacks[i];
@@ -2123,13 +2231,30 @@ function updateAmmoPickup() {
         unit.state === "pilot" &&
         !unit.isCannonOnly &&
         !isPilotAirborne(unit) &&
-        unit.carriedAmmoValue <= 0 &&
-        unit.carriedRepairValue <= 0 &&
+        unit.pilotImmunity <= 0 &&
         Math.hypot(
           unit.pilotX - pack.x,
           unit.pilotY - pack.y
         ) <= unit.pilotRadius + pack.radius
       ) {
+        const carried = getCarriedPowerup(unit);
+
+        if (carried) {
+          const dropPoint =
+            getPowerupSwapDropPoint(unit, pack);
+
+          setCarriedPowerup(unit, pack.type, pack.value);
+
+          pack.x = dropPoint.x;
+          pack.y = dropPoint.y;
+          pack.type = carried.type;
+          pack.value = carried.value;
+          pack.time = 0;
+
+          picked = true;
+          break;
+        }
+
         if (pack.type === POWERUP_AMMO) {
           unit.carriedAmmoValue = pack.value;
 
@@ -2195,6 +2320,8 @@ function updateCannonCollisions() {
         !a.knockback &&
         !b.knockback
       ) {
+        applyCannonCollisionDamage(a);
+        applyCannonCollisionDamage(b);
         startCannonKnockback(a, b);
       }
 
@@ -2297,6 +2424,26 @@ function updatePilotWreckOrEnemyContact(pilotUnit, otherUnit) {
   }
 }
 
+function isCannonMovingTowardPilot(cannonUnit, pilotUnit) {
+  const vx = cannonUnit.lastMoveVx || 0;
+  const vy = cannonUnit.lastMoveVy || 0;
+  const speed = Math.hypot(vx, vy);
+
+  if (speed < CANNON_RUNOVER_MIN_SPEED) {
+    return false;
+  }
+
+  const dx = pilotUnit.pilotX - cannonUnit.x;
+  const dy = pilotUnit.pilotY - cannonUnit.y;
+  const d = Math.hypot(dx, dy) || 1;
+
+  const dot =
+    (vx / speed) * (dx / d) +
+    (vy / speed) * (dy / d);
+
+  return dot >= CANNON_RUNOVER_DOT;
+}
+
 function updatePilotRunover(cannonUnit, pilotUnit) {
   if (cannonUnit.tutorialHidden || pilotUnit.tutorialHidden) return;
   if (cannonUnit.cannonDestroyed) return;
@@ -2308,7 +2455,6 @@ function updatePilotRunover(cannonUnit, pilotUnit) {
   if (cannonUnit.state !== "alive") return;
   if (pilotUnit.state !== "pilot") return;
   if (pilotUnit.pilotEject) return;
-  if (pilotUnit.pilotImmunity > 0) return;
 
   const d = Math.hypot(
     cannonUnit.x - pilotUnit.pilotX,
@@ -2320,6 +2466,26 @@ function updatePilotRunover(cannonUnit, pilotUnit) {
     cannonUnit.radiusOuter +
       pilotUnit.pilotRadius
   ) {
+    const nx =
+      (pilotUnit.pilotX - cannonUnit.x) /
+      (d || 1);
+
+    const ny =
+      (pilotUnit.pilotY - cannonUnit.y) /
+      (d || 1);
+
+    if (
+      pilotUnit.pilotImmunity > 0 ||
+      !isCannonMovingTowardPilot(cannonUnit, pilotUnit)
+    ) {
+      if (!pilotUnit.pilotKnockback) {
+        startPilotKnockback(pilotUnit, nx, ny);
+      }
+
+      return;
+    }
+
+    applyCarriedPowerupToCannon(pilotUnit, cannonUnit);
     killPilot(pilotUnit, cannonUnit);
   }
 }
@@ -2391,6 +2557,7 @@ function updateBullets(dt) {
             !target.pilotEject &&
             target.pilotImmunity <= 0
           ) {
+            dropCarriedPowerups(target);
             killPilot(target, bullet.owner);
           }
 
@@ -2550,9 +2717,8 @@ function updateBotShooting(bot, dt) {
   bot.fireCooldown -= dt;
   bot.aiBurstPause = Math.max(0, bot.aiBurstPause - dt);
 
-  const maxAmmo = getMaxAmmo(bot);
   const lowAmmo =
-    bot.ammo <= Math.max(2, Math.floor(maxAmmo * 0.10));
+    bot.ammo <= BOT_AMMO_SEEK_THRESHOLD;
 
   if (lowAmmo && ammoPacks.length > 0) {
     bot.aiMode = "ammo";
@@ -3040,9 +3206,8 @@ function updateBot(bot, dt) {
         chooseBotMode(bot);
       }
 
-      const maxAmmo = getMaxAmmo(bot);
       const lowAmmo =
-        bot.ammo <= Math.max(4, Math.floor(maxAmmo * 0.22));
+        bot.ammo <= BOT_AMMO_SEEK_THRESHOLD;
 
       if (lowAmmo && ammoPacks.length > 0) {
         bot.aiMode = "ammo";

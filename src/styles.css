@@ -22,7 +22,7 @@ canvas {
   padding: 18px;
   box-sizing: border-box;
   background: #7f9c56;
-  color: #315a0b;
+  color: var(--start-accent, #315a0b);
   cursor: default;
   overflow: hidden;
 }
@@ -32,7 +32,10 @@ canvas {
   position: absolute;
   inset: -12px;
   z-index: 0;
-  background: url("../assets/start-background.png") center / cover no-repeat;
+  background: var(
+    --start-background-image,
+    url("../assets/start-background.png")
+  ) center / cover no-repeat;
   filter: none;
   transform: scale(1.02);
   animation: start-bg-pulse 16s ease-in-out infinite;
@@ -58,6 +61,40 @@ canvas {
   gap: 12px;
 }
 
+#start-form.hidden {
+  display: none;
+}
+
+.unsupported-device {
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 36px));
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 2px solid #1b2414;
+  border-radius: 6px;
+  background: rgba(247, 247, 240, 0.78);
+  color: #1f2b16;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  text-align: center;
+  box-shadow: 0 3px 0 rgba(27, 36, 20, 0.72);
+}
+
+.unsupported-device.hidden {
+  display: none;
+}
+
+.unsupported-device strong {
+  color: var(--start-accent, #315a0b);
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.unsupported-device span {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .language-switch {
   width: 254px;
   display: grid;
@@ -78,7 +115,7 @@ canvas {
 }
 
 .language-switch button.active {
-  background: #315a0b;
+  background: var(--start-accent, #315a0b);
   color: #fff;
 }
 
@@ -102,7 +139,7 @@ canvas {
 }
 
 .skin-switch button.active {
-  background: #315a0b;
+  background: var(--start-accent, #315a0b);
   color: #fff;
 }
 
@@ -148,11 +185,11 @@ canvas {
 #pilot-nick:focus,
 #pilot-password:focus,
 #pilot-password-repeat:focus {
-  border-color: #315a0b;
+  border-color: var(--start-accent, #315a0b);
 }
 
 #start-form button {
-  background: #315a0b;
+  background: var(--start-accent, #315a0b);
   color: #fff;
   cursor: pointer;
 }
