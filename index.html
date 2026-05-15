@@ -49,10 +49,22 @@
           <button type="button" id="auth-cancel">BACK</button>
         </div>
       </div>
+      <div id="nick-choice-panel" class="nick-choice-panel hidden" role="dialog" aria-live="polite">
+        <button type="button" id="nick-choice-close" class="nick-choice-close" aria-label="Close">×</button>
+        <div id="nick-choice-message" class="auth-message"></div>
+        <div class="nick-choice-actions">
+          <button type="button" id="nick-choice-play">PLAY</button>
+          <button type="button" id="nick-choice-register">REGISTER AND PLAY</button>
+        </div>
+      </div>
+      <div id="logged-in-panel" class="logged-in-panel hidden" aria-live="polite">
+        <div id="logged-in-message" class="logged-in-message"></div>
+        <button type="button" id="logged-in-play" data-i18n="start.play">GO</button>
+        <button type="button" id="auth-logout" class="auth-logout">LOGOUT</button>
+      </div>
       <div id="auth-status" class="auth-status"></div>
-      <button type="submit" data-i18n="start.play">GO</button>
+      <button type="submit" id="guest-go" data-i18n="start.play">GO</button>
       <button type="button" class="tutorial-button" data-i18n="start.tutorial">TUTORIAL</button>
-      <button type="button" id="auth-logout" class="auth-logout hidden">LOGOUT</button>
       <div id="start-version" aria-label="Game version" data-i18n-aria="start.versionAria"></div>
     </form>
   </div>

@@ -65,6 +65,10 @@ canvas {
   display: none;
 }
 
+#start-form .hidden {
+  display: none;
+}
+
 .unsupported-device {
   box-sizing: border-box;
   width: min(360px, calc(100vw - 36px));
@@ -286,13 +290,34 @@ canvas {
   background: rgba(189, 208, 138, 0.82);
 }
 
+.nick-choice-panel {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 14px 10px 10px;
+  border: 2px solid rgba(27, 36, 20, 0.82);
+  border-radius: 6px;
+  background: rgba(189, 208, 138, 0.9);
+}
+
+.logged-in-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 10px;
+  border: 2px solid rgba(27, 36, 20, 0.82);
+  border-radius: 6px;
+  background: rgba(189, 208, 138, 0.86);
+}
+
 .auth-panel.hidden,
-.auth-logout.hidden {
+.nick-choice-panel.hidden,
+.logged-in-panel.hidden {
   display: none;
 }
 
 .auth-message,
-.auth-status {
+.auth-status,
+.logged-in-message {
   min-height: 15px;
   color: #f7f7f0;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
@@ -307,10 +332,40 @@ canvas {
   text-shadow: none;
 }
 
+.logged-in-message {
+  color: #1f2b16;
+  font-size: 12px;
+  text-shadow: none;
+}
+
 .auth-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.nick-choice-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 8px;
+}
+
+#start-form .nick-choice-actions button {
+  font-size: 12px;
+}
+
+#start-form .nick-choice-close {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: #1f2b16;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0;
 }
 
 #start-form .auth-logout {

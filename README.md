@@ -163,6 +163,58 @@ In `0.10.2`, the new tutorial implementation is paused and commented out while
 the project moves toward shared object definitions. The tutorial button remains
 visible, but it is a no-op.
 
+In `0.10.3`, admin user snapshots expose a user kind: `cadet` for service
+callsigns, `nick` for unclaimed real nicknames, and `pilot` for claimed
+accounts.
+
+In `0.10.4`, backend health and admin user snapshots expose process uptime.
+
+In `0.10.5`, unclaimed nick sessions reuse the original anonymous visit during
+WebSocket play instead of creating a duplicate transient user row.
+
+In `0.10.6`, service-like names were briefly reserved. This was intentionally
+reversed in `0.10.7`: any visible nickname text can be used, including
+`CADET-*`; service identity is tracked by internal visit data instead of the
+nickname string.
+
+In `0.10.8`, admin user snapshots expose account `status` values instead of
+`kind`: `visitor`, `unclaimed`, and `registered`.
+
+In `0.10.9`, the visible temporary service name is a plain `CADET`. Pressing
+GO with `CADET` starts as a visitor. Any other free nick opens a choice between
+unclaimed play and registration.
+
+In `0.10.10`, the backend exposes admin deletion for user rows.
+
+In `0.10.11`, claimed accounts use the `claimed` status label, and the start
+screen keeps one unclaimed nickname hint.
+
+In `0.10.12`, editing a different nick while logged in no longer shows a
+premature password/claim hint; the decision appears after pressing GO.
+
+In `0.10.13`, successful login links the current anonymous visit to the claimed
+account so multilogin does not leave an extra `VISITOR / CADET` row.
+
+In `0.10.14`, the start screen has a separate logged-in mode. While a claimed
+session is active, nickname input, guest GO, tutorial, and guest hints are hidden
+so logout is not mixed into the anonymous entry form.
+
+In `0.10.15`, unclaimed users with the same visible callsign keep separate
+presence through their visit cookie. WebSocket presence updates the matching
+visitor id instead of the first row with the same callsign text.
+
+In `0.10.16`, claimed accounts keep one account row while tracking active
+WebSocket connections separately. One login used in two browsers is still one
+user, but the admin API exposes `activeConnections: 2`.
+
+In `0.10.17`, logout resets the anonymous visit cookie, and unclaimed nick play
+never reuses a visit row already linked to a claimed account. New nicknames after
+logout are visible in the admin Users table again.
+
+In `0.10.18`, registration is limited to one claimed pilot per browser device
+cookie. Logout keeps the device marker, so the same device can keep playing as
+visitor/unclaimed or log into existing pilots, but cannot claim a second pilot.
+
 The identity prototype uses these local endpoints:
 
 ```txt

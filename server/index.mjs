@@ -2,11 +2,12 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
-import { AUTH_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
+import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
 
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.10.2";
+const version = "0.10.18";
+const serverStartedAt = Date.now();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
@@ -30,6 +31,8 @@ const server = http.createServer((req, res) => {
       ok: true,
       service: "guns-multiplayer",
       version,
+      startedAt: serverStartedAt,
+      uptimeMs: Date.now() - serverStartedAt,
       time: Date.now()
     });
     return;
@@ -51,6 +54,23 @@ const server = http.createServer((req, res) => {
           setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
             maxAge: 60 * 60 * 24 * 365
           }));
+        }
+
+        if (result.deviceToken) {
+          setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        if (auth?.pilot) {
+          const linkedVisit = users.linkVisitToPilotByToken(
+            cookies[VISIT_COOKIE] || result.visitToken || "",
+            auth.pilot.id
+          );
+
+          if (linkedVisit) {
+            result.visit = linkedVisit;
+          }
         }
 
         sendJson(req, res, 200, {
@@ -106,6 +126,12 @@ const server = http.createServer((req, res) => {
           }));
         }
 
+        if (result.deviceToken) {
+          setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
         sendJson(req, res, 200, {
           ok: true,
           visit: result.visit
@@ -143,6 +169,12 @@ const server = http.createServer((req, res) => {
           }));
         }
 
+        if (result.deviceToken) {
+          setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
         sendJson(req, res, 200, {
           ok: true,
           pilot: result.pilot,
@@ -158,22 +190,37 @@ const server = http.createServer((req, res) => {
   if (url.pathname === "/auth/login" && req.method === "POST") {
     readJsonBody(req)
       .then((body) => {
-        const result = users.loginPilot(body?.nick, body?.password, body?.meta || {});
+        const result = users.loginPilot(body?.nick, body?.password, cookies, body?.meta || {});
 
         if (!result.ok) {
           sendJson(req, res, 401, result);
           return;
         }
 
-        sendJson(req, res, 200, {
-          ok: true,
-          pilot: result.pilot,
-          session: result.session
-        }, [
+        const setCookies = [
           makeCookie(AUTH_COOKIE, result.sessionToken, {
             maxAge: 60 * 60 * 24 * 30
           })
-        ]);
+        ];
+
+        if (result.visitToken) {
+          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        if (result.deviceToken) {
+          setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        sendJson(req, res, 200, {
+          ok: true,
+          pilot: result.pilot,
+          visit: result.visit,
+          session: result.session
+        }, setCookies);
       })
       .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
     return;
@@ -184,7 +231,8 @@ const server = http.createServer((req, res) => {
     sendJson(req, res, 200, {
       ok: true
     }, [
-      clearCookie(AUTH_COOKIE)
+      clearCookie(AUTH_COOKIE),
+      clearCookie(VISIT_COOKIE)
     ]);
     return;
   }
@@ -208,7 +256,31 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === "/admin/users") {
-    sendJson(req, res, 200, users.snapshot());
+    sendJson(req, res, 200, {
+      ...users.snapshot(),
+      serverStartedAt,
+      uptimeMs: Date.now() - serverStartedAt
+    });
+    return;
+  }
+
+  if (url.pathname.startsWith("/admin/users/") && req.method === "DELETE") {
+    const userId = decodeURIComponent(url.pathname.slice("/admin/users/".length));
+    const result = users.deleteUser(userId);
+
+    if (!result.ok) {
+      sendJson(req, res, 404, result);
+      return;
+    }
+
+    sendJson(req, res, 200, {
+      ...result,
+      snapshot: {
+        ...users.snapshot(),
+        serverStartedAt,
+        uptimeMs: Date.now() - serverStartedAt
+      }
+    });
     return;
   }
 
@@ -225,6 +297,7 @@ globalThis.GUNS_MULTIPLAYER_SERVER = server;
 
 server.on("upgrade", (req, socket) => {
   const url = new URL(req.url || "/", `http://${host}:${port}`);
+  const cookies = parseCookies(req.headers.cookie || "");
 
   if (url.pathname !== "/ws") {
     socket.destroy();
@@ -252,10 +325,14 @@ server.on("upgrade", (req, socket) => {
   const client = createClient(socket);
   const roomId = sanitizeRoomId(url.searchParams.get("room"));
   const nick = sanitizeNick(url.searchParams.get("nick"));
+  const visitToken = cookies[VISIT_COOKIE] || "";
 
+  client.visitToken = visitToken;
   hub.join(client, roomId, nick);
   users.register(nick, {
     source: "websocket",
+    visitToken,
+    connectionId: client.id,
     online: true,
     roomId
   });
@@ -294,11 +371,19 @@ server.on("upgrade", (req, socket) => {
 
   socket.on("close", () => {
     hub.leave(client);
-    users.setOnline(client.nick, false, { roomId: "" });
+    users.setOnline(client.nick, false, {
+      roomId: "",
+      connectionId: client.id,
+      visitToken: client.visitToken
+    });
   });
   socket.on("error", () => {
     hub.leave(client);
-    users.setOnline(client.nick, false, { roomId: "" });
+    users.setOnline(client.nick, false, {
+      roomId: "",
+      connectionId: client.id,
+      visitToken: client.visitToken
+    });
   });
 });
 
@@ -314,6 +399,7 @@ function createClient(socket) {
     roomId: "",
     connectedAt: Date.now(),
     lastSeenAt: Date.now(),
+    visitToken: "",
     buffer: Buffer.alloc(0),
     socket,
     send(message) {
@@ -351,7 +437,7 @@ function corsHeaders(req) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };

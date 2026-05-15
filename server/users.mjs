@@ -10,9 +10,11 @@ import { sanitizeNick } from "./rooms.mjs";
 const AUTH_SESSION_TTL = 1000 * 60 * 60 * 24 * 30;
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 128;
+const SERVICE_NICK = "CADET";
 
 export const VISIT_COOKIE = "guns_vid";
 export const AUTH_COOKIE = "guns_sid";
+export const DEVICE_COOKIE = "guns_did";
 
 export class UserRegistry {
   constructor() {
@@ -20,11 +22,13 @@ export class UserRegistry {
     this.visitIdByTokenHash = new Map();
     this.pilots = new Map();
     this.authSessions = new Map();
+    this.devices = new Map();
   }
 
   startVisit(cookies = {}, meta = {}) {
     const existing = this.getVisitByToken(cookies[VISIT_COOKIE]);
     const now = Date.now();
+    const deviceResult = this.ensureDevice(cookies, meta, now);
 
     if (existing) {
       existing.lastSeenAt = now;
@@ -32,7 +36,8 @@ export class UserRegistry {
       existing.meta = mergeMeta(existing.meta, meta);
 
       return {
-        visit: publicVisit(existing)
+        visit: publicVisit(existing),
+        deviceToken: deviceResult.deviceToken
       };
     }
 
@@ -41,7 +46,7 @@ export class UserRegistry {
     const segment = getVisitSegment(meta);
     const visit = {
       id: randomUUID(),
-      callsign: createCallsign(segment.code),
+      callsign: createCallsign(),
       code: segment.code,
       tokenHash,
       firstSeenAt: now,
@@ -49,6 +54,8 @@ export class UserRegistry {
       views: 1,
       sessions: 0,
       online: false,
+      activeConnections: 0,
+      connectionIds: new Set(),
       roomId: "",
       source: "anonymous",
       unclaimedNick: "",
@@ -68,7 +75,43 @@ export class UserRegistry {
 
     return {
       visit: publicVisit(visit),
-      visitToken: token
+      visitToken: token,
+      deviceToken: deviceResult.deviceToken
+    };
+  }
+
+  ensureDevice(cookies = {}, meta = {}, now = Date.now()) {
+    const existing = this.getDeviceByToken(cookies[DEVICE_COOKIE]);
+
+    if (existing) {
+      existing.lastSeenAt = now;
+      existing.views += 1;
+      existing.meta = mergeMeta(existing.meta, meta);
+
+      return {
+        device: existing,
+        deviceToken: ""
+      };
+    }
+
+    const token = createToken();
+    const device = {
+      id: randomUUID(),
+      tokenHash: hashToken(token),
+      firstSeenAt: now,
+      lastSeenAt: now,
+      views: 1,
+      claimedPilotId: "",
+      claimedNick: "",
+      claimedAt: 0,
+      meta
+    };
+
+    this.devices.set(device.tokenHash, device);
+
+    return {
+      device,
+      deviceToken: token
     };
   }
 
@@ -77,6 +120,12 @@ export class UserRegistry {
     const visitId = this.visitIdByTokenHash.get(tokenHash);
 
     return visitId ? this.anonymousVisits.get(visitId) || null : null;
+  }
+
+  getDeviceByToken(token) {
+    const tokenHash = hashToken(token || "");
+
+    return tokenHash ? this.devices.get(tokenHash) || null : null;
   }
 
   getAuthenticatedPilot(cookies = {}) {
@@ -127,7 +176,14 @@ export class UserRegistry {
     const safeMeta = { ...meta };
     delete safeMeta.visitToken;
 
-    const visitResult = this.startVisit(cookies, safeMeta);
+    const currentVisit = this.getVisitByToken(cookies[VISIT_COOKIE]);
+    const visitCookies = currentVisit?.claimedPilotId
+      ? { [DEVICE_COOKIE]: cookies[DEVICE_COOKIE] || "" }
+      : cookies;
+    const visitResult = this.startVisit(
+      visitCookies,
+      safeMeta
+    );
     const visit = this.anonymousVisits.get(visitResult.visit.id);
 
     if (!visit) {
@@ -144,12 +200,16 @@ export class UserRegistry {
     return {
       ok: true,
       visit: publicVisit(visit),
-      visitToken: visitResult.visitToken
+      visitToken: visitResult.visitToken,
+      deviceToken: visitResult.deviceToken || ""
     };
   }
 
   claimPilot(rawNick, password, cookies = {}, meta = {}) {
     const checked = this.checkPilot(rawNick);
+    const now = Date.now();
+    const deviceResult = this.ensureDevice(cookies, meta, now);
+    const device = deviceResult.device;
 
     if (checked.reserved) {
       return error("reserved_nick", "This pilot name is reserved.");
@@ -159,15 +219,21 @@ export class UserRegistry {
       return error("nick_taken", "This pilot name is already claimed.");
     }
 
+    if (device?.claimedPilotId) {
+      return error("device_already_claimed", "This device already has a claimed pilot.");
+    }
+
     const passwordError = validatePassword(password);
 
     if (passwordError) {
       return error(passwordError, "Password is not valid.");
     }
 
-    const visitResult = this.startVisit(cookies, meta);
+    const visitCookies = deviceResult.deviceToken
+      ? { ...cookies, [DEVICE_COOKIE]: deviceResult.deviceToken }
+      : cookies;
+    const visitResult = this.startVisit(visitCookies, meta);
     const visit = this.anonymousVisits.get(visitResult.visit.id);
-    const now = Date.now();
     const pilot = {
       id: randomUUID(),
       nick: checked.nick,
@@ -178,6 +244,8 @@ export class UserRegistry {
       lastLoginAt: now,
       sessions: 1,
       online: false,
+      activeConnections: 0,
+      connectionIds: new Set(),
       roomId: "",
       source: "pilot",
       firstVisitId: visit?.id || "",
@@ -187,13 +255,16 @@ export class UserRegistry {
     };
 
     if (visit) {
-      visit.claimedPilotId = pilot.id;
-      visit.claimedNick = pilot.nick;
-      visit.convertedAt = now;
-      visit.lastSeenAt = now;
+      this.linkVisitToPilot(visit, pilot, now);
     }
 
     this.pilots.set(pilot.normalizedNick, pilot);
+
+    if (device) {
+      device.claimedPilotId = pilot.id;
+      device.claimedNick = pilot.nick;
+      device.claimedAt = now;
+    }
 
     const session = this.createAuthSession(pilot.id, meta);
 
@@ -202,12 +273,13 @@ export class UserRegistry {
       pilot: publicPilot(pilot),
       visit: visit ? publicVisit(visit) : visitResult.visit,
       visitToken: visitResult.visitToken,
+      deviceToken: deviceResult.deviceToken || visitResult.deviceToken || "",
       session: publicSession(session),
       sessionToken: session.token
     };
   }
 
-  loginPilot(rawNick, password, meta = {}) {
+  loginPilot(rawNick, password, cookies = {}, meta = {}) {
     const nick = sanitizeNick(rawNick);
     const pilot = this.pilots.get(normalizeNick(nick));
 
@@ -219,11 +291,21 @@ export class UserRegistry {
     pilot.lastLoginAt = Date.now();
     pilot.lastSeenAt = pilot.lastLoginAt;
 
+    const visitResult = this.startVisit(cookies, meta);
+    const visit = this.anonymousVisits.get(visitResult.visit.id);
+
+    if (visit) {
+      this.linkVisitToPilot(visit, pilot, pilot.lastLoginAt);
+    }
+
     const session = this.createAuthSession(pilot.id, meta);
 
     return {
       ok: true,
       pilot: publicPilot(pilot),
+      visit: visit ? publicVisit(visit) : visitResult.visit,
+      visitToken: visitResult.visitToken,
+      deviceToken: visitResult.deviceToken || "",
       session: publicSession(session),
       sessionToken: session.token
     };
@@ -246,26 +328,46 @@ export class UserRegistry {
   register(rawNick, meta = {}) {
     const nick = sanitizeNick(rawNick);
     const now = Date.now();
+    const countSession = meta.source !== "game-start";
+    const cookieVisit = this.getVisitByToken(meta.visitToken);
+
+    if (cookieVisit && isReservedNick(nick)) {
+      cookieVisit.unclaimedNick = "";
+      cookieVisit.unclaimedNickUsedAt = 0;
+      cookieVisit.lastSeenAt = now;
+      cookieVisit.sessions += countSession ? 1 : 0;
+      updatePresence(cookieVisit, meta);
+      return publicVisit(cookieVisit);
+    }
+
     const pilot = this.pilots.get(normalizeNick(nick));
 
     if (pilot) {
       pilot.lastSeenAt = now;
-      pilot.online = meta.online === undefined ? pilot.online : Boolean(meta.online);
-      pilot.roomId = meta.roomId || pilot.roomId || "";
+      updatePresence(pilot, meta);
+
+      if (cookieVisit) {
+        this.linkVisitToPilot(cookieVisit, pilot, now);
+      }
+
       return publicPilot(pilot);
     }
 
-    const visit = this.getVisitByCallsign(nick);
+    if (cookieVisit && visitMatchesNick(cookieVisit, nick)) {
+      cookieVisit.lastSeenAt = now;
+      cookieVisit.sessions += countSession ? 1 : 0;
+      updatePresence(cookieVisit, meta);
+      return publicVisit(cookieVisit);
+    }
+
+    const visit = this.getVisitByNick(nick);
 
     if (visit) {
       visit.lastSeenAt = now;
-      visit.sessions += 1;
-      visit.online = meta.online === undefined ? visit.online : Boolean(meta.online);
-      visit.roomId = meta.roomId || visit.roomId || "";
+      visit.sessions += countSession ? 1 : 0;
+      updatePresence(visit, meta);
       return publicVisit(visit);
     }
-
-    const cookieVisit = this.getVisitByToken(meta.visitToken);
 
     if (cookieVisit && !isReservedNick(nick)) {
       const result = this.useUnclaimedNick(nick, {
@@ -281,8 +383,10 @@ export class UserRegistry {
       firstSeenAt: now,
       lastSeenAt: now,
       views: 0,
-      sessions: 1,
+      sessions: countSession ? 1 : 0,
       online: meta.online === undefined ? false : Boolean(meta.online),
+      activeConnections: 0,
+      connectionIds: new Set(),
       roomId: meta.roomId || "",
       source: "transient",
       unclaimedNick: nick,
@@ -293,28 +397,31 @@ export class UserRegistry {
     };
 
     this.anonymousVisits.set(fallback.id, fallback);
+    updatePresence(fallback, meta);
     return publicVisit(fallback);
   }
 
   setOnline(rawNick, online, meta = {}) {
     const nick = sanitizeNick(rawNick);
+    const visit = this.getVisitByToken(meta.visitToken);
     const pilot = this.pilots.get(normalizeNick(nick));
-    const entity = pilot || this.getVisitByCallsign(nick);
+    const entity = pilot || visit || this.getVisitByNick(nick);
 
     if (!entity) return null;
 
-    entity.online = Boolean(online);
     entity.lastSeenAt = Date.now();
-
-    if (meta.roomId !== undefined) {
-      entity.roomId = meta.roomId || "";
-    }
+    updatePresence(entity, {
+      ...meta,
+      online
+    });
 
     return pilot ? publicPilot(entity) : publicVisit(entity);
   }
 
   list() {
-    const visits = Array.from(this.anonymousVisits.values()).map(publicVisit);
+    const visits = Array.from(this.anonymousVisits.values())
+      .filter((visit) => !visit.claimedPilotId)
+      .map(publicVisit);
     const pilots = Array.from(this.pilots.values()).map(publicPilot);
 
     return [...pilots, ...visits]
@@ -329,9 +436,77 @@ export class UserRegistry {
       total: users.length,
       anonymousTotal: this.anonymousVisits.size,
       pilotsTotal: this.pilots.size,
+      devicesTotal: this.devices.size,
       online: users.filter((user) => user.online).length,
+      connections: users.reduce((sum, user) => sum + (user.activeConnections || 0), 0),
       serverTime: Date.now()
     };
+  }
+
+  deleteUser(userId) {
+    const id = String(userId || "");
+
+    if (this.anonymousVisits.has(id)) {
+      const visit = this.anonymousVisits.get(id);
+      this.anonymousVisits.delete(id);
+
+      if (visit?.tokenHash) {
+        this.visitIdByTokenHash.delete(visit.tokenHash);
+      }
+
+      return {
+        ok: true,
+        deleted: {
+          id,
+          status: "visit"
+        }
+      };
+    }
+
+    for (const [normalizedNick, pilot] of this.pilots.entries()) {
+      if (pilot.id !== id) continue;
+
+      this.pilots.delete(normalizedNick);
+
+      for (const [tokenHash, session] of this.authSessions.entries()) {
+        if (session.pilotId === id) {
+          this.authSessions.delete(tokenHash);
+        }
+      }
+
+      return {
+        ok: true,
+        deleted: {
+          id,
+          status: "claimed"
+        }
+      };
+    }
+
+    return error("user_not_found", "User row was not found.");
+  }
+
+  linkVisitToPilotByToken(token, pilotId) {
+    const visit = this.getVisitByToken(token);
+    const pilot = this.getPilotById(pilotId);
+
+    if (!visit || !pilot) return null;
+
+    this.linkVisitToPilot(visit, pilot);
+    return publicVisit(visit);
+  }
+
+  linkVisitToPilot(visit, pilot, now = Date.now()) {
+    visit.claimedPilotId = pilot.id;
+    visit.claimedNick = pilot.nick;
+    visit.convertedAt = visit.convertedAt || now;
+    visit.lastSeenAt = now;
+
+    if (!pilot.firstVisitId) {
+      pilot.firstVisitId = visit.id;
+    }
+
+    return visit;
   }
 
   getVisitByCallsign(callsign) {
@@ -339,6 +514,19 @@ export class UserRegistry {
 
     for (const visit of this.anonymousVisits.values()) {
       if (visit.callsign === nick) {
+        return visit;
+      }
+    }
+
+    return null;
+  }
+
+  getVisitByNick(rawNick) {
+    const nick = sanitizeNick(rawNick);
+    const normalizedNick = normalizeNick(nick);
+
+    for (const visit of this.anonymousVisits.values()) {
+      if (normalizeNick(getVisitNick(visit)) === normalizedNick) {
         return visit;
       }
     }
@@ -391,9 +579,12 @@ export class UserRegistry {
 }
 
 function publicVisit(visit) {
+  const nick = getVisitNick(visit);
+  const status = getVisitStatus(visit);
+
   return {
     id: visit.id,
-    nick: visit.callsign,
+    nick,
     callsign: visit.callsign,
     code: visit.code || 0,
     firstSeenAt: visit.firstSeenAt,
@@ -401,9 +592,10 @@ function publicVisit(visit) {
     sessions: visit.sessions || 0,
     views: visit.views || 0,
     online: Boolean(visit.online),
+    activeConnections: getActiveConnections(visit),
     roomId: visit.roomId || "",
     source: visit.source || "anonymous",
-    kind: "anonymous",
+    status,
     unclaimedNick: visit.unclaimedNick || "",
     unclaimedNickUsedAt: visit.unclaimedNickUsedAt || 0,
     unclaimedNickSessions: visit.unclaimedNickSessions || 0,
@@ -423,13 +615,71 @@ function publicPilot(pilot) {
     lastLoginAt: pilot.lastLoginAt,
     sessions: pilot.sessions || 0,
     online: Boolean(pilot.online),
+    activeConnections: getActiveConnections(pilot),
     roomId: pilot.roomId || "",
     source: pilot.source || "pilot",
-    kind: "pilot",
+    status: "claimed",
     firstVisitId: pilot.firstVisitId || "",
     telegramLinked: Boolean(pilot.telegramId),
     telegramUsername: pilot.telegramUsername || ""
   };
+}
+
+function getVisitStatus(visit) {
+  return visit.unclaimedNick ? "unclaimed" : "visitor";
+}
+
+function getVisitNick(visit) {
+  return visit.unclaimedNick || visit.callsign;
+}
+
+function visitMatchesNick(visit, nick) {
+  return normalizeNick(getVisitNick(visit)) === normalizeNick(nick);
+}
+
+function updatePresence(entity, meta = {}) {
+  const hasOnline = meta.online !== undefined;
+  const connectionId = String(meta.connectionId || "");
+
+  ensureConnectionSet(entity);
+
+  if (connectionId) {
+    if (meta.online) {
+      entity.connectionIds.add(connectionId);
+    } else if (hasOnline) {
+      entity.connectionIds.delete(connectionId);
+    }
+
+    entity.activeConnections = entity.connectionIds.size;
+    entity.online = entity.activeConnections > 0;
+  } else if (hasOnline) {
+    entity.online = Boolean(meta.online);
+
+    if (!entity.online) {
+      entity.connectionIds.clear();
+      entity.activeConnections = 0;
+    } else if (!entity.activeConnections) {
+      entity.activeConnections = 1;
+    }
+  }
+
+  if (meta.roomId !== undefined) {
+    entity.roomId = entity.online ? meta.roomId || entity.roomId || "" : "";
+  }
+}
+
+function ensureConnectionSet(entity) {
+  if (!(entity.connectionIds instanceof Set)) {
+    entity.connectionIds = new Set();
+  }
+
+  entity.activeConnections = entity.connectionIds.size;
+  return entity.connectionIds;
+}
+
+function getActiveConnections(entity) {
+  ensureConnectionSet(entity);
+  return entity.connectionIds.size || (entity.online ? entity.activeConnections || 1 : 0);
 }
 
 function publicSession(session) {
@@ -483,11 +733,11 @@ function normalizeNick(nick) {
 }
 
 function isReservedNick(nick) {
-  return /^CADET-\d{3}-[A-Z0-9]{3}$/i.test(nick) || /^GUEST-/i.test(nick);
+  return normalizeNick(nick) === normalizeNick(SERVICE_NICK);
 }
 
-function createCallsign(code) {
-  return `CADET-${String(code).padStart(3, "0")}-${createTail()}`;
+function createCallsign() {
+  return SERVICE_NICK;
 }
 
 function createTail() {

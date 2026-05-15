@@ -1,5 +1,6 @@
 (function () {
   const AUTH_MIN_PASSWORD_LENGTH = 6;
+  const SERVICE_NICK = "CADET";
   const state = {
     visit: null,
     pilot: null,
@@ -58,6 +59,10 @@
     const passwordRepeat = document.getElementById("pilot-password-repeat");
     const authConfirm = document.getElementById("auth-confirm");
     const authCancel = document.getElementById("auth-cancel");
+    const choicePlay = document.getElementById("nick-choice-play");
+    const choiceRegister = document.getElementById("nick-choice-register");
+    const choiceClose = document.getElementById("nick-choice-close");
+    const loggedInPlay = document.getElementById("logged-in-play");
     const logout = document.getElementById("auth-logout");
 
     applyRandomStartBackground();
@@ -77,7 +82,10 @@
       });
     });
 
-    window.addEventListener("guns:languagechange", syncLanguageButtons);
+    window.addEventListener("guns:languagechange", () => {
+      syncLanguageButtons();
+      syncLogoutButton();
+    });
 
     if (isUnsupportedPlayDevice()) {
       showUnsupportedDeviceWarning();
@@ -87,7 +95,11 @@
     input.value = "";
     setStatus(t("identity.loading"));
     initializeIdentity().finally(() => {
-      requestAnimationFrame(() => input.focus());
+      requestAnimationFrame(() => {
+        if (!state.pilot) {
+          input.focus();
+        }
+      });
     });
 
     form.addEventListener("submit", event => {
@@ -101,10 +113,11 @@
 
     input.addEventListener("input", () => {
       hideAuthPanel();
+      hideNickChoicePanel();
       if (state.pilot && normalize(input.value) !== normalize(state.pilot.nick)) {
-        setStatus(t("identity.nickChanged"));
+        setStatus("");
       } else if (!state.pilot && isKnownUnclaimedNick(input.value)) {
-        setStatus(t("identity.unclaimedReturn", { nick: state.visit.unclaimedNick }));
+        setStatus(t("identity.unclaimedHint", { nick: state.visit.unclaimedNick }));
       } else if (!state.pilot && isServiceNick(input.value)) {
         setStatus(t("identity.guestReady"));
       } else {
@@ -123,14 +136,47 @@
       setStatus(state.pilot ? t("identity.welcome", { nick: state.pilot.nick }) : t("identity.guestReady"));
     });
 
+    choicePlay?.addEventListener("click", () => {
+      playUnclaimedNick();
+    });
+
+    choiceRegister?.addEventListener("click", () => {
+      hideNickChoicePanel();
+      showAuthPanel("claim", t("identity.claim", { nick: state.pendingNick }));
+    });
+
+    choiceClose?.addEventListener("click", () => {
+      hideNickChoicePanel();
+      setStatus("");
+      requestAnimationFrame(() => input.focus());
+    });
+
+    loggedInPlay?.addEventListener("click", () => {
+      if (state.pilot?.nick) {
+        window.GUNS_APP.start(state.pilot.nick, "game");
+      }
+    });
+
     logout?.addEventListener("click", () => {
       window.GUNS_NET?.logout?.()
-        .finally(() => {
+        .finally(async () => {
           state.pilot = null;
+          const result = await window.GUNS_NET?.startAnonymousVisit?.(collectVisitMeta());
+          if (result?.visit) {
+            state.visit = result.visit;
+          } else {
+            state.localCallsign = createLocalCallsign();
+            state.visit = {
+              callsign: state.localCallsign,
+              source: "local-fallback"
+            };
+          }
           input.value = getCallsign();
           hideAuthPanel();
+          hideNickChoicePanel();
           syncLogoutButton();
           setStatus(t("identity.loggedOut"));
+          requestAnimationFrame(() => input.focus());
         });
     });
 
@@ -155,7 +201,7 @@
       window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
       setStatus(t("identity.welcome", { nick: result.pilot.nick }));
     } else {
-      document.getElementById("pilot-nick").value = getCallsign();
+      document.getElementById("pilot-nick").value = state.visit?.unclaimedNick || getCallsign();
       setStatus(
         state.visit?.unclaimedNick
           ? t("identity.unclaimedHint", { nick: state.visit.unclaimedNick })
@@ -186,7 +232,8 @@
     }
 
     if (isServiceNick(nick)) {
-      window.GUNS_APP.start(nick, mode);
+      input.value = SERVICE_NICK;
+      window.GUNS_APP.start(SERVICE_NICK, mode);
       return;
     }
 
@@ -208,18 +255,7 @@
     }
 
     if (pilotInfo.available) {
-      if (isKnownUnclaimedNick(state.pendingNick)) {
-        showAuthPanel("claim", t("identity.claim", { nick: state.pendingNick }));
-        return;
-      }
-
-      const unclaimed = await window.GUNS_NET?.useUnclaimedNick?.(state.pendingNick, collectVisitMeta());
-
-      if (unclaimed?.ok && unclaimed.visit) {
-        state.visit = unclaimed.visit;
-      }
-
-      window.GUNS_APP.start(state.pendingNick, mode);
+      showNickChoicePanel(state.pendingNick);
       return;
     }
 
@@ -247,7 +283,7 @@
         : await window.GUNS_NET?.claimPilot?.(state.pendingNick, password, meta);
 
     if (!result?.ok || !result?.pilot) {
-      setAuthMessage(t(result?.error === "nick_taken" ? "identity.nickTaken" : "identity.authFailed"));
+      setAuthMessage(t(getAuthErrorKey(result?.error)));
       return;
     }
 
@@ -256,6 +292,29 @@
     window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
     syncLogoutButton();
     window.GUNS_APP.start(result.pilot.nick, state.pendingMode);
+  }
+
+  async function playUnclaimedNick() {
+    const nick = state.pendingNick;
+
+    if (!nick || isServiceNick(nick)) {
+      hideNickChoicePanel();
+      return;
+    }
+
+    setNickChoiceMessage(t("identity.authWorking"));
+
+    const unclaimed = await window.GUNS_NET?.useUnclaimedNick?.(nick, collectVisitMeta());
+
+    if (!unclaimed?.ok || !unclaimed.visit) {
+      hideNickChoicePanel();
+      setStatus(t(unclaimed?.error === "nick_taken" ? "identity.nickTaken" : "identity.authFailed"));
+      return;
+    }
+
+    state.visit = unclaimed.visit;
+    hideNickChoicePanel();
+    window.GUNS_APP.start(nick, state.pendingMode);
   }
 
   function showAuthPanel(mode, message) {
@@ -282,6 +341,26 @@
     state.authMode = "";
   }
 
+  function showNickChoicePanel(nick) {
+    const panel = document.getElementById("nick-choice-panel");
+
+    hideAuthPanel();
+    setStatus("");
+    setNickChoiceMessage(t("identity.freeNick", { nick }));
+    panel?.classList.remove("hidden");
+  }
+
+  function hideNickChoicePanel() {
+    document.getElementById("nick-choice-panel")?.classList.add("hidden");
+  }
+
+  function setNickChoiceMessage(message) {
+    const element = document.getElementById("nick-choice-message");
+    if (element) {
+      element.textContent = message || "";
+    }
+  }
+
   function setStatus(message) {
     const status = document.getElementById("auth-status");
     if (status) {
@@ -296,8 +375,36 @@
     }
   }
 
+  function getAuthErrorKey(errorCode) {
+    if (errorCode === "nick_taken") return "identity.nickTaken";
+    if (errorCode === "device_already_claimed") return "identity.deviceAlreadyClaimed";
+    return "identity.authFailed";
+  }
+
   function syncLogoutButton() {
-    document.getElementById("auth-logout")?.classList.toggle("hidden", !state.pilot);
+    const loggedIn = Boolean(state.pilot);
+    const loggedInPanel = document.getElementById("logged-in-panel");
+    const message = document.getElementById("logged-in-message");
+    const input = document.getElementById("pilot-nick");
+    const status = document.getElementById("auth-status");
+    const guestGo = document.getElementById("guest-go");
+    const tutorial = document.querySelector(".tutorial-button");
+
+    loggedInPanel?.classList.toggle("hidden", !loggedIn);
+    input?.classList.toggle("hidden", loggedIn);
+    status?.classList.toggle("hidden", loggedIn);
+    guestGo?.classList.toggle("hidden", loggedIn);
+    tutorial?.classList.toggle("hidden", loggedIn);
+
+    if (message) {
+      message.textContent = loggedIn ? t("identity.loggedInAs", { nick: state.pilot.nick }) : "";
+    }
+
+    if (loggedIn) {
+      hideAuthPanel();
+      hideNickChoicePanel();
+      setStatus("");
+    }
   }
 
   function isKnownUnclaimedNick(value) {
@@ -373,7 +480,7 @@
   function createLocalCallsign() {
     if (state.localCallsign) return state.localCallsign;
 
-    state.localCallsign = `CADET-000-${createTail()}`;
+    state.localCallsign = SERVICE_NICK;
     return state.localCallsign;
   }
 
@@ -493,7 +600,7 @@
   }
 
   function isServiceNick(value) {
-    return /^CADET-\d{3}-[A-Z0-9]{3}$/i.test(String(value || "").trim());
+    return normalize(value) === normalize(SERVICE_NICK);
   }
 
   function t(key, params = {}) {
@@ -504,10 +611,9 @@
         "identity.guestReady": "TEMPORARY PILOT READY",
         "identity.emptyNick": "ENTER PILOT CALLSIGN",
         "identity.welcome": "WELCOME BACK, {nick}",
-        "identity.nickChanged": "ENTER PASSWORD OR CLAIM THIS PILOT",
-        "identity.unclaimedHint": "YOU PLAYED AS {nick}. TYPE IT TO CLAIM.",
-        "identity.unclaimedReturn": "{nick} IS STILL UNCLAIMED. CLAIM IT?",
+        "identity.unclaimedHint": "YOU PLAYED AS {nick}. PLAY OR CLAIM IT.",
         "identity.checking": "CHECKING PILOT...",
+        "identity.freeNick": "{nick} IS FREE",
         "identity.claim": "CLAIM {nick}: CREATE PASSWORD",
         "identity.login": "{nick} IS CLAIMED: ENTER PASSWORD",
         "identity.claimButton": "CLAIM",
@@ -517,7 +623,9 @@
         "identity.authWorking": "WORKING...",
         "identity.authFailed": "ACCESS DENIED",
         "identity.nickTaken": "PILOT IS ALREADY CLAIMED",
+        "identity.deviceAlreadyClaimed": "THIS DEVICE ALREADY HAS A CLAIMED PILOT",
         "identity.reserved": "THIS CALLSIGN IS RESERVED",
+        "identity.loggedInAs": "SIGNED IN AS {nick}",
         "identity.loggedOut": "LOGGED OUT. PASSWORD REQUIRED NEXT TIME."
       },
       ru: {
@@ -525,10 +633,9 @@
         "identity.guestReady": "ВРЕМЕННЫЙ ПИЛОТ ГОТОВ",
         "identity.emptyNick": "ВВЕДИ ПОЗЫВНОЙ ПИЛОТА",
         "identity.welcome": "С ВОЗВРАЩЕНИЕМ, {nick}",
-        "identity.nickChanged": "ВВЕДИ ПАРОЛЬ ИЛИ ЗАСТОЛБИ ПИЛОТА",
-        "identity.unclaimedHint": "ТЫ ИГРАЛ КАК {nick}. ВВЕДИ ЕГО, ЧТОБЫ ЗАСТОЛБИТЬ.",
-        "identity.unclaimedReturn": "{nick} ВСЕ ЕЩЕ НЕ ЗАСТОЛБЛЕН. ЗАСТОЛБИМ?",
+        "identity.unclaimedHint": "ТЫ ИГРАЛ КАК {nick}. ИГРАЙ ИЛИ ЗАСТОЛБИ.",
         "identity.checking": "ПРОВЕРЯЕМ ПИЛОТА...",
+        "identity.freeNick": "{nick} СВОБОДЕН",
         "identity.claim": "ЗАСТОЛБИТЬ {nick}: СОЗДАЙ ПАРОЛЬ",
         "identity.login": "{nick} УЖЕ ЗАНЯТ: ВВЕДИ ПАРОЛЬ",
         "identity.claimButton": "ЗАСТОЛБИТЬ",
@@ -538,7 +645,9 @@
         "identity.authWorking": "РАБОТАЕМ...",
         "identity.authFailed": "ВХОД ЗАПРЕЩЕН",
         "identity.nickTaken": "ПИЛОТ УЖЕ ЗАСТОЛБЛЕН",
+        "identity.deviceAlreadyClaimed": "НА ЭТОМ УСТРОЙСТВЕ УЖЕ ЕСТЬ ПИЛОТ",
         "identity.reserved": "СЛУЖЕБНЫЙ ПОЗЫВНОЙ ЗАРЕЗЕРВИРОВАН",
+        "identity.loggedInAs": "ВХОД: {nick}",
         "identity.loggedOut": "ВЫХОД ВЫПОЛНЕН. ДАЛЬШЕ НУЖЕН ПАРОЛЬ."
       }
     };
