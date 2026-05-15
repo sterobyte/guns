@@ -1,70 +1,565 @@
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+  timingSafeEqual
+} from "node:crypto";
 import { sanitizeNick } from "./rooms.mjs";
+
+const AUTH_SESSION_TTL = 1000 * 60 * 60 * 24 * 30;
+const MIN_PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_LENGTH = 128;
+
+export const VISIT_COOKIE = "guns_vid";
+export const AUTH_COOKIE = "guns_sid";
 
 export class UserRegistry {
   constructor() {
-    this.users = new Map();
+    this.anonymousVisits = new Map();
+    this.visitIdByTokenHash = new Map();
+    this.pilots = new Map();
+    this.authSessions = new Map();
+  }
+
+  startVisit(cookies = {}, meta = {}) {
+    const existing = this.getVisitByToken(cookies[VISIT_COOKIE]);
+    const now = Date.now();
+
+    if (existing) {
+      existing.lastSeenAt = now;
+      existing.views += 1;
+      existing.meta = mergeMeta(existing.meta, meta);
+
+      return {
+        visit: publicVisit(existing)
+      };
+    }
+
+    const token = createToken();
+    const tokenHash = hashToken(token);
+    const segment = getVisitSegment(meta);
+    const visit = {
+      id: randomUUID(),
+      callsign: createCallsign(segment.code),
+      code: segment.code,
+      tokenHash,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      views: 1,
+      sessions: 0,
+      online: false,
+      roomId: "",
+      source: "anonymous",
+      unclaimedNick: "",
+      unclaimedNickUsedAt: 0,
+      unclaimedNickSessions: 0,
+      meta: {
+        ...meta,
+        segment: segment.label
+      },
+      claimedPilotId: null,
+      claimedNick: "",
+      convertedAt: 0
+    };
+
+    this.anonymousVisits.set(visit.id, visit);
+    this.visitIdByTokenHash.set(tokenHash, visit.id);
+
+    return {
+      visit: publicVisit(visit),
+      visitToken: token
+    };
+  }
+
+  getVisitByToken(token) {
+    const tokenHash = hashToken(token || "");
+    const visitId = this.visitIdByTokenHash.get(tokenHash);
+
+    return visitId ? this.anonymousVisits.get(visitId) || null : null;
+  }
+
+  getAuthenticatedPilot(cookies = {}) {
+    const token = cookies[AUTH_COOKIE];
+    const session = this.getSessionByToken(token);
+
+    if (!session) return null;
+
+    const pilot = this.getPilotById(session.pilotId);
+
+    if (!pilot) return null;
+
+    session.lastSeenAt = Date.now();
+    pilot.lastSeenAt = session.lastSeenAt;
+
+    return {
+      pilot: publicPilot(pilot),
+      session: publicSession(session)
+    };
+  }
+
+  checkPilot(rawNick) {
+    const nick = sanitizeNick(rawNick);
+    const normalizedNick = normalizeNick(nick);
+    const reserved = isReservedNick(nick);
+    const pilot = this.pilots.get(normalizedNick);
+
+    return {
+      nick,
+      normalizedNick,
+      exists: Boolean(pilot),
+      available: !reserved && !pilot,
+      reserved
+    };
+  }
+
+  useUnclaimedNick(rawNick, cookies = {}, meta = {}) {
+    const checked = this.checkPilot(rawNick);
+
+    if (checked.reserved) {
+      return error("reserved_nick", "This pilot name is reserved.");
+    }
+
+    if (!checked.available) {
+      return error("nick_taken", "This pilot name is already claimed.");
+    }
+
+    const safeMeta = { ...meta };
+    delete safeMeta.visitToken;
+
+    const visitResult = this.startVisit(cookies, safeMeta);
+    const visit = this.anonymousVisits.get(visitResult.visit.id);
+
+    if (!visit) {
+      return error("visit_missing", "Anonymous visit is missing.");
+    }
+
+    const now = Date.now();
+
+    visit.unclaimedNick = checked.nick;
+    visit.unclaimedNickUsedAt = now;
+    visit.unclaimedNickSessions = (visit.unclaimedNickSessions || 0) + 1;
+    visit.lastSeenAt = now;
+
+    return {
+      ok: true,
+      visit: publicVisit(visit),
+      visitToken: visitResult.visitToken
+    };
+  }
+
+  claimPilot(rawNick, password, cookies = {}, meta = {}) {
+    const checked = this.checkPilot(rawNick);
+
+    if (checked.reserved) {
+      return error("reserved_nick", "This pilot name is reserved.");
+    }
+
+    if (!checked.available) {
+      return error("nick_taken", "This pilot name is already claimed.");
+    }
+
+    const passwordError = validatePassword(password);
+
+    if (passwordError) {
+      return error(passwordError, "Password is not valid.");
+    }
+
+    const visitResult = this.startVisit(cookies, meta);
+    const visit = this.anonymousVisits.get(visitResult.visit.id);
+    const now = Date.now();
+    const pilot = {
+      id: randomUUID(),
+      nick: checked.nick,
+      normalizedNick: checked.normalizedNick,
+      passwordHash: hashPassword(password),
+      createdAt: now,
+      lastSeenAt: now,
+      lastLoginAt: now,
+      sessions: 1,
+      online: false,
+      roomId: "",
+      source: "pilot",
+      firstVisitId: visit?.id || "",
+      telegramId: null,
+      telegramUsername: "",
+      telegramLinkedAt: 0
+    };
+
+    if (visit) {
+      visit.claimedPilotId = pilot.id;
+      visit.claimedNick = pilot.nick;
+      visit.convertedAt = now;
+      visit.lastSeenAt = now;
+    }
+
+    this.pilots.set(pilot.normalizedNick, pilot);
+
+    const session = this.createAuthSession(pilot.id, meta);
+
+    return {
+      ok: true,
+      pilot: publicPilot(pilot),
+      visit: visit ? publicVisit(visit) : visitResult.visit,
+      visitToken: visitResult.visitToken,
+      session: publicSession(session),
+      sessionToken: session.token
+    };
+  }
+
+  loginPilot(rawNick, password, meta = {}) {
+    const nick = sanitizeNick(rawNick);
+    const pilot = this.pilots.get(normalizeNick(nick));
+
+    if (!pilot || !verifyPassword(password, pilot.passwordHash)) {
+      return error("invalid_credentials", "Pilot name or password is wrong.");
+    }
+
+    pilot.sessions += 1;
+    pilot.lastLoginAt = Date.now();
+    pilot.lastSeenAt = pilot.lastLoginAt;
+
+    const session = this.createAuthSession(pilot.id, meta);
+
+    return {
+      ok: true,
+      pilot: publicPilot(pilot),
+      session: publicSession(session),
+      sessionToken: session.token
+    };
+  }
+
+  logout(cookies = {}) {
+    const tokenHash = hashToken(cookies[AUTH_COOKIE] || "");
+    const session = this.authSessions.get(tokenHash);
+
+    if (session) {
+      session.revokedAt = Date.now();
+      this.authSessions.delete(tokenHash);
+    }
+
+    return {
+      ok: true
+    };
   }
 
   register(rawNick, meta = {}) {
     const nick = sanitizeNick(rawNick);
     const now = Date.now();
-    const existing = this.users.get(nick);
+    const pilot = this.pilots.get(normalizeNick(nick));
 
-    if (existing) {
-      existing.lastSeenAt = now;
-      existing.sessions += 1;
-
-      if (meta.online !== undefined) {
-        existing.online = Boolean(meta.online);
-      }
-
-      existing.roomId = meta.roomId || existing.roomId || "";
-      existing.source = meta.source || existing.source || "game";
-      return existing;
+    if (pilot) {
+      pilot.lastSeenAt = now;
+      pilot.online = meta.online === undefined ? pilot.online : Boolean(meta.online);
+      pilot.roomId = meta.roomId || pilot.roomId || "";
+      return publicPilot(pilot);
     }
 
-    const user = {
-      nick,
+    const visit = this.getVisitByCallsign(nick);
+
+    if (visit) {
+      visit.lastSeenAt = now;
+      visit.sessions += 1;
+      visit.online = meta.online === undefined ? visit.online : Boolean(meta.online);
+      visit.roomId = meta.roomId || visit.roomId || "";
+      return publicVisit(visit);
+    }
+
+    const cookieVisit = this.getVisitByToken(meta.visitToken);
+
+    if (cookieVisit && !isReservedNick(nick)) {
+      const result = this.useUnclaimedNick(nick, {
+        [VISIT_COOKIE]: meta.visitToken
+      }, meta);
+
+      if (result.ok) return result.visit;
+    }
+
+    const fallback = {
+      id: `transient:${normalizeNick(nick)}`,
+      callsign: nick,
       firstSeenAt: now,
       lastSeenAt: now,
+      views: 0,
       sessions: 1,
       online: meta.online === undefined ? false : Boolean(meta.online),
       roomId: meta.roomId || "",
-      source: meta.source || "game"
+      source: "transient",
+      unclaimedNick: nick,
+      unclaimedNickUsedAt: now,
+      unclaimedNickSessions: 1,
+      claimedPilotId: null,
+      claimedNick: ""
     };
 
-    this.users.set(nick, user);
-    return user;
+    this.anonymousVisits.set(fallback.id, fallback);
+    return publicVisit(fallback);
   }
 
   setOnline(rawNick, online, meta = {}) {
     const nick = sanitizeNick(rawNick);
-    const user = this.users.get(nick);
+    const pilot = this.pilots.get(normalizeNick(nick));
+    const entity = pilot || this.getVisitByCallsign(nick);
 
-    if (!user) return null;
+    if (!entity) return null;
 
-    user.online = Boolean(online);
-    user.lastSeenAt = Date.now();
+    entity.online = Boolean(online);
+    entity.lastSeenAt = Date.now();
 
     if (meta.roomId !== undefined) {
-      user.roomId = meta.roomId || "";
+      entity.roomId = meta.roomId || "";
     }
 
-    return user;
+    return pilot ? publicPilot(entity) : publicVisit(entity);
   }
 
   list() {
-    return Array.from(this.users.values())
-      .map((user) => ({ ...user }))
+    const visits = Array.from(this.anonymousVisits.values()).map(publicVisit);
+    const pilots = Array.from(this.pilots.values()).map(publicPilot);
+
+    return [...pilots, ...visits]
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt || a.nick.localeCompare(b.nick));
   }
 
   snapshot() {
+    const users = this.list();
+
     return {
-      users: this.list(),
-      total: this.users.size,
-      online: this.list().filter((user) => user.online).length,
+      users,
+      total: users.length,
+      anonymousTotal: this.anonymousVisits.size,
+      pilotsTotal: this.pilots.size,
+      online: users.filter((user) => user.online).length,
       serverTime: Date.now()
     };
   }
+
+  getVisitByCallsign(callsign) {
+    const nick = sanitizeNick(callsign);
+
+    for (const visit of this.anonymousVisits.values()) {
+      if (visit.callsign === nick) {
+        return visit;
+      }
+    }
+
+    return null;
+  }
+
+  getPilotById(pilotId) {
+    for (const pilot of this.pilots.values()) {
+      if (pilot.id === pilotId) {
+        return pilot;
+      }
+    }
+
+    return null;
+  }
+
+  getSessionByToken(token) {
+    const tokenHash = hashToken(token || "");
+    const session = this.authSessions.get(tokenHash);
+
+    if (!session) return null;
+
+    if (session.expiresAt <= Date.now() || session.revokedAt) {
+      this.authSessions.delete(tokenHash);
+      return null;
+    }
+
+    return session;
+  }
+
+  createAuthSession(pilotId, meta = {}) {
+    const token = createToken();
+    const now = Date.now();
+    const session = {
+      id: randomUUID(),
+      token,
+      tokenHash: hashToken(token),
+      pilotId,
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: now + AUTH_SESSION_TTL,
+      revokedAt: 0,
+      meta
+    };
+
+    this.authSessions.set(session.tokenHash, session);
+    return session;
+  }
+}
+
+function publicVisit(visit) {
+  return {
+    id: visit.id,
+    nick: visit.callsign,
+    callsign: visit.callsign,
+    code: visit.code || 0,
+    firstSeenAt: visit.firstSeenAt,
+    lastSeenAt: visit.lastSeenAt,
+    sessions: visit.sessions || 0,
+    views: visit.views || 0,
+    online: Boolean(visit.online),
+    roomId: visit.roomId || "",
+    source: visit.source || "anonymous",
+    kind: "anonymous",
+    unclaimedNick: visit.unclaimedNick || "",
+    unclaimedNickUsedAt: visit.unclaimedNickUsedAt || 0,
+    unclaimedNickSessions: visit.unclaimedNickSessions || 0,
+    claimedPilotId: visit.claimedPilotId || null,
+    claimedNick: visit.claimedNick || "",
+    convertedAt: visit.convertedAt || 0,
+    meta: visit.meta || {}
+  };
+}
+
+function publicPilot(pilot) {
+  return {
+    id: pilot.id,
+    nick: pilot.nick,
+    firstSeenAt: pilot.createdAt,
+    lastSeenAt: pilot.lastSeenAt,
+    lastLoginAt: pilot.lastLoginAt,
+    sessions: pilot.sessions || 0,
+    online: Boolean(pilot.online),
+    roomId: pilot.roomId || "",
+    source: pilot.source || "pilot",
+    kind: "pilot",
+    firstVisitId: pilot.firstVisitId || "",
+    telegramLinked: Boolean(pilot.telegramId),
+    telegramUsername: pilot.telegramUsername || ""
+  };
+}
+
+function publicSession(session) {
+  return {
+    id: session.id,
+    createdAt: session.createdAt,
+    lastSeenAt: session.lastSeenAt,
+    expiresAt: session.expiresAt
+  };
+}
+
+function createToken() {
+  return randomBytes(32).toString("base64url");
+}
+
+function hashToken(token) {
+  if (!token) return "";
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString("base64url");
+  const key = scryptSync(String(password), salt, 64).toString("base64url");
+
+  return `scrypt$${salt}$${key}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const parts = String(storedHash || "").split("$");
+
+  if (parts.length !== 3 || parts[0] !== "scrypt") return false;
+
+  const [, salt, key] = parts;
+  const expected = Buffer.from(key, "base64url");
+  const actual = scryptSync(String(password), salt, expected.length);
+
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function validatePassword(password) {
+  const value = String(password || "");
+
+  if (value.length < MIN_PASSWORD_LENGTH) return "password_too_short";
+  if (value.length > MAX_PASSWORD_LENGTH) return "password_too_long";
+
+  return "";
+}
+
+function normalizeNick(nick) {
+  return sanitizeNick(nick).toLocaleLowerCase("en-US");
+}
+
+function isReservedNick(nick) {
+  return /^CADET-\d{3}-[A-Z0-9]{3}$/i.test(nick) || /^GUEST-/i.test(nick);
+}
+
+function createCallsign(code) {
+  return `CADET-${String(code).padStart(3, "0")}-${createTail()}`;
+}
+
+function createTail() {
+  const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let tail = "";
+
+  for (let i = 0; i < 3; i++) {
+    tail += alphabet[randomBytes(1)[0] % alphabet.length];
+  }
+
+  return tail;
+}
+
+function getVisitSegment(meta = {}) {
+  const browser = categoryCode(meta.browser, {
+    chrome: 1,
+    edge: 2,
+    firefox: 3,
+    safari: 4,
+    opera: 5
+  });
+  const os = categoryCode(meta.os, {
+    windows: 1,
+    macos: 2,
+    linux: 3,
+    android: 4,
+    ios: 5
+  });
+  const device = categoryCode(meta.device, {
+    desktop: 1,
+    mobile: 2,
+    tablet: 3
+  });
+  const language = String(meta.language || "").toLowerCase().startsWith("ru")
+    ? 1
+    : String(meta.language || "").toLowerCase().startsWith("en")
+      ? 2
+      : 3;
+  const source = categoryCode(meta.sourceGroup, {
+    direct: 1,
+    search: 2,
+    social: 3,
+    referral: 4,
+    campaign: 5
+  });
+  const code = 100 + ((browser * 97 + os * 53 + device * 31 + language * 17 + source * 7) % 900);
+
+  return {
+    code,
+    label: `${browser}.${os}.${device}.${language}.${source}`
+  };
+}
+
+function categoryCode(value, dictionary) {
+  const key = String(value || "").toLowerCase();
+
+  return dictionary[key] || 0;
+}
+
+function mergeMeta(current = {}, next = {}) {
+  return {
+    ...current,
+    ...Object.fromEntries(
+      Object.entries(next).filter(([, value]) => value !== undefined && value !== "")
+    )
+  };
+}
+
+function error(code, message) {
+  return {
+    ok: false,
+    error: code,
+    message
+  };
 }

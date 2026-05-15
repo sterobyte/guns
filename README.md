@@ -110,13 +110,31 @@ In `0.8.0`, remote human players are drawn as arena participants instead of
 ghost markers: on-foot pilots show a pilot body and nick, and pilots inside
 cannons show a cannon body, nick, health bar, and ammo count.
 
-When a pilot starts the game, the client also sends the nick to:
+In `0.9.0`, the start screen gets the first registration/login prototype:
+anonymous visitors receive a `CADET-...` callsign through a visit cookie,
+claimed pilots use password auth, and backend sessions are stored in HttpOnly
+cookies.
+
+In `0.9.1`, a free real nickname can be used once without claiming it. The
+anonymous visit stores that nickname as `unclaimedNick`, and if the visitor
+types it again later the start screen suggests claiming it.
+
+The identity prototype uses these local endpoints:
 
 ```txt
+POST http://127.0.0.1:3000/visits/start
+POST http://127.0.0.1:3000/visits/unclaimed-nick
+GET  http://127.0.0.1:3000/pilots/check?nick=...
+POST http://127.0.0.1:3000/pilots/claim
+POST http://127.0.0.1:3000/auth/login
+POST http://127.0.0.1:3000/auth/logout
+GET  http://127.0.0.1:3000/auth/me
 POST http://127.0.0.1:3000/users/register
 ```
 
-This feeds the separate local admin panel in `..\guns-panel`.
+The backend keeps anonymous visits, claimed pilots, and auth sessions in memory
+for now. The admin panel in `..\guns-panel` reads the combined snapshot from
+`/admin/users`.
 
 ## Structure
 
@@ -127,7 +145,8 @@ This feeds the separate local admin panel in `..\guns-panel`.
 - `src/admin/admin-api.js` exposes console admin helpers.
 - `src/net/network-adapter.js` is the future multiplayer adapter slot.
 - `server/index.mjs` is the local multiplayer room server.
-- `server/users.mjs` is the in-memory user registry for the admin panel.
+- `server/users.mjs` is the in-memory identity registry for anonymous visits,
+  claimed pilots, and auth sessions.
 
 ## Console helpers
 
@@ -138,9 +157,9 @@ GUNS_ADMIN.repairCannons()
 GUNS_NET.describe()
 ```
 
-The start screen stores the local nickname in `localStorage` under
-`guns.playerNick`. The internal legacy player id remains `player`, while the
-scoreboard shows the chosen nickname.
+The start screen receives anonymous callsigns from the backend and stores
+claimed pilot sessions in HttpOnly cookies. The internal legacy player id
+remains `player`, while the scoreboard shows the chosen nickname.
 
 ## Migration Rule
 

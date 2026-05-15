@@ -34,7 +34,7 @@
 
   function getStoredNick() {
     try {
-      return localStorage.getItem("guns.playerNick") || "pilot";
+      return window.GUNS_APP?.playerNick || localStorage.getItem("guns.playerNick") || "pilot";
     } catch {
       return "pilot";
     }
@@ -77,6 +77,31 @@
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(message));
     return true;
+  }
+
+  function apiFetch(path, options = {}) {
+    const url = getApiUrl(path);
+
+    if (!url) {
+      return Promise.resolve(null);
+    }
+
+    return fetch(url, {
+      ...options,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    })
+      .then((response) =>
+        response.json().then((data) => ({
+          ok: response.ok,
+          status: response.status,
+          data
+        }))
+      )
+      .catch(() => null);
   }
 
   function handleMessage(event) {
@@ -196,6 +221,56 @@
         socket.close();
       }
     },
+    startAnonymousVisit(meta = {}) {
+      return apiFetch("/visits/start", {
+        method: "POST",
+        body: JSON.stringify({
+          meta
+        })
+      }).then((result) => result?.data || null);
+    },
+    getAuthSession() {
+      return apiFetch("/auth/me").then((result) => result?.data || null);
+    },
+    checkPilot(nickValue) {
+      const nickParam = encodeURIComponent(String(nickValue || "").trim());
+      return apiFetch(`/pilots/check?nick=${nickParam}`).then((result) => result?.data || null);
+    },
+    useUnclaimedNick(nickValue, meta = {}) {
+      return apiFetch("/visits/unclaimed-nick", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: nickValue,
+          meta
+        })
+      }).then((result) => result?.data || null);
+    },
+    claimPilot(nickValue, passwordValue, meta = {}) {
+      return apiFetch("/pilots/claim", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: nickValue,
+          password: passwordValue,
+          meta
+        })
+      }).then((result) => result?.data || null);
+    },
+    loginPilot(nickValue, passwordValue, meta = {}) {
+      return apiFetch("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: nickValue,
+          password: passwordValue,
+          meta
+        })
+      }).then((result) => result?.data || null);
+    },
+    logout() {
+      return apiFetch("/auth/logout", {
+        method: "POST",
+        body: JSON.stringify({})
+      }).then((result) => result?.data || null);
+    },
     registerUser(nickValue) {
       const cleanNick = String(nickValue || getStoredNick()).trim();
 
@@ -203,24 +278,14 @@
         return Promise.resolve(null);
       }
 
-      const url = getApiUrl("/users/register");
-
-      if (!url) {
-        return Promise.resolve(null);
-      }
-
-      return fetch(url, {
+      return apiFetch("/users/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           nick: cleanNick,
           clientTime: Date.now()
         })
       })
-        .then((response) => response.json())
-        .catch(() => null);
+        .then((result) => result?.data || null);
     },
     on(type, handler) {
       if (!listeners.has(type)) {

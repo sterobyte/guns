@@ -2,11 +2,12 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
-import { UserRegistry } from "./users.mjs";
+import { AUTH_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
 
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.8.0";
+const version = "0.9.1";
+const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
 });
@@ -17,14 +18,15 @@ process.stderr?.on?.("error", () => {});
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${host}:${port}`);
+  const cookies = parseCookies(req.headers.cookie || "");
 
   if (req.method === "OPTIONS") {
-    sendEmpty(res, 204);
+    sendEmpty(req, res, 204);
     return;
   }
 
   if (url.pathname === "/health") {
-    sendJson(res, 200, {
+    sendJson(req, res, 200, {
       ok: true,
       service: "guns-multiplayer",
       version,
@@ -34,7 +36,156 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === "/rooms") {
-    sendJson(res, 200, hub.snapshot());
+    sendJson(req, res, 200, hub.snapshot());
+    return;
+  }
+
+  if (url.pathname === "/visits/start" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.startVisit(cookies, body?.meta || {});
+        const auth = users.getAuthenticatedPilot(cookies);
+        const setCookies = [];
+
+        if (result.visitToken) {
+          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        sendJson(req, res, 200, {
+          ok: true,
+          visit: result.visit,
+          pilot: auth?.pilot || null,
+          session: auth?.session || null
+        }, setCookies);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
+  if (url.pathname === "/auth/me") {
+    const auth = users.getAuthenticatedPilot(cookies);
+
+    sendJson(req, res, 200, {
+      ok: true,
+      pilot: auth?.pilot || null,
+      session: auth?.session || null
+    });
+    return;
+  }
+
+  if (url.pathname === "/pilots/check") {
+    sendJson(req, res, 200, {
+      ok: true,
+      pilot: users.checkPilot(url.searchParams.get("nick"))
+    });
+    return;
+  }
+
+  if (url.pathname === "/visits/unclaimed-nick" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.useUnclaimedNick(
+          body?.nick,
+          cookies,
+          body?.meta || {}
+        );
+
+        if (!result.ok) {
+          sendJson(req, res, 409, result);
+          return;
+        }
+
+        const setCookies = [];
+
+        if (result.visitToken) {
+          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        sendJson(req, res, 200, {
+          ok: true,
+          visit: result.visit
+        }, setCookies);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
+  if (url.pathname === "/pilots/claim" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.claimPilot(
+          body?.nick,
+          body?.password,
+          cookies,
+          body?.meta || {}
+        );
+
+        if (!result.ok) {
+          sendJson(req, res, 409, result);
+          return;
+        }
+
+        const setCookies = [
+          makeCookie(AUTH_COOKIE, result.sessionToken, {
+            maxAge: 60 * 60 * 24 * 30
+          })
+        ];
+
+        if (result.visitToken) {
+          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
+            maxAge: 60 * 60 * 24 * 365
+          }));
+        }
+
+        sendJson(req, res, 200, {
+          ok: true,
+          pilot: result.pilot,
+          visit: result.visit,
+          session: result.session
+        }, setCookies);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
+  if (url.pathname === "/auth/login" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.loginPilot(body?.nick, body?.password, body?.meta || {});
+
+        if (!result.ok) {
+          sendJson(req, res, 401, result);
+          return;
+        }
+
+        sendJson(req, res, 200, {
+          ok: true,
+          pilot: result.pilot,
+          session: result.session
+        }, [
+          makeCookie(AUTH_COOKIE, result.sessionToken, {
+            maxAge: 60 * 60 * 24 * 30
+          })
+        ]);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+    return;
+  }
+
+  if (url.pathname === "/auth/logout" && req.method === "POST") {
+    users.logout(cookies);
+    sendJson(req, res, 200, {
+      ok: true
+    }, [
+      clearCookie(AUTH_COOKIE)
+    ]);
     return;
   }
 
@@ -42,25 +193,26 @@ const server = http.createServer((req, res) => {
     readJsonBody(req)
       .then((body) => {
         const user = users.register(body?.nick, {
-          source: "game-start"
+          source: "game-start",
+          visitToken: cookies[VISIT_COOKIE] || ""
         });
 
-        sendJson(res, 200, {
+        sendJson(req, res, 200, {
           ok: true,
           user
         });
       })
-      .catch(() => sendJson(res, 400, { ok: false, error: "invalid_json" }));
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
 
     return;
   }
 
   if (url.pathname === "/admin/users") {
-    sendJson(res, 200, users.snapshot());
+    sendJson(req, res, 200, users.snapshot());
     return;
   }
 
-  sendJson(res, 200, {
+  sendJson(req, res, 200, {
     service: "guns-multiplayer",
     version,
     websocket: "/ws?room=main&nick=pilot",
@@ -179,25 +331,76 @@ function createClient(socket) {
   };
 }
 
-function sendJson(res, status, payload) {
+function sendJson(req, res, status, payload, setCookies = []) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    ...corsHeaders()
+    ...corsHeaders(req),
+    ...(setCookies.length ? { "Set-Cookie": setCookies } : {})
   });
   res.end(JSON.stringify(payload, null, 2));
 }
 
-function sendEmpty(res, status) {
-  res.writeHead(status, corsHeaders());
+function sendEmpty(req, res, status) {
+  res.writeHead(status, corsHeaders(req));
   res.end();
 }
 
-function corsHeaders() {
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": origin || "*",
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin"
   };
+}
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+
+  for (const part of String(cookieHeader || "").split(";")) {
+    const index = part.indexOf("=");
+
+    if (index === -1) continue;
+
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+
+    if (key) {
+      try {
+        cookies[key] = decodeURIComponent(value);
+      } catch {
+        cookies[key] = value;
+      }
+    }
+  }
+
+  return cookies;
+}
+
+function makeCookie(name, value, options = {}) {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax"
+  ];
+
+  if (Number.isFinite(options.maxAge)) {
+    parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
+  }
+
+  if (secureCookies) {
+    parts.push("Secure");
+  }
+
+  return parts.join("; ");
+}
+
+function clearCookie(name) {
+  return makeCookie(name, "", { maxAge: 0 });
 }
 
 function readJsonBody(req) {

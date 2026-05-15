@@ -26,8 +26,31 @@
         data-i18n-placeholder="start.nickPlaceholder"
         data-i18n-aria="start.nickPlaceholder"
       />
+      <div id="auth-panel" class="auth-panel hidden" aria-live="polite">
+        <div id="auth-message" class="auth-message"></div>
+        <input
+          id="pilot-password"
+          type="password"
+          maxlength="128"
+          autocomplete="current-password"
+          placeholder="PASSWORD"
+        />
+        <input
+          id="pilot-password-repeat"
+          type="password"
+          maxlength="128"
+          autocomplete="new-password"
+          placeholder="REPEAT PASSWORD"
+        />
+        <div class="auth-actions">
+          <button type="button" id="auth-confirm">OK</button>
+          <button type="button" id="auth-cancel">BACK</button>
+        </div>
+      </div>
+      <div id="auth-status" class="auth-status"></div>
       <button type="submit" data-i18n="start.play">GO</button>
       <button type="button" class="tutorial-button" data-i18n="start.tutorial">TUTORIAL</button>
+      <button type="button" id="auth-logout" class="auth-logout hidden">LOGOUT</button>
       <div id="start-version" aria-label="Game version" data-i18n-aria="start.versionAria"></div>
     </form>
   </div>
