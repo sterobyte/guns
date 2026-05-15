@@ -95,6 +95,85 @@ canvas {
   line-height: 1.35;
 }
 
+/* .tutorial-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: #1b2414;
+  color: #1f2b16;
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.tutorial-screen.hidden {
+  display: none;
+}
+
+#tutorial-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.tutorial-exit {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  min-width: 92px;
+  height: 34px;
+  border: 2px solid #1b2414;
+  border-radius: 6px;
+  background: rgba(247, 247, 240, 0.78);
+  color: #1f2b16;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 15px;
+  letter-spacing: 0;
+  cursor: pointer;
+  box-shadow: 0 3px 0 rgba(27, 36, 20, 0.72);
+}
+
+.tutorial-popup {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  width: min(280px, calc(100vw - 36px));
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 2px solid #1b2414;
+  border-radius: 6px;
+  background: rgba(247, 247, 240, 0.9);
+  color: #1f2b16;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 0 rgba(27, 36, 20, 0.78);
+}
+
+.tutorial-popup.hidden {
+  display: none;
+}
+
+.tutorial-popup strong {
+  color: var(--start-accent, #315a0b);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.tutorial-popup button {
+  height: 36px;
+  border: 2px solid #1b2414;
+  border-radius: 6px;
+  background: var(--start-accent, #315a0b);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 17px;
+  letter-spacing: 0;
+  cursor: pointer;
+} */
+
 .language-switch {
   width: 254px;
   display: grid;

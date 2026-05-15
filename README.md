@@ -151,6 +151,18 @@ In `0.9.10`, mobile, tablet, touch-only, and mobile in-app browsers are blocked
 on the start screen with a bilingual desktop-only warning instead of the nick
 form and buttons.
 
+In `0.10.0`, the new tutorial shell starts. The tutorial button opens lesson 1:
+a mouse-only cadet movement corridor with two auto-opening barriers, a final
+cannon room, an exit button, and a completion popup.
+
+In `0.10.1`, lesson 1 uses the standard GUNS pilot/cannon visual language,
+extends the corridor, adds the third barrier before the cannon room, enlarges
+the room, and removes the center artifact left by opening barriers.
+
+In `0.10.2`, the new tutorial implementation is paused and commented out while
+the project moves toward shared object definitions. The tutorial button remains
+visible, but it is a no-op.
+
 The identity prototype uses these local endpoints:
 
 ```txt
