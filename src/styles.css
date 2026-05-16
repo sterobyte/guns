@@ -316,7 +316,6 @@ canvas {
 }
 
 .auth-message,
-.auth-status,
 .logged-in-message {
   min-height: 15px;
   color: #f7f7f0;

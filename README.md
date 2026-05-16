@@ -215,6 +215,9 @@ In `0.10.18`, registration is limited to one claimed pilot per browser device
 cookie. Logout keeps the device marker, so the same device can keep playing as
 visitor/unclaimed or log into existing pilots, but cannot claim a second pilot.
 
+In `0.10.19`, the start screen temporarily hides the Tutorial button and the
+white registration/login status hint line under the callsign field.
+
 The identity prototype uses these local endpoints:
 
 ```txt
