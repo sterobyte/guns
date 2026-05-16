@@ -2179,7 +2179,17 @@ function updateWreckRepair(unit, dt) {
       unit.wreckRepair = 0;
       unit.hp = unit.maxHp;
       unit.turretAngle = unit.repairAngle;
+      tryEnterNearbyRepairedCannonPilots(unit);
     }
+  }
+}
+
+function tryEnterNearbyRepairedCannonPilots(cannonUnit) {
+  for (const pilotUnit of units) {
+    if (pilotUnit === cannonUnit) continue;
+    if (pilotUnit.isCannonOnly) continue;
+
+    tryEnterRepairedCannon(pilotUnit);
   }
 }
 
@@ -3257,7 +3267,7 @@ function finishPlayerExitEject() {
     duration: PILOT_EJECT_TIME
   };
 
-
+  tryEnterNearbyRepairedCannonPilots(player);
 }
 
 function updatePostEjectBrake(unit, dt) {
@@ -3736,7 +3746,6 @@ function update(dt) {
 
     updatePostEjectBrake(unit, dt);
     updateWreckRepair(unit, dt);
-    tryEnterRepairedCannon(unit);
     updateHealthRegen(unit, dt);
   }
 
