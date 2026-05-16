@@ -36,7 +36,8 @@ const server = http.createServer((req, res) => {
     }
 
     res.writeHead(200, {
-      "Content-Type": types[path.extname(file)] || "application/octet-stream"
+      "Content-Type": types[path.extname(file)] || "application/octet-stream",
+      "Cache-Control": "no-store"
     });
     res.end(data);
   });

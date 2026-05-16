@@ -7,13 +7,23 @@
     authMode: "",
     pendingMode: "game",
     pendingNick: "",
-    localCallsign: ""
+    localCallsign: "",
+    walletGunsCoin: 0
   };
 
   window.GUNS_APP = {
     started: false,
     mode: "game",
     playerNick: "",
+    roomId: "",
+
+    getWalletGunsCoin() {
+      return state.walletGunsCoin;
+    },
+
+    notifyWalletIncrease(entity) {
+      notifyWalletIncrease(entity);
+    },
 
     setPlayerNick(nick, options = {}) {
       const cleanNick = sanitizeNick(nick);
@@ -39,12 +49,20 @@
       const cleanNick = this.setPlayerNick(nick, {
         persist: state.pilot?.nick === sanitizeNick(nick)
       });
+      const selectedRoomId = getSelectedRoomId();
+
+      this.roomId = selectedRoomId;
       window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
+      window.GUNS_LEGACY?.setActiveRoom?.(selectedRoomId);
       this.mode = mode;
       this.started = true;
-      window.GUNS_NET?.registerUser?.(cleanNick);
+      window.GUNS_NET?.registerUser?.(cleanNick)
+        ?.then((result) => {
+          notifyWalletIncrease(result?.user);
+        })
+        .catch(() => {});
       window.GUNS_NET?.connect?.({
-        roomId: window.GUNS_CONFIG?.multiplayer?.defaultRoomId || "main",
+        roomId: selectedRoomId,
         nick: cleanNick
       }).catch(() => {});
       document.getElementById("start-screen")?.classList.add("hidden");
@@ -75,6 +93,7 @@
 
     applyRandomStartBackground();
     buildSkinButtons();
+    buildRoomSelect();
     window.GUNS_I18N?.apply();
     syncLanguageButtons();
     syncSkinButtons();
@@ -169,9 +188,11 @@
       window.GUNS_NET?.logout?.()
         .finally(async () => {
           state.pilot = null;
+          state.walletGunsCoin = 0;
           const result = await window.GUNS_NET?.startAnonymousVisit?.(collectVisitMeta());
           if (result?.visit) {
             state.visit = result.visit;
+            syncKnownWallet(result.visit);
           } else {
             state.localCallsign = createLocalCallsign();
             state.visit = {
@@ -195,6 +216,7 @@
 
     if (result?.visit) {
       state.visit = result.visit;
+      syncKnownWallet(result.visit);
     } else {
       state.localCallsign = createLocalCallsign();
       state.visit = {
@@ -205,6 +227,7 @@
 
     if (result?.pilot) {
       state.pilot = result.pilot;
+      syncKnownWallet(result.pilot);
       document.getElementById("pilot-nick").value = result.pilot.nick;
       window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
       setStatus(t("identity.welcome", { nick: result.pilot.nick }));
@@ -218,6 +241,27 @@
     }
 
     syncLogoutButton();
+  }
+
+  function syncKnownWallet(entity) {
+    const coins = Number(entity?.wallet?.gunsCoin);
+
+    if (!Number.isFinite(coins)) return;
+
+    state.walletGunsCoin = Math.max(state.walletGunsCoin, coins);
+  }
+
+  function notifyWalletIncrease(entity) {
+    const coins = Number(entity?.wallet?.gunsCoin);
+
+    if (!Number.isFinite(coins)) return;
+
+    const delta = coins - state.walletGunsCoin;
+    state.walletGunsCoin = Math.max(state.walletGunsCoin, coins);
+
+    if (delta <= 0) return;
+
+    window.alert(`+${delta} Guns Coin`);
   }
 
   async function handlePlay(mode) {
@@ -296,6 +340,7 @@
     }
 
     state.pilot = result.pilot;
+    notifyWalletIncrease(result.pilot);
     document.getElementById("pilot-nick").value = result.pilot.nick;
     window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
     syncLogoutButton();
@@ -321,6 +366,7 @@
     }
 
     state.visit = unclaimed.visit;
+    notifyWalletIncrease(unclaimed.visit);
     hideNickChoicePanel();
     window.GUNS_APP.start(nick, state.pendingMode);
   }
@@ -449,8 +495,69 @@
       utmMedium: params.get("utm_medium") || "",
       utmCampaign: params.get("utm_campaign") || "",
       clientVersion: window.GUNS_CONFIG?.project?.version || "",
-      skin: window.GUNS_CONFIG?.visual?.activeSkin || ""
+      skin: window.GUNS_CONFIG?.visual?.activeSkin || "",
+      roomId: getSelectedRoomId()
     };
+  }
+
+  function buildRoomSelect() {
+    const select = document.getElementById("room-select");
+    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
+
+    if (!select) return;
+
+    select.textContent = "";
+
+    Object.values(rooms)
+      .filter(isSelectableRoom)
+      .forEach(room => {
+        const option = document.createElement("option");
+        option.value = room.id;
+        option.textContent = room.title || room.id;
+        select.appendChild(option);
+      });
+
+    const defaultRoomId = getDefaultRoomId(rooms);
+    const roomId = isSelectableRoom(rooms[defaultRoomId])
+      ? defaultRoomId
+      : select.options[0]?.value || "main";
+
+    select.value = roomId;
+    window.GUNS_APP.roomId = roomId;
+
+    select.addEventListener("change", () => {
+      const nextRoomId = getSelectedRoomId();
+      window.GUNS_APP.roomId = nextRoomId;
+    });
+  }
+
+  function getSelectedRoomId() {
+    const select = document.getElementById("room-select");
+    const roomId = select?.value;
+    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
+
+    return rooms[roomId]
+      ? roomId
+      : getDefaultRoomId(rooms);
+  }
+
+  function getDefaultRoomId(rooms) {
+    const defaultRoomId =
+      window.GUNS_CONFIG?.multiplayer?.defaultRoomId || "main";
+    return (
+      isSelectableRoom(rooms?.[defaultRoomId])
+        ? defaultRoomId
+        : Object.values(rooms || {}).find(isSelectableRoom)?.id ||
+          defaultRoomId
+    );
+  }
+
+  function isSelectableRoom(room) {
+    return (
+      !!room &&
+      room.enabled !== false &&
+      (room.published === true || window.GUNS_CONFIG?.admin?.enabled === true)
+    );
   }
 
   function detectBrowser(ua) {

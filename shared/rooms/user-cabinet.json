@@ -1,0 +1,73 @@
+{
+  "id": "user-cabinet",
+  "title": "User Cabinet",
+  "roomKind": "user-cabinet",
+  "enabled": true,
+  "published": false,
+  "modeId": "classic-deathmatch",
+  "arena": {
+    "shape": "circle",
+    "params": {
+      "radius": 610
+    }
+  },
+  "limits": {
+    "maxPlayers": 1
+  },
+  "allowedCannons": [],
+  "spawns": {
+    "player": {
+      "state": "pilot",
+      "pilotX": 0,
+      "pilotY": 170
+    },
+    "bots": [],
+    "cannons": []
+  },
+  "objects": [
+    {
+      "instanceId": "settings-terminal",
+      "objectId": "menu-terminal",
+      "x": -240,
+      "y": -120,
+      "rotation": 0,
+      "params": {
+        "label": "SETTINGS",
+        "action": "open-settings"
+      }
+    },
+    {
+      "instanceId": "music-terminal",
+      "objectId": "menu-terminal",
+      "x": 0,
+      "y": -120,
+      "rotation": 0,
+      "params": {
+        "label": "MUSIC",
+        "action": "open-music"
+      }
+    },
+    {
+      "instanceId": "sounds-terminal",
+      "objectId": "menu-terminal",
+      "x": 240,
+      "y": -120,
+      "rotation": 0,
+      "params": {
+        "label": "SOUNDS",
+        "action": "open-sounds"
+      }
+    },
+    {
+      "instanceId": "main-arena-teleport",
+      "objectId": "teleport",
+      "x": 430,
+      "y": 400,
+      "rotation": 0,
+      "params": {
+        "label": "MAIN ARENA",
+        "targetRoomId": "main"
+      }
+    }
+  ]
+}

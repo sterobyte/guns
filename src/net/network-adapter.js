@@ -282,7 +282,23 @@
         method: "POST",
         body: JSON.stringify({
           nick: cleanNick,
+          roomId,
           clientTime: Date.now()
+        })
+      })
+        .then((result) => result?.data || null);
+    },
+    collectGarageCoins(nickValue) {
+      const cleanNick = String(nickValue || getStoredNick()).trim();
+
+      if (!cleanNick) {
+        return Promise.resolve(null);
+      }
+
+      return apiFetch("/users/garage-coins", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: cleanNick
         })
       })
         .then((result) => result?.data || null);

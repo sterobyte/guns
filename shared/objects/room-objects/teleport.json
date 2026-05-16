@@ -1,0 +1,12 @@
+{
+  "id": "teleport",
+  "kind": "teleport",
+  "title": "Teleport",
+  "version": 1,
+  "render": {
+    "radius": 42
+  },
+  "interaction": {
+    "radius": 76
+  }
+}

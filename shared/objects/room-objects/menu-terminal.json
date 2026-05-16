@@ -1,0 +1,13 @@
+{
+  "id": "menu-terminal",
+  "kind": "menu-terminal",
+  "title": "Menu Terminal",
+  "version": 1,
+  "render": {
+    "width": 150,
+    "height": 54
+  },
+  "interaction": {
+    "radius": 72
+  }
+}

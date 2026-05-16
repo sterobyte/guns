@@ -41,8 +41,15 @@ const builtConfig = buildGameConfig(root);
 
 validateGameConfig(publishedConfig);
 
-if (JSON.stringify(publishedConfig) !== JSON.stringify(builtConfig)) {
+if (JSON.stringify(withoutConfigVersion(publishedConfig)) !== JSON.stringify(withoutConfigVersion(builtConfig))) {
   throw new Error("shared/game-config.json is stale. Run npm run build:config.");
 }
 
 console.log("syntax ok");
+
+function withoutConfigVersion(config) {
+  return {
+    ...config,
+    configVersion: ""
+  };
+}

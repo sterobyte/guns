@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "configVersion": "0.1.2",
+  "configVersion": "0.1.22",
   "status": "published",
   "objects": {
     "cannons": {
@@ -219,8 +219,8 @@
           "entryScoreRequired": 0,
           "damage": 10,
           "fireRate": {
-            "player": 0.04,
-            "bot": 0.12
+            "player": 0.06,
+            "bot": 0.06
           },
           "recoilDuration": 0.045
         },
@@ -272,16 +272,47 @@
           }
         }
       }
+    },
+    "roomObjects": {
+      "menu-terminal": {
+        "id": "menu-terminal",
+        "kind": "menu-terminal",
+        "title": "Menu Terminal",
+        "version": 1,
+        "render": {
+          "width": 150,
+          "height": 54
+        },
+        "interaction": {
+          "radius": 72
+        }
+      },
+      "teleport": {
+        "id": "teleport",
+        "kind": "teleport",
+        "title": "Teleport",
+        "version": 1,
+        "render": {
+          "radius": 42
+        },
+        "interaction": {
+          "radius": 76
+        }
+      }
     }
   },
   "rooms": {
-    "main": {
-      "id": "main",
-      "title": "Main Arena",
+    "main-draft-1": {
+      "id": "main-draft-1",
+      "title": "Main Arena Draft",
       "enabled": true,
+      "published": false,
       "modeId": "classic-deathmatch",
       "arena": {
-        "radius": 860
+        "shape": "circle",
+        "params": {
+          "radius": 1600
+        }
       },
       "limits": {
         "maxPlayers": 16
@@ -291,6 +322,276 @@
         "doublegun",
         "heavygun",
         "machinegun"
+      ],
+      "spawns": {
+        "player": {
+          "state": "pilot",
+          "pilotX": 0,
+          "pilotY": -58
+        },
+        "bots": [
+          {
+            "unitId": "bot1",
+            "name": "Yuriy",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun1",
+            "x": 950,
+            "y": 620
+          },
+          {
+            "unitId": "bot2",
+            "name": "Sidorova",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun2",
+            "x": -950,
+            "y": -620
+          },
+          {
+            "unitId": "bot3",
+            "name": "Kirk",
+            "state": "pilot",
+            "pilotX": -760,
+            "pilotY": 520
+          },
+          {
+            "unitId": "bot4",
+            "name": "Lara",
+            "state": "pilot",
+            "pilotX": 760,
+            "pilotY": -520
+          },
+          {
+            "unitId": "bot5",
+            "name": "Danila",
+            "state": "pilot",
+            "pilotX": 0,
+            "pilotY": 620
+          }
+        ],
+        "cannons": [
+          {
+            "unitId": "autogun0",
+            "gunType": "autogun",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "unitId": "autogun1",
+            "gunType": "heavygun",
+            "x": -520,
+            "y": 0
+          },
+          {
+            "unitId": "autogun2",
+            "gunType": "machinegun",
+            "x": 520,
+            "y": 0
+          }
+        ]
+      }
+    },
+    "main": {
+      "id": "main",
+      "title": "Main Arena",
+      "enabled": true,
+      "published": true,
+      "modeId": "classic-deathmatch",
+      "arena": {
+        "shape": "rectangle",
+        "params": {
+          "width": 1720,
+          "height": 1720
+        }
+      },
+      "limits": {
+        "maxPlayers": 16
+      },
+      "allowedCannons": [
+        "autogun",
+        "doublegun",
+        "heavygun",
+        "machinegun"
+      ],
+      "spawns": {
+        "player": {
+          "state": "pilot",
+          "pilotX": 0,
+          "pilotY": -58
+        },
+        "bots": [
+          {
+            "unitId": "bot1",
+            "name": "Yuriy",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun1",
+            "x": 950,
+            "y": 620
+          },
+          {
+            "unitId": "bot2",
+            "name": "Sidorova",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun2",
+            "x": -950,
+            "y": -620
+          },
+          {
+            "unitId": "bot3",
+            "name": "Kirk",
+            "state": "pilot",
+            "pilotX": -760,
+            "pilotY": 520
+          },
+          {
+            "unitId": "bot4",
+            "name": "Lara",
+            "state": "pilot",
+            "pilotX": 760,
+            "pilotY": -520
+          },
+          {
+            "unitId": "bot5",
+            "name": "Danila",
+            "state": "pilot",
+            "pilotX": 0,
+            "pilotY": 620
+          }
+        ],
+        "cannons": [
+          {
+            "unitId": "autogun0",
+            "gunType": "autogun",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "unitId": "autogun1",
+            "gunType": "heavygun",
+            "x": -520,
+            "y": 0
+          },
+          {
+            "unitId": "autogun2",
+            "gunType": "machinegun",
+            "x": 520,
+            "y": 0
+          }
+        ]
+      }
+    },
+    "test-range": {
+      "id": "test-range",
+      "title": "Test Range",
+      "enabled": true,
+      "published": true,
+      "inherits": "main",
+      "modeId": "classic-deathmatch",
+      "arena": {
+        "shape": "rectangle",
+        "params": {
+          "width": 720,
+          "height": 720
+        }
+      },
+      "limits": {
+        "maxPlayers": 8
+      },
+      "allowedCannons": [
+        "autogun",
+        "machinegun"
+      ],
+      "spawns": {
+        "player": {
+          "state": "pilot",
+          "pilotX": 0,
+          "pilotY": -58
+        },
+        "bots": [],
+        "cannons": [
+          {
+            "unitId": "autogun2",
+            "gunType": "machinegun",
+            "x": 0,
+            "y": 0
+          }
+        ]
+      }
+    },
+    "user-cabinet": {
+      "id": "user-cabinet",
+      "title": "User Cabinet",
+      "roomKind": "user-cabinet",
+      "enabled": true,
+      "published": false,
+      "modeId": "classic-deathmatch",
+      "arena": {
+        "shape": "circle",
+        "params": {
+          "radius": 610
+        }
+      },
+      "limits": {
+        "maxPlayers": 1
+      },
+      "allowedCannons": [],
+      "spawns": {
+        "player": {
+          "state": "pilot",
+          "pilotX": 0,
+          "pilotY": 170
+        },
+        "bots": [],
+        "cannons": []
+      },
+      "objects": [
+        {
+          "instanceId": "settings-terminal",
+          "objectId": "menu-terminal",
+          "x": -240,
+          "y": -120,
+          "rotation": 0,
+          "params": {
+            "label": "SETTINGS",
+            "action": "open-settings"
+          }
+        },
+        {
+          "instanceId": "music-terminal",
+          "objectId": "menu-terminal",
+          "x": 0,
+          "y": -120,
+          "rotation": 0,
+          "params": {
+            "label": "MUSIC",
+            "action": "open-music"
+          }
+        },
+        {
+          "instanceId": "sounds-terminal",
+          "objectId": "menu-terminal",
+          "x": 240,
+          "y": -120,
+          "rotation": 0,
+          "params": {
+            "label": "SOUNDS",
+            "action": "open-sounds"
+          }
+        },
+        {
+          "instanceId": "main-arena-teleport",
+          "objectId": "teleport",
+          "x": 430,
+          "y": 400,
+          "rotation": 0,
+          "params": {
+            "label": "MAIN ARENA",
+            "targetRoomId": "main"
+          }
+        }
       ]
     }
   },
@@ -302,6 +603,16 @@
       "rules": {
         "pilotKillScore": 100,
         "cannonBreakScore": 50
+      }
+    }
+  },
+  "settings": {
+    "botNameBrackets": true,
+    "economy": {
+      "gunsCoin": {
+        "visitorGrant": 100,
+        "playGrant": 25,
+        "registrationGrant": 250
       }
     }
   }

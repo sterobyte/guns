@@ -305,7 +305,7 @@
     return value ?? fallback;
   }
 
-  const definitions =
+  let definitions =
     window.GUNS_SHARED_CONFIG?.objects ||
     fallbackDefinitions;
 
@@ -318,6 +318,10 @@
     byPath,
     cannons: {
       get: getCannonDefinition
+    },
+    refreshFromConfig(config) {
+      definitions = config?.objects || fallbackDefinitions;
+      this.definitions = definitions;
     }
   };
 })();

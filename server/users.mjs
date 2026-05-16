@@ -5,6 +5,8 @@ import {
   scryptSync,
   timingSafeEqual
 } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { sanitizeNick } from "./rooms.mjs";
 
 const AUTH_SESSION_TTL = 1000 * 60 * 60 * 24 * 30;
@@ -17,12 +19,19 @@ export const AUTH_COOKIE = "guns_sid";
 export const DEVICE_COOKIE = "guns_did";
 
 export class UserRegistry {
-  constructor() {
+  constructor(economyConfig = {}, options = {}) {
+    this.economyConfig = normalizeEconomyConfig(economyConfig);
+    this.storageFile = options.storageFile || "";
     this.anonymousVisits = new Map();
     this.visitIdByTokenHash = new Map();
     this.pilots = new Map();
     this.authSessions = new Map();
     this.devices = new Map();
+    this.loadStorage();
+  }
+
+  setEconomyConfig(economyConfig = {}) {
+    this.economyConfig = normalizeEconomyConfig(economyConfig);
   }
 
   startVisit(cookies = {}, meta = {}) {
@@ -31,9 +40,11 @@ export class UserRegistry {
     const deviceResult = this.ensureDevice(cookies, meta, now);
 
     if (existing) {
+      ensureWallet(existing);
       existing.lastSeenAt = now;
       existing.views += 1;
       existing.meta = mergeMeta(existing.meta, meta);
+      this.persist();
 
       return {
         visit: publicVisit(existing),
@@ -70,8 +81,11 @@ export class UserRegistry {
       convertedAt: 0
     };
 
+    ensureWallet(visit);
+
     this.anonymousVisits.set(visit.id, visit);
     this.visitIdByTokenHash.set(tokenHash, visit.id);
+    this.persist();
 
     return {
       visit: publicVisit(visit),
@@ -87,6 +101,7 @@ export class UserRegistry {
       existing.lastSeenAt = now;
       existing.views += 1;
       existing.meta = mergeMeta(existing.meta, meta);
+      this.persist();
 
       return {
         device: existing,
@@ -108,6 +123,7 @@ export class UserRegistry {
     };
 
     this.devices.set(device.tokenHash, device);
+    this.persist();
 
     return {
       device,
@@ -196,6 +212,12 @@ export class UserRegistry {
     visit.unclaimedNickUsedAt = now;
     visit.unclaimedNickSessions = (visit.unclaimedNickSessions || 0) + 1;
     visit.lastSeenAt = now;
+    awardGunsCoinOnce(
+      visit,
+      "playGrant",
+      this.economyConfig.gunsCoin.playGrant
+    );
+    this.persist();
 
     return {
       ok: true,
@@ -253,10 +275,18 @@ export class UserRegistry {
       telegramUsername: "",
       telegramLinkedAt: 0
     };
+    ensureWallet(pilot);
 
     if (visit) {
+      transferWallet(visit, pilot);
       this.linkVisitToPilot(visit, pilot, now);
     }
+
+    awardGunsCoinOnce(
+      pilot,
+      "registrationGrant",
+      this.economyConfig.gunsCoin.registrationGrant
+    );
 
     this.pilots.set(pilot.normalizedNick, pilot);
 
@@ -267,6 +297,7 @@ export class UserRegistry {
     }
 
     const session = this.createAuthSession(pilot.id, meta);
+    this.persist();
 
     return {
       ok: true,
@@ -299,6 +330,7 @@ export class UserRegistry {
     }
 
     const session = this.createAuthSession(pilot.id, meta);
+    this.persist();
 
     return {
       ok: true,
@@ -318,6 +350,7 @@ export class UserRegistry {
     if (session) {
       session.revokedAt = Date.now();
       this.authSessions.delete(tokenHash);
+      this.persist();
     }
 
     return {
@@ -332,40 +365,73 @@ export class UserRegistry {
     const cookieVisit = this.getVisitByToken(meta.visitToken);
 
     if (cookieVisit && isReservedNick(nick)) {
+      ensureWallet(cookieVisit);
       cookieVisit.unclaimedNick = "";
       cookieVisit.unclaimedNickUsedAt = 0;
       cookieVisit.lastSeenAt = now;
       cookieVisit.sessions += countSession ? 1 : 0;
+      awardRoomEntryCoins(cookieVisit, meta, this.economyConfig);
       updatePresence(cookieVisit, meta);
+      this.persist();
       return publicVisit(cookieVisit);
     }
 
     const pilot = this.pilots.get(normalizeNick(nick));
 
     if (pilot) {
+      ensureWallet(pilot);
       pilot.lastSeenAt = now;
+      if (meta.source === "game-start") {
+        awardGunsCoinOnce(
+          pilot,
+          "playGrant",
+          this.economyConfig.gunsCoin.playGrant
+        );
+      }
+      awardRoomEntryCoins(pilot, meta, this.economyConfig);
       updatePresence(pilot, meta);
 
       if (cookieVisit) {
         this.linkVisitToPilot(cookieVisit, pilot, now);
       }
 
+      this.persist();
       return publicPilot(pilot);
     }
 
     if (cookieVisit && visitMatchesNick(cookieVisit, nick)) {
+      ensureWallet(cookieVisit);
       cookieVisit.lastSeenAt = now;
       cookieVisit.sessions += countSession ? 1 : 0;
+      if (meta.source === "game-start") {
+        awardGunsCoinOnce(
+          cookieVisit,
+          "playGrant",
+          this.economyConfig.gunsCoin.playGrant
+        );
+      }
+      awardRoomEntryCoins(cookieVisit, meta, this.economyConfig);
       updatePresence(cookieVisit, meta);
+      this.persist();
       return publicVisit(cookieVisit);
     }
 
     const visit = this.getVisitByNick(nick);
 
     if (visit) {
+      ensureWallet(visit);
       visit.lastSeenAt = now;
       visit.sessions += countSession ? 1 : 0;
+      if (meta.source === "game-start") {
+        awardGunsCoinOnce(
+          visit,
+          "playGrant",
+          this.economyConfig.gunsCoin.playGrant
+        );
+      }
+      awardRoomEntryCoins(visit, meta, this.economyConfig);
       updatePresence(visit, meta);
+      this.persist();
       return publicVisit(visit);
     }
 
@@ -396,8 +462,19 @@ export class UserRegistry {
       claimedNick: ""
     };
 
+    ensureWallet(fallback);
+    if (meta.source === "game-start" && !isReservedNick(nick)) {
+      awardGunsCoinOnce(
+        fallback,
+        "playGrant",
+        this.economyConfig.gunsCoin.playGrant
+      );
+    }
+    awardRoomEntryCoins(fallback, meta, this.economyConfig);
+
     this.anonymousVisits.set(fallback.id, fallback);
     updatePresence(fallback, meta);
+    this.persist();
     return publicVisit(fallback);
   }
 
@@ -409,13 +486,36 @@ export class UserRegistry {
 
     if (!entity) return null;
 
+    ensureWallet(entity);
     entity.lastSeenAt = Date.now();
     updatePresence(entity, {
       ...meta,
       online
     });
+    this.persist();
 
     return pilot ? publicPilot(entity) : publicVisit(entity);
+  }
+
+  collectGarageCoins(rawNick, cookies = {}) {
+    const nick = sanitizeNick(rawNick);
+    const visit = this.getVisitByToken(cookies[VISIT_COOKIE]);
+    const pilot = this.pilots.get(normalizeNick(nick));
+    const entity = pilot || visit || this.getVisitByNick(nick);
+
+    if (!entity) return error("user_not_found", "User row was not found.");
+
+    awardGunsCoinOnce(
+      entity,
+      "visitorGrant",
+      this.economyConfig.gunsCoin.visitorGrant
+    );
+    this.persist();
+
+    return {
+      ok: true,
+      user: pilot ? publicPilot(entity) : publicVisit(entity)
+    };
   }
 
   list() {
@@ -454,6 +554,7 @@ export class UserRegistry {
         this.visitIdByTokenHash.delete(visit.tokenHash);
       }
 
+      this.persist();
       return {
         ok: true,
         deleted: {
@@ -474,6 +575,7 @@ export class UserRegistry {
         }
       }
 
+      this.persist();
       return {
         ok: true,
         deleted: {
@@ -493,6 +595,7 @@ export class UserRegistry {
     if (!visit || !pilot) return null;
 
     this.linkVisitToPilot(visit, pilot);
+    this.persist();
     return publicVisit(visit);
   }
 
@@ -552,6 +655,7 @@ export class UserRegistry {
 
     if (session.expiresAt <= Date.now() || session.revokedAt) {
       this.authSessions.delete(tokenHash);
+      this.persist();
       return null;
     }
 
@@ -576,11 +680,58 @@ export class UserRegistry {
     this.authSessions.set(session.tokenHash, session);
     return session;
   }
+
+  loadStorage() {
+    if (!this.storageFile || !fs.existsSync(this.storageFile)) return;
+
+    try {
+      const data = JSON.parse(fs.readFileSync(this.storageFile, "utf8"));
+      this.anonymousVisits = new Map(
+        (data.anonymousVisits || []).map((visit) => [
+          visit.id,
+          hydratePresenceEntity(visit)
+        ])
+      );
+      this.visitIdByTokenHash = new Map(data.visitIdByTokenHash || []);
+      this.pilots = new Map(
+        (data.pilots || []).map((pilot) => [
+          pilot.normalizedNick,
+          hydratePresenceEntity(pilot)
+        ])
+      );
+      this.authSessions = new Map(
+        (data.authSessions || []).map((session) => [session.tokenHash, session])
+      );
+      this.devices = new Map(
+        (data.devices || []).map((device) => [device.tokenHash, device])
+      );
+    } catch (error) {
+      console.warn(`Failed to load users storage: ${error.message}`);
+    }
+  }
+
+  persist() {
+    if (!this.storageFile) return;
+
+    const data = {
+      version: 1,
+      savedAt: Date.now(),
+      anonymousVisits: Array.from(this.anonymousVisits.values()).map(dehydratePresenceEntity),
+      visitIdByTokenHash: Array.from(this.visitIdByTokenHash.entries()),
+      pilots: Array.from(this.pilots.values()).map(dehydratePresenceEntity),
+      authSessions: Array.from(this.authSessions.values()),
+      devices: Array.from(this.devices.values())
+    };
+
+    fs.mkdirSync(path.dirname(this.storageFile), { recursive: true });
+    fs.writeFileSync(this.storageFile, `${JSON.stringify(data, null, 2)}\n`);
+  }
 }
 
 function publicVisit(visit) {
   const nick = getVisitNick(visit);
   const status = getVisitStatus(visit);
+  ensureWallet(visit);
 
   return {
     id: visit.id,
@@ -602,11 +753,38 @@ function publicVisit(visit) {
     claimedPilotId: visit.claimedPilotId || null,
     claimedNick: visit.claimedNick || "",
     convertedAt: visit.convertedAt || 0,
+    wallet: publicWallet(visit.wallet),
     meta: visit.meta || {}
   };
 }
 
+function hydratePresenceEntity(entity = {}) {
+  const hydrated = {
+    ...entity,
+    online: false,
+    activeConnections: 0,
+    connectionIds: new Set(),
+    roomId: ""
+  };
+  ensureWallet(hydrated);
+
+  return hydrated;
+}
+
+function dehydratePresenceEntity(entity = {}) {
+  const { connectionIds, ...stored } = entity;
+
+  return {
+    ...stored,
+    online: false,
+    activeConnections: 0,
+    roomId: ""
+  };
+}
+
 function publicPilot(pilot) {
+  ensureWallet(pilot);
+
   return {
     id: pilot.id,
     nick: pilot.nick,
@@ -620,9 +798,78 @@ function publicPilot(pilot) {
     source: pilot.source || "pilot",
     status: "claimed",
     firstVisitId: pilot.firstVisitId || "",
+    wallet: publicWallet(pilot.wallet),
     telegramLinked: Boolean(pilot.telegramId),
     telegramUsername: pilot.telegramUsername || ""
   };
+}
+
+function ensureWallet(entity) {
+  entity.wallet ||= {};
+  entity.wallet.gunsCoin = normalizeCoinAmount(entity.wallet.gunsCoin);
+  entity.economyAwards ||= {};
+  return entity.wallet;
+}
+
+function publicWallet(wallet = {}) {
+  return {
+    gunsCoin: normalizeCoinAmount(wallet.gunsCoin)
+  };
+}
+
+function awardGunsCoinOnce(entity, awardKey, amount) {
+  ensureWallet(entity);
+
+  if (entity.economyAwards[awardKey]) return 0;
+
+  const value = normalizeCoinAmount(amount);
+
+  entity.wallet.gunsCoin += value;
+  entity.economyAwards[awardKey] = {
+    amount: value,
+    awardedAt: Date.now()
+  };
+
+  return value;
+}
+
+function awardRoomEntryCoins(entity, meta = {}, economyConfig = {}) {
+  if (meta.source !== "game-start") return 0;
+  if (meta.roomId !== "user-cabinet") return 0;
+
+  return awardGunsCoinOnce(
+    entity,
+    "visitorGrant",
+    economyConfig.gunsCoin?.visitorGrant
+  );
+}
+
+function transferWallet(from, to) {
+  ensureWallet(from);
+  ensureWallet(to);
+
+  to.wallet.gunsCoin += from.wallet.gunsCoin;
+  from.wallet.gunsCoin = 0;
+}
+
+function normalizeEconomyConfig(config = {}) {
+  const gunsCoin = config.gunsCoin || config.economy?.gunsCoin || {};
+
+  return {
+    gunsCoin: {
+      visitorGrant: normalizeCoinAmount(gunsCoin.visitorGrant),
+      playGrant: normalizeCoinAmount(gunsCoin.playGrant),
+      registrationGrant: normalizeCoinAmount(gunsCoin.registrationGrant)
+    }
+  };
+}
+
+function normalizeCoinAmount(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) return 0;
+
+  return Math.floor(number);
 }
 
 function getVisitStatus(visit) {

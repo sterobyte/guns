@@ -15,6 +15,35 @@
     localConfig ||
     null;
 
+  window.GUNS_CONFIG_LOADER = {
+    refresh
+  };
+
+  async function refresh() {
+    if (!apiUrl) return window.GUNS_SHARED_CONFIG;
+
+    try {
+      const url = new URL(apiUrl);
+      url.searchParams.set("_", String(Date.now()));
+
+      const response = await fetch(url.toString(), {
+        cache: "no-store"
+      });
+
+      if (!response.ok) return window.GUNS_SHARED_CONFIG;
+
+      const payload = await response.json();
+      const config = payload?.config || payload;
+
+      if (config) {
+        window.GUNS_SHARED_CONFIG = config;
+        window.GUNS_OBJECTS?.refreshFromConfig?.(config);
+      }
+    } catch {}
+
+    return window.GUNS_SHARED_CONFIG;
+  }
+
   function loadConfig(url) {
     if (!url) return null;
 

@@ -3,17 +3,17 @@ cd /d "%~dp0"
 
 netstat -ano | findstr /R /C:"127\.0\.0\.1:3000 .*LISTENING" >nul
 if errorlevel 1 (
-  start "GUNS backend" /min cmd /k "cd /d %~dp0 && backend-loop.cmd"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\Program Files\nodejs\node.exe' -ArgumentList @('server\index.mjs') -WorkingDirectory '%~dp0' -WindowStyle Hidden"
 )
 
 netstat -ano | findstr /R /C:"127\.0\.0\.1:5178 .*LISTENING" >nul
 if errorlevel 1 (
-  start "GUNS game" /min cmd /k "cd /d %~dp0 && node scripts\serve.mjs"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\Program Files\nodejs\node.exe' -ArgumentList @('scripts\serve.mjs') -WorkingDirectory '%~dp0' -WindowStyle Hidden"
 )
 
 netstat -ano | findstr /R /C:"127\.0\.0\.1:5179 .*LISTENING" >nul
 if errorlevel 1 (
-  start "GUNS panel" /min cmd /k "cd /d %~dp0..\guns-panel && node scripts\serve.mjs"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\Program Files\nodejs\node.exe' -ArgumentList @('scripts\serve.mjs') -WorkingDirectory '%~dp0..\guns-panel' -WindowStyle Hidden"
 )
 
 echo GUNS local stack requested.

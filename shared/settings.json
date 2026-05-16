@@ -1,0 +1,10 @@
+{
+  "botNameBrackets": true,
+  "economy": {
+    "gunsCoin": {
+      "visitorGrant": 100,
+      "playGrant": 25,
+      "registrationGrant": 250
+    }
+  }
+}

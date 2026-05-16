@@ -11,16 +11,19 @@ import { buildGameConfig, validateGameConfig } from "../scripts/config-tools.mjs
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publishedConfigFile = path.join(root, "shared", "game-config.json");
 const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
+const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.13.0";
+const version = "0.13.36";
 const serverStartedAt = Date.now();
 let publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
 });
-const users = new UserRegistry();
+const users = new UserRegistry(getEconomyConfig(publishedConfig), {
+  storageFile: usersStorageFile
+});
 
 process.stdout?.on?.("error", () => {});
 process.stderr?.on?.("error", () => {});
@@ -123,7 +126,7 @@ const server = http.createServer((req, res) => {
     try {
       validateGameConfig(draft);
       writeConfigSources(draft);
-      const builtConfig = buildGameConfig(root);
+      const builtConfig = buildVersionedGameConfig();
       writeConfigFile(publishedConfigFile, builtConfig);
       fs.rmSync(draftConfigFile, { force: true });
       publishedConfig = builtConfig;
@@ -161,11 +164,277 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/settings") {
+    if (req.method === "GET") {
+      sendJson(req, res, 200, {
+        ok: true,
+        settings: publishedConfig.settings || {}
+      });
+      return;
+    }
+
+    if (req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => {
+          const config = setGlobalSettings(publishedConfig, body?.settings || body);
+
+          validateGameConfig(config);
+          writeConfigSources(config);
+          const builtConfig = buildVersionedGameConfig();
+          writeConfigFile(publishedConfigFile, builtConfig);
+          publishedConfig = builtConfig;
+
+          sendJson(req, res, 200, {
+            ok: true,
+            settings: publishedConfig.settings
+          });
+        })
+        .catch((error) => {
+          sendJson(req, res, 400, {
+            ok: false,
+            error: "invalid_settings",
+            message: error.message
+          });
+        });
+      return;
+    }
+  }
+
+  if (url.pathname === "/api/economy") {
+    if (req.method === "GET") {
+      sendJson(req, res, 200, {
+        ok: true,
+        economy: getEconomyConfig(publishedConfig)
+      });
+      return;
+    }
+
+    if (req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => {
+          const config = setEconomySettings(publishedConfig, body?.economy || body);
+
+          validateGameConfig(config);
+          writeConfigSources(config);
+          const builtConfig = buildVersionedGameConfig();
+          writeConfigFile(publishedConfigFile, builtConfig);
+          publishedConfig = builtConfig;
+          users.setEconomyConfig(getEconomyConfig(publishedConfig));
+
+          sendJson(req, res, 200, {
+            ok: true,
+            economy: getEconomyConfig(publishedConfig)
+          });
+        })
+        .catch((error) => {
+          sendJson(req, res, 400, {
+            ok: false,
+            error: "invalid_economy",
+            message: error.message
+          });
+        });
+      return;
+    }
+  }
+
+  if (url.pathname === "/api/objects/cannons/fire-rate" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const cannonId = String(body?.cannonId || "").trim();
+        const controller = String(body?.controller || "").trim();
+        const value = Number(body?.value);
+        const config = setCannonFireRate(
+          publishedConfig,
+          cannonId,
+          controller,
+          value
+        );
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          cannon: publishedConfig.objects.cannons[cannonId],
+          objects: publishedConfig.objects
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_object",
+          message: error.message
+        });
+      });
+    return;
+  }
+
   if (url.pathname === "/api/rooms") {
     sendJson(req, res, 200, {
       ok: true,
       rooms: publishedConfig.rooms
     });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms/draft" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const sourceRoomId = String(body?.sourceRoomId || "main").trim();
+        const config = createDraftRoom(publishedConfig, sourceRoomId);
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          rooms: publishedConfig.rooms
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_room",
+          message: error.message
+        });
+      });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms/enabled" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const roomId = String(body?.roomId || "").trim();
+
+        if (isRoomPublished(publishedConfig, roomId)) {
+          sendJson(req, res, 409, {
+            ok: false,
+            error: "room_published",
+            message: "Published rooms are immutable"
+          });
+          return;
+        }
+
+        const config = setRoomEnabled(
+          publishedConfig,
+          roomId,
+          body?.enabled !== false
+        );
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          rooms: publishedConfig.rooms
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_room",
+          message: error.message
+        });
+      });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms/publish" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const roomId = String(body?.roomId || "").trim();
+
+        if (isRoomOccupied(roomId)) {
+          sendJson(req, res, 409, {
+            ok: false,
+            error: "room_not_empty",
+            message: "Room cannot be published while players are inside"
+          });
+          return;
+        }
+
+        const config = publishRoom(publishedConfig, roomId);
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          rooms: publishedConfig.rooms
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_room",
+          message: error.message
+        });
+      });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms/arena" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const roomId = String(body?.roomId || "").trim();
+        const shape = String(body?.shape || "").trim();
+
+        if (isRoomPublished(publishedConfig, roomId)) {
+          sendJson(req, res, 409, {
+            ok: false,
+            error: "room_published",
+            message: "Published rooms are immutable"
+          });
+          return;
+        }
+
+        if (isRoomOccupied(roomId)) {
+          sendJson(req, res, 409, {
+            ok: false,
+            error: "room_not_empty",
+            message: "Room arena cannot be changed while players are inside"
+          });
+          return;
+        }
+
+        const config = setRoomArena(
+          publishedConfig,
+          roomId,
+          shape,
+          body?.params || {}
+        );
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          room: publishedConfig.rooms[roomId],
+          rooms: publishedConfig.rooms
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_room",
+          message: error.message
+        });
+      });
     return;
   }
 
@@ -376,6 +645,7 @@ const server = http.createServer((req, res) => {
       .then((body) => {
         const user = users.register(body?.nick, {
           source: "game-start",
+          roomId: sanitizeRoomId(body?.roomId),
           visitToken: cookies[VISIT_COOKIE] || ""
         });
 
@@ -383,6 +653,23 @@ const server = http.createServer((req, res) => {
           ok: true,
           user
         });
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
+  if (url.pathname === "/users/garage-coins" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.collectGarageCoins(body?.nick, cookies);
+
+        if (!result.ok) {
+          sendJson(req, res, 404, result);
+          return;
+        }
+
+        sendJson(req, res, 200, result);
       })
       .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
 
@@ -487,8 +774,13 @@ function writeConfigSources(config) {
     path.join(root, "shared", "objects", "cannons"),
     config.objects?.cannons || {}
   );
+  writeConfigDirectory(
+    path.join(root, "shared", "objects", "room-objects"),
+    config.objects?.roomObjects || {}
+  );
   writeConfigDirectory(path.join(root, "shared", "rooms"), config.rooms || {});
   writeConfigDirectory(path.join(root, "shared", "modes"), config.modes || {});
+  writeConfigFile(path.join(root, "shared", "settings.json"), config.settings || {});
 }
 
 function writeConfigDirectory(dir, items) {
@@ -501,6 +793,283 @@ function writeConfigDirectory(dir, items) {
   for (const [id, item] of Object.entries(items)) {
     writeConfigFile(path.join(dir, `${id}.json`), item);
   }
+}
+
+function buildVersionedGameConfig() {
+  const config = buildGameConfig(root);
+  config.configVersion = bumpConfigVersion(publishedConfig.configVersion);
+  return config;
+}
+
+function bumpConfigVersion(version) {
+  const parts = String(version || "0.1.0")
+    .split(".")
+    .map((part) => Number(part));
+
+  while (parts.length < 3) {
+    parts.push(0);
+  }
+
+  parts[2] = Number.isFinite(parts[2]) ? parts[2] + 1 : 1;
+
+  return parts
+    .slice(0, 3)
+    .map((part) => (Number.isFinite(part) ? part : 0))
+    .join(".");
+}
+
+function setRoomEnabled(config, roomId, enabled) {
+  if (!config.rooms?.[roomId]) {
+    throw new Error(`Room not found: ${roomId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+
+  nextConfig.rooms[roomId].enabled = !!enabled;
+
+  return nextConfig;
+}
+
+function setGlobalSettings(config, settings) {
+  const nextConfig = structuredClone(config);
+
+  nextConfig.settings ||= {};
+  if (settings.botNameBrackets !== undefined) {
+    nextConfig.settings.botNameBrackets = settings.botNameBrackets === true;
+  }
+
+  return nextConfig;
+}
+
+function setEconomySettings(config, economy) {
+  const nextConfig = structuredClone(config);
+  const gunsCoin = economy?.gunsCoin || economy || {};
+
+  nextConfig.settings ||= {};
+  nextConfig.settings.economy ||= {};
+  nextConfig.settings.economy.gunsCoin ||= {};
+
+  for (const key of ["visitorGrant", "playGrant", "registrationGrant"]) {
+    if (gunsCoin[key] === undefined) continue;
+
+    const value = Number(gunsCoin[key]);
+
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`gunsCoin.${key} must be a non-negative number`);
+    }
+
+    nextConfig.settings.economy.gunsCoin[key] = Math.floor(value);
+  }
+
+  return nextConfig;
+}
+
+function getEconomyConfig(config) {
+  return {
+    gunsCoin: {
+      visitorGrant: normalizeCoinAmount(
+        config?.settings?.economy?.gunsCoin?.visitorGrant
+      ),
+      playGrant: normalizeCoinAmount(
+        config?.settings?.economy?.gunsCoin?.playGrant
+      ),
+      registrationGrant: normalizeCoinAmount(
+        config?.settings?.economy?.gunsCoin?.registrationGrant
+      )
+    }
+  };
+}
+
+function normalizeCoinAmount(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) return 0;
+
+  return Math.floor(number);
+}
+
+function createDraftRoom(config, sourceRoomId) {
+  const source = config.rooms?.[sourceRoomId];
+
+  if (!source) {
+    throw new Error(`Room not found: ${sourceRoomId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+  const id = nextRoomDraftId(nextConfig, sourceRoomId);
+  const draft = structuredClone(source);
+
+  draft.id = id;
+  draft.title = `${source.title || source.id} Draft`;
+  draft.enabled = false;
+  draft.published = false;
+  normalizeDraftPlayerSpawn(draft);
+
+  nextConfig.rooms[id] = draft;
+
+  return nextConfig;
+}
+
+function normalizeDraftPlayerSpawn(room) {
+  const player = room.spawns?.player;
+
+  if (!player || player.state !== "alive") return;
+
+  const x = Number(player.x ?? 0);
+  const y = Number(player.y ?? 0);
+  const cannonEntityId = player.cannonEntityId || `${room.id}-player-cannon`;
+  const gunType = player.gunType || "autogun";
+
+  room.spawns.cannons ||= [];
+  room.spawns.cannons.unshift({
+    unitId: cannonEntityId,
+    gunType,
+    x,
+    y
+  });
+
+  room.spawns.player = {
+    state: "pilot",
+    pilotX: x,
+    pilotY: y - 58
+  };
+}
+
+function nextRoomDraftId(config, sourceRoomId) {
+  const base = sanitizeRoomId(`${sourceRoomId}-draft`);
+  let index = 1;
+  let id = `${base}-${index}`;
+
+  while (config.rooms?.[id]) {
+    index += 1;
+    id = `${base}-${index}`;
+  }
+
+  return id;
+}
+
+function publishRoom(config, roomId) {
+  if (!config.rooms?.[roomId]) {
+    throw new Error(`Room not found: ${roomId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+
+  nextConfig.rooms[roomId].published = true;
+
+  return nextConfig;
+}
+
+function isRoomOccupied(roomId) {
+  const room = hub.rooms.get(sanitizeRoomId(roomId));
+  return (room?.clients?.size || 0) > 0;
+}
+
+function isRoomPublished(config, roomId) {
+  return config.rooms?.[roomId]?.published === true;
+}
+
+function setRoomArena(config, roomId, shape, params) {
+  if (!config.rooms?.[roomId]) {
+    throw new Error(`Room not found: ${roomId}`);
+  }
+
+  if (!["circle", "rectangle", "five-pointed-star", "triangle"].includes(shape)) {
+    throw new Error(`Room shape is not supported: ${shape}`);
+  }
+
+  const nextParams = normalizeRoomArenaParams(shape, params);
+
+  const nextConfig = structuredClone(config);
+
+  nextConfig.rooms[roomId].arena = {
+    shape,
+    params: nextParams
+  };
+
+  return nextConfig;
+}
+
+function normalizeRoomArenaParams(shape, params) {
+  if (shape === "circle") {
+    const radius = Number(params?.radius);
+
+    if (!Number.isFinite(radius) || radius <= 0) {
+      throw new Error("Circle radius must be a positive number");
+    }
+
+    return { radius };
+  }
+
+  if (shape === "triangle") {
+    const radius = Number(params?.radius);
+    const rotation = Number(params?.rotation ?? -90);
+
+    if (!Number.isFinite(radius) || radius <= 0) {
+      throw new Error("Triangle radius must be a positive number");
+    }
+
+    return {
+      radius,
+      rotation: Number.isFinite(rotation) ? rotation : -90
+    };
+  }
+
+  if (shape === "five-pointed-star") {
+    const outerRadius = Number(params?.outerRadius);
+    const innerRadius = Number(params?.innerRadius);
+    const rotation = Number(params?.rotation ?? -90);
+
+    if (!Number.isFinite(outerRadius) || outerRadius <= 0) {
+      throw new Error("Star outer radius must be a positive number");
+    }
+
+    if (!Number.isFinite(innerRadius) || innerRadius <= 0 || innerRadius >= outerRadius) {
+      throw new Error("Star inner radius must be positive and less than outer radius");
+    }
+
+    return {
+      outerRadius,
+      innerRadius,
+      rotation: Number.isFinite(rotation) ? rotation : -90
+    };
+  }
+
+  const width = Number(params?.width ?? params?.x);
+  const height = Number(params?.height ?? params?.y);
+
+  if (!Number.isFinite(width) || width <= 0) {
+  throw new Error("Rectangle width must be a positive number");
+  }
+
+  if (!Number.isFinite(height) || height <= 0) {
+    throw new Error("Rectangle height must be a positive number");
+  }
+
+  return { width, height };
+}
+
+function setCannonFireRate(config, cannonId, controller, value) {
+  if (!config.objects?.cannons?.[cannonId]) {
+    throw new Error(`Cannon not found: ${cannonId}`);
+  }
+
+  if (!["player", "bot"].includes(controller)) {
+    throw new Error("Controller must be player or bot");
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("Fire rate must be a positive number");
+  }
+
+  const nextConfig = structuredClone(config);
+  const cannon = nextConfig.objects.cannons[cannonId];
+
+  cannon.gameplay ||= {};
+  cannon.gameplay.fireRate ||= {};
+  cannon.gameplay.fireRate[controller] = value;
+
+  return nextConfig;
 }
 
 globalThis.GUNS_MULTIPLAYER_SERVER = server;
