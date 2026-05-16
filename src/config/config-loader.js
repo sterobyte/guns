@@ -6,9 +6,13 @@
       ? `${window.GUNS_CONFIG.multiplayer.localHttpUrl}/api/config/current`
       : "";
 
+  const apiConfig = loadConfig(apiUrl);
+  const localConfig = loadConfig(localConfigUrl);
+
   window.GUNS_SHARED_CONFIG =
-    loadConfig(apiUrl) ||
-    loadConfig(localConfigUrl) ||
+    chooseNewestConfig(apiConfig, localConfig) ||
+    apiConfig ||
+    localConfig ||
     null;
 
   function loadConfig(url) {
@@ -26,6 +30,36 @@
     } catch {
       return null;
     }
+  }
+
+  function chooseNewestConfig(apiConfig, localConfig) {
+    if (!apiConfig || !localConfig) {
+      return apiConfig || localConfig;
+    }
+
+    return compareVersions(
+      localConfig.configVersion,
+      apiConfig.configVersion
+    ) > 0
+      ? localConfig
+      : apiConfig;
+  }
+
+  function compareVersions(a, b) {
+    const left = String(a || "0")
+      .split(".")
+      .map(Number);
+    const right = String(b || "0")
+      .split(".")
+      .map(Number);
+    const length = Math.max(left.length, right.length);
+
+    for (let i = 0; i < length; i++) {
+      const diff = (left[i] || 0) - (right[i] || 0);
+      if (diff !== 0) return diff;
+    }
+
+    return 0;
   }
 
   function canUseLocalEndpoint(rawUrl) {

@@ -42,7 +42,7 @@ export function buildGameConfig(root) {
 
   const config = {
     schemaVersion: 1,
-    configVersion: "0.1.1",
+    configVersion: "0.1.2",
     status: "published",
     objects: {
       cannons

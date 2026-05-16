@@ -108,6 +108,7 @@ function invalidateRenderCaches() {
   arenaBackgroundCache = null;
   lcdOverlayPattern = null;
   lcdOverlayPatternColor = "";
+  cannonTintedSpriteCache?.clear?.();
 }
 
 applySkinPalette(SKIN);
@@ -213,6 +214,8 @@ function getCannonDefinitionNumber(type, path, fallback) {
 }
 
 const cannonRenderMetrics = new Map();
+const cannonSpriteCache = new Map();
+const cannonTintedSpriteCache = new Map();
 
 function getCannonRenderMetrics(type = "autogun") {
   const key = type || "autogun";
@@ -250,6 +253,42 @@ const CANNON_TYPE_CONFIG = {
     ),
     entryScoreRequired: getCannonDefinitionNumber(
       "autogun",
+      "gameplay.entryScoreRequired",
+      0
+    )
+  },
+  doublegun: {
+    maxAmmo: getCannonDefinitionNumber(
+      "doublegun",
+      "gameplay.maxAmmo",
+      AMMO_MAX * 2
+    ),
+    entryScoreRequired: getCannonDefinitionNumber(
+      "doublegun",
+      "gameplay.entryScoreRequired",
+      0
+    )
+  },
+  heavygun: {
+    maxAmmo: getCannonDefinitionNumber(
+      "heavygun",
+      "gameplay.maxAmmo",
+      AMMO_MAX
+    ),
+    entryScoreRequired: getCannonDefinitionNumber(
+      "heavygun",
+      "gameplay.entryScoreRequired",
+      0
+    )
+  },
+  machinegun: {
+    maxAmmo: getCannonDefinitionNumber(
+      "machinegun",
+      "gameplay.maxAmmo",
+      AMMO_MAX * 3
+    ),
+    entryScoreRequired: getCannonDefinitionNumber(
+      "machinegun",
       "gameplay.entryScoreRequired",
       0
     )
@@ -342,7 +381,7 @@ function makeUnit(
   return {
     id,
     pilotEntityId: id,
-    cannonEntityId: `${id}-autogun`,
+    cannonEntityId: `${id}-${gunType}`,
     isPlayer,
     isCannonOnly: false,
 
@@ -466,8 +505,16 @@ function makeUnit(
     objectDefinitionId: cannonDefinition?.id || gunType,
     entryScoreRequired: cannonConfig.entryScoreRequired,
     entryLocked: false,
-    damageMultiplier:
+    damageMultiplier: getCannonDefinitionNumber(
+      gunType,
+      "gameplay.damageMultiplier",
       1
+    ),
+    bulletDamage: getCannonDefinitionNumber(
+      gunType,
+      "gameplay.damage",
+      10
+    )
   };
 }
 
@@ -506,7 +553,8 @@ const bot4 = makeUnit(
   -520,
   BOT4_COLOR,
   126,
-  false
+  false,
+  "machinegun"
 );
 
 const bot5 = makeUnit(
@@ -524,7 +572,8 @@ const autoGun1 = makeUnit(
   0,
   RED_COLOR,
   0,
-  false
+  false,
+  "heavygun"
 );
 
 const autoGun2 = makeUnit(
@@ -533,7 +582,8 @@ const autoGun2 = makeUnit(
   0,
   GREEN_COLOR,
   0,
-  false
+  false,
+  "machinegun"
 );
 
 player.cannonEntityId = "autogun0";
@@ -864,6 +914,7 @@ let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
 let perfFrameMs = 1000 / 60;
+let cannonSpritesPrewarmed = false;
 const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
@@ -910,6 +961,153 @@ function reportPerf(now) {
       `[GUNS FPS ${PERF_DEBUG_LABEL}] ${perfLastFps.toFixed(1)}`
     );
   }
+}
+
+function getCannonSpriteRender(type = "autogun") {
+  const definition = getCannonDefinition(type);
+  const render = definition?.render || {};
+
+  if (render.renderer !== "sprite-cannon-canvas") {
+    return null;
+  }
+
+  const sprites = render.sprites || {};
+  const body = getSpriteImage(sprites.body?.src);
+  const turret = getSpriteImage(sprites.turret?.src);
+
+  if (!body?.complete || !turret?.complete) {
+    return null;
+  }
+
+  return {
+    body: getPaletteSprite(body, sprites.body?.src),
+    turret: getPaletteSprite(turret, sprites.turret?.src),
+    bodyConfig: sprites.body || {},
+    turretConfig: sprites.turret || {}
+  };
+}
+
+function getSpriteImage(src) {
+  if (!src) return null;
+
+  if (cannonSpriteCache.has(src)) {
+    return cannonSpriteCache.get(src);
+  }
+
+  const image = new Image();
+  image.src = src;
+  cannonSpriteCache.set(src, image);
+
+  return image;
+}
+
+function preloadCannonSprites() {
+  const definitions = window.GUNS_OBJECTS?.definitions?.cannons || {};
+
+  for (const definition of Object.values(definitions)) {
+    const sprites = definition?.render?.sprites || {};
+
+    getSpriteImage(sprites.body?.src);
+    getSpriteImage(sprites.turret?.src);
+  }
+}
+
+function prewarmCannonSpritePalettes() {
+  const definitions = window.GUNS_OBJECTS?.definitions?.cannons || {};
+
+  for (const definition of Object.values(definitions)) {
+    const render = definition?.render || {};
+
+    if (render.renderer !== "sprite-cannon-canvas") continue;
+
+    const sprites = render.sprites || {};
+    const body = getSpriteImage(sprites.body?.src);
+    const turret = getSpriteImage(sprites.turret?.src);
+
+    if (body?.complete) {
+      getPaletteSprite(body, sprites.body?.src);
+    }
+
+    if (turret?.complete) {
+      getPaletteSprite(turret, sprites.turret?.src);
+    }
+  }
+}
+
+preloadCannonSprites();
+
+function getPaletteSprite(image, src) {
+  const primary = parseCanvasColor(CANNON_INK);
+  const secondary = parseCanvasColor(LCD_BG_LIGHT);
+  const cacheKey =
+    `${src || ""}|${CANNON_INK}|${LCD_BG_LIGHT}|${image.naturalWidth}x${image.naturalHeight}`;
+
+  if (cannonTintedSpriteCache.has(cacheKey)) {
+    return cannonTintedSpriteCache.get(cacheKey);
+  }
+
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+
+  if (!width || !height) return image;
+
+  const tintedCanvas = document.createElement("canvas");
+  const tintedCtx = tintedCanvas.getContext("2d");
+
+  tintedCanvas.width = width;
+  tintedCanvas.height = height;
+  tintedCtx.drawImage(image, 0, 0);
+
+  const imageData = tintedCtx.getImageData(0, 0, width, height);
+  const pixels = imageData.data;
+
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i + 3] === 0) continue;
+
+    const luminance =
+      pixels[i] * 0.2126 +
+      pixels[i + 1] * 0.7152 +
+      pixels[i + 2] * 0.0722;
+    const color = luminance < 128 ? primary : secondary;
+
+    pixels[i] = color.r;
+    pixels[i + 1] = color.g;
+    pixels[i + 2] = color.b;
+  }
+
+  tintedCtx.putImageData(imageData, 0, 0);
+  cannonTintedSpriteCache.set(cacheKey, tintedCanvas);
+
+  return tintedCanvas;
+}
+
+function parseCanvasColor(value) {
+  const scratch = parseCanvasColor.canvas ||
+    (parseCanvasColor.canvas = document.createElement("canvas"));
+  const scratchCtx = parseCanvasColor.ctx ||
+    (parseCanvasColor.ctx = scratch.getContext("2d"));
+
+  scratchCtx.fillStyle = "#000";
+  scratchCtx.fillStyle = value || "#000";
+
+  const normalized = scratchCtx.fillStyle;
+
+  if (normalized.startsWith("#")) {
+    const hex = normalized.slice(1);
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16)
+    };
+  }
+
+  const match = normalized.match(/\d+(\.\d+)?/g) || [];
+
+  return {
+    r: Number(match[0]) || 0,
+    g: Number(match[1]) || 0,
+    b: Number(match[2]) || 0
+  };
 }
 
 function clamp(v, min, max) {
@@ -1370,13 +1568,20 @@ function fireBullet(owner, angle) {
       color: owner.color,
 
       damage:
-        10 * owner.damageMultiplier
+        owner.bulletDamage * owner.damageMultiplier
     });
   };
 
+  const definition = getCannonDefinition(owner.gunType);
+  const barrels = Array.isArray(definition?.weapon?.barrels)
+    ? definition.weapon.barrels
+    : [0];
+
   owner.recoilTime = owner.recoilDuration;
 
-  makeBullet(0);
+  for (const offset of barrels) {
+    makeBullet(Number(offset) || 0);
+  }
 
   owner.ammo = Math.max(0, owner.ammo - 1);
 
@@ -2266,6 +2471,7 @@ function tryEnterRepairedCannon(unit) {
     entryScoreRequired: unit.entryScoreRequired,
     entryLocked: unit.entryLocked,
     damageMultiplier: unit.damageMultiplier,
+    bulletDamage: unit.bulletDamage,
     wreckRepair: unit.wreckRepair,
     wreckHp: unit.wreckHp,
     cannonDestroyed: unit.cannonDestroyed
@@ -2288,6 +2494,7 @@ function tryEnterRepairedCannon(unit) {
     entryScoreRequired: targetCannon.entryScoreRequired,
     entryLocked: targetCannon.entryLocked,
     damageMultiplier: targetCannon.damageMultiplier,
+    bulletDamage: targetCannon.bulletDamage,
     wreckRepair: targetCannon.wreckRepair,
     wreckHp: targetCannon.wreckHp,
     cannonDestroyed: targetCannon.cannonDestroyed
@@ -2307,6 +2514,7 @@ function tryEnterRepairedCannon(unit) {
   unit.entryScoreRequired = newBody.entryScoreRequired;
   unit.entryLocked = newBody.entryLocked;
   unit.damageMultiplier = newBody.damageMultiplier;
+  unit.bulletDamage = newBody.bulletDamage;
   unit.ammo = Math.min(getMaxAmmo(unit), Math.max(newBody.ammo, 10));
   unit.cannonEntityId = newBody.cannonEntityId;
   unit.wreckRepair = 0;
@@ -2352,6 +2560,7 @@ function tryEnterRepairedCannon(unit) {
     targetCannon.entryScoreRequired = oldBody.entryScoreRequired;
     targetCannon.entryLocked = oldBody.entryLocked;
     targetCannon.damageMultiplier = oldBody.damageMultiplier;
+    targetCannon.bulletDamage = oldBody.bulletDamage;
     targetCannon.wreckRepair = oldBody.wreckRepair;
     targetCannon.wreckHp = oldBody.wreckHp;
     targetCannon.cannonDestroyed = oldBody.cannonDestroyed;
@@ -2738,7 +2947,7 @@ function updateBullets(dt) {
     let removed = false;
 
     if (isOutsideRoom(bullet.x, bullet.y, bullet.radius)) {
-      bullets.splice(i, 1);
+      removeBulletAt(i);
       continue;
     }
 
@@ -2758,7 +2967,7 @@ function updateBullets(dt) {
           target.hp = Math.max(0, target.hp - bullet.damage);
           addScore(bullet.owner, 30);
 
-          bullets.splice(i, 1);
+          removeBulletAt(i);
 
           removed = true;
 
@@ -2797,7 +3006,7 @@ function updateBullets(dt) {
             killPilot(target, bullet.owner);
           }
 
-          bullets.splice(i, 1);
+          removeBulletAt(i);
 
           removed = true;
           break;
@@ -2824,7 +3033,7 @@ function updateBullets(dt) {
                 WRECK_REPAIR_TIME *
                 (1 - clamp(target.hp / target.maxHp, 0, 1));
 
-              bullets.splice(i, 1);
+              removeBulletAt(i);
 
               removed = true;
 
@@ -2835,7 +3044,7 @@ function updateBullets(dt) {
               target.hp = Math.max(0, target.hp - bullet.damage);
               addScore(bullet.owner, 30);
 
-              bullets.splice(i, 1);
+              removeBulletAt(i);
 
               removed = true;
 
@@ -2855,9 +3064,19 @@ function updateBullets(dt) {
     if (removed) continue;
 
     if (bullet.life <= 0) {
-      bullets.splice(i, 1);
+      removeBulletAt(i);
     }
   }
+}
+
+function removeBulletAt(index) {
+  const lastIndex = bullets.length - 1;
+
+  if (index !== lastIndex) {
+    bullets[index] = bullets[lastIndex];
+  }
+
+  bullets.pop();
 }
 
 function getBotCombatRange(bot) {
@@ -4343,6 +4562,10 @@ function drawStains() {
 }
 
 function drawCannonBody(unit, angle, alpha = 1) {
+  if (drawSpriteCannonBody(unit, angle, alpha)) {
+    return;
+  }
+
   const p = worldToScreen(unit.x, unit.y);
   const renderMetrics = getCannonRenderMetrics(unit.gunType);
 
@@ -4953,6 +5176,60 @@ function drawScoreboardSkullIcon(x, y) {
   ctx.fill();
 
   ctx.restore();
+}
+
+function drawSpriteCannonBody(unit, angle, alpha = 1) {
+  const spriteRender = getCannonSpriteRender(unit.gunType);
+
+  if (!spriteRender) return false;
+
+  const p = worldToScreen(unit.x, unit.y);
+  const bodyConfig = spriteRender.bodyConfig;
+  const turretConfig = spriteRender.turretConfig;
+  const bodyRadiusPx = Number(bodyConfig.radiusPx) || 207;
+  const spriteScale = unit.radiusOuter / bodyRadiusPx;
+  const bodyPivotX = Number(bodyConfig.pivotX) || 256;
+  const bodyPivotY = Number(bodyConfig.pivotY) || 256;
+  const turretPivotX = Number(turretConfig.pivotX) || 256;
+  const turretPivotY = Number(turretConfig.pivotY) || 401;
+  const recoilDistance = Number(turretConfig.recoilDistance) || 9;
+  const recoil =
+    unit.recoilTime > 0
+      ? Math.sin(
+          (unit.recoilTime / unit.recoilDuration) *
+            Math.PI
+        ) * recoilDistance
+      : 0;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.translate(p.x, p.y);
+  ctx.scale(camera.scale, camera.scale);
+
+  ctx.drawImage(
+    spriteRender.body,
+    -bodyPivotX * spriteScale,
+    -bodyPivotY * spriteScale,
+    (Number(bodyConfig.width) || spriteRender.body.width) * spriteScale,
+    (Number(bodyConfig.height) || spriteRender.body.height) * spriteScale
+  );
+
+  ctx.save();
+  ctx.rotate(angle + Math.PI / 2);
+  ctx.translate(0, recoil);
+  ctx.drawImage(
+    spriteRender.turret,
+    -turretPivotX * spriteScale,
+    -turretPivotY * spriteScale,
+    (Number(turretConfig.width) || spriteRender.turret.width) * spriteScale,
+    (Number(turretConfig.height) || spriteRender.turret.height) * spriteScale
+  );
+  ctx.restore();
+  ctx.restore();
+
+  return true;
 }
 
 function drawScoreboard() {
@@ -5742,6 +6019,11 @@ function loop(now) {
   lastTime = now;
 
   if (window.GUNS_APP?.started !== false) {
+    if (!cannonSpritesPrewarmed) {
+      prewarmCannonSpritePalettes();
+      cannonSpritesPrewarmed = true;
+    }
+
     update(dt);
     if (now - lastDomainSyncAt >= DOMAIN_SYNC_RATE_MS) {
       lastDomainSyncAt = now;

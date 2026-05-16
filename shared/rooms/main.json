@@ -10,6 +10,9 @@
     "maxPlayers": 16
   },
   "allowedCannons": [
-    "autogun"
+    "autogun",
+    "doublegun",
+    "heavygun",
+    "machinegun"
   ]
 }

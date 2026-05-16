@@ -1,12 +1,13 @@
 {
-  "id": "autogun",
+  "id": "doublegun",
   "kind": "cannon",
-  "title": "Auto Gun",
+  "title": "Double Gun",
   "version": 1,
   "gameplay": {
     "maxHp": 100,
-    "maxAmmo": 30,
+    "maxAmmo": 60,
     "entryScoreRequired": 0,
+    "damageMultiplier": 2,
     "fireRate": {
       "player": 0.12,
       "bot": 0.35
@@ -29,11 +30,17 @@
       "bot": 0
     }
   },
+  "weapon": {
+    "barrels": [
+      -12,
+      12
+    ]
+  },
   "render": {
     "renderer": "sprite-cannon-canvas",
     "sprites": {
       "body": {
-        "src": "./assets/cannons/autogun_body.png",
+        "src": "./assets/cannons/doublegun_body.png",
         "width": 512,
         "height": 512,
         "pivotX": 256,
@@ -41,7 +48,7 @@
         "radiusPx": 207
       },
       "turret": {
-        "src": "./assets/cannons/autogun_turret.png",
+        "src": "./assets/cannons/doublegun_turret.png",
         "width": 512,
         "height": 512,
         "pivotX": 256,
@@ -53,23 +60,6 @@
       "renderer": "sprite",
       "outerRadiusPath": "physics.radiusOuter",
       "innerRadiusPath": "physics.radiusInner"
-    },
-    "barrel": {
-      "width": 10,
-      "height": 95,
-      "y": -85,
-      "innerWidth": 4,
-      "innerHeight": 62
-    },
-    "core": {
-      "radius": 28
-    },
-    "antenna": {
-      "width": 8,
-      "height": 28,
-      "radius": 4,
-      "swing": 0.25,
-      "swingSpeed": 0.003
     }
   }
 }

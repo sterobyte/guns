@@ -1,24 +1,25 @@
 {
-  "id": "autogun",
+  "id": "heavygun",
   "kind": "cannon",
-  "title": "Auto Gun",
+  "title": "Heavy Gun",
   "version": 1,
   "gameplay": {
     "maxHp": 100,
     "maxAmmo": 30,
     "entryScoreRequired": 0,
+    "damage": 80,
     "fireRate": {
-      "player": 0.12,
-      "bot": 0.35
+      "player": 0.36,
+      "bot": 1.05
     },
-    "recoilDuration": 0.085
+    "recoilDuration": 0.14
   },
   "physics": {
     "radiusOuter": 34,
     "radiusInner": 13,
     "speed": {
-      "player": 260,
-      "bot": 126
+      "player": 230,
+      "bot": 112
     },
     "slowdownRadius": {
       "player": 220,
@@ -29,11 +30,16 @@
       "bot": 0
     }
   },
+  "weapon": {
+    "barrels": [
+      0
+    ]
+  },
   "render": {
     "renderer": "sprite-cannon-canvas",
     "sprites": {
       "body": {
-        "src": "./assets/cannons/autogun_body.png",
+        "src": "./assets/cannons/heavygun_body.png",
         "width": 512,
         "height": 512,
         "pivotX": 256,
@@ -41,35 +47,18 @@
         "radiusPx": 207
       },
       "turret": {
-        "src": "./assets/cannons/autogun_turret.png",
+        "src": "./assets/cannons/heavygun_turret.png",
         "width": 512,
         "height": 512,
         "pivotX": 256,
-        "pivotY": 401,
-        "recoilDistance": 9
+        "pivotY": 411,
+        "recoilDistance": 13
       }
     },
     "body": {
       "renderer": "sprite",
       "outerRadiusPath": "physics.radiusOuter",
       "innerRadiusPath": "physics.radiusInner"
-    },
-    "barrel": {
-      "width": 10,
-      "height": 95,
-      "y": -85,
-      "innerWidth": 4,
-      "innerHeight": 62
-    },
-    "core": {
-      "radius": 28
-    },
-    "antenna": {
-      "width": 8,
-      "height": 28,
-      "radius": 4,
-      "swing": 0.25,
-      "swingSpeed": 0.003
     }
   }
 }

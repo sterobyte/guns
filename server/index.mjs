@@ -6,13 +6,16 @@ import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
 import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
+import { buildGameConfig, validateGameConfig } from "../scripts/config-tools.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const publishedConfigFile = path.join(root, "shared", "game-config.json");
+const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.11.7";
+const version = "0.13.0";
 const serverStartedAt = Date.now();
-const publishedConfig = loadPublishedConfig();
+let publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
@@ -53,6 +56,99 @@ const server = http.createServer((req, res) => {
       ok: true,
       version,
       config: publishedConfig
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/config/status") {
+    sendJson(req, res, 200, {
+      ok: true,
+      version,
+      schemaVersion: publishedConfig.schemaVersion,
+      configVersion: publishedConfig.configVersion,
+      status: publishedConfig.status,
+      draft: getDraftStatus(),
+      counts: {
+        cannons: Object.keys(publishedConfig.objects?.cannons || {}).length,
+        rooms: Object.keys(publishedConfig.rooms || {}).length,
+        modes: Object.keys(publishedConfig.modes || {}).length
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/config/draft") {
+    if (req.method === "GET") {
+      sendJson(req, res, 200, {
+        ok: true,
+        draft: loadDraftConfig() || publishedConfig,
+        source: fs.existsSync(draftConfigFile) ? "draft" : "published"
+      });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      readJsonBody(req)
+        .then((body) => {
+          const draft = body?.config || body;
+          validateGameConfig(draft);
+          writeConfigFile(draftConfigFile, draft);
+          sendJson(req, res, 200, {
+            ok: true,
+            draft: getDraftStatus()
+          });
+        })
+        .catch((error) => {
+          sendJson(req, res, 400, {
+            ok: false,
+            error: "invalid_config",
+            message: error.message
+          });
+        });
+      return;
+    }
+  }
+
+  if (url.pathname === "/api/config/publish" && req.method === "POST") {
+    const draft = loadDraftConfig();
+
+    if (!draft) {
+      sendJson(req, res, 404, {
+        ok: false,
+        error: "draft_not_found"
+      });
+      return;
+    }
+
+    try {
+      validateGameConfig(draft);
+      writeConfigSources(draft);
+      const builtConfig = buildGameConfig(root);
+      writeConfigFile(publishedConfigFile, builtConfig);
+      fs.rmSync(draftConfigFile, { force: true });
+      publishedConfig = builtConfig;
+
+      sendJson(req, res, 200, {
+        ok: true,
+        config: publishedConfig,
+        draft: getDraftStatus()
+      });
+    } catch (error) {
+      sendJson(req, res, 400, {
+        ok: false,
+        error: "invalid_config",
+        message: error.message
+      });
+    }
+
+    return;
+  }
+
+  if (url.pathname === "/api/config/discard" && req.method === "POST") {
+    fs.rmSync(draftConfigFile, { force: true });
+    sendJson(req, res, 200, {
+      ok: true,
+      draft: getDraftStatus()
     });
     return;
   }
@@ -332,10 +428,8 @@ const server = http.createServer((req, res) => {
 });
 
 function loadPublishedConfig() {
-  const file = path.join(root, "shared", "game-config.json");
-
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return JSON.parse(fs.readFileSync(publishedConfigFile, "utf8"));
   } catch {
     return {
       schemaVersion: 1,
@@ -345,6 +439,67 @@ function loadPublishedConfig() {
       rooms: {},
       modes: {}
     };
+  }
+}
+
+function loadDraftConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(draftConfigFile, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function getDraftStatus() {
+  const draft = loadDraftConfig();
+
+  if (!draft) {
+    return {
+      exists: false,
+      valid: false
+    };
+  }
+
+  try {
+    validateGameConfig(draft);
+    return {
+      exists: true,
+      valid: true,
+      configVersion: draft.configVersion,
+      status: draft.status
+    };
+  } catch (error) {
+    return {
+      exists: true,
+      valid: false,
+      message: error.message
+    };
+  }
+}
+
+function writeConfigFile(file, config) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function writeConfigSources(config) {
+  writeConfigDirectory(
+    path.join(root, "shared", "objects", "cannons"),
+    config.objects?.cannons || {}
+  );
+  writeConfigDirectory(path.join(root, "shared", "rooms"), config.rooms || {});
+  writeConfigDirectory(path.join(root, "shared", "modes"), config.modes || {});
+}
+
+function writeConfigDirectory(dir, items) {
+  fs.rmSync(dir, {
+    recursive: true,
+    force: true
+  });
+  fs.mkdirSync(dir, { recursive: true });
+
+  for (const [id, item] of Object.entries(items)) {
+    writeConfigFile(path.join(dir, `${id}.json`), item);
   }
 }
 
@@ -492,7 +647,7 @@ function corsHeaders(req) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
@@ -551,7 +706,7 @@ function readJsonBody(req) {
     req.on("data", (chunk) => {
       body += chunk;
 
-      if (body.length > 16 * 1024) {
+      if (body.length > 512 * 1024) {
         reject(new Error("Body is too large"));
         req.destroy();
       }

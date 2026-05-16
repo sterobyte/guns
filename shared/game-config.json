@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "configVersion": "0.1.1",
+  "configVersion": "0.1.2",
   "status": "published",
   "objects": {
     "cannons": {
@@ -36,8 +36,27 @@
           }
         },
         "render": {
-          "renderer": "legacy-autogun-canvas",
+          "renderer": "sprite-cannon-canvas",
+          "sprites": {
+            "body": {
+              "src": "./assets/cannons/autogun_body.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 256,
+              "radiusPx": 207
+            },
+            "turret": {
+              "src": "./assets/cannons/autogun_turret.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 401,
+              "recoilDistance": 9
+            }
+          },
           "body": {
+            "renderer": "sprite",
             "outerRadiusPath": "physics.radiusOuter",
             "innerRadiusPath": "physics.radiusInner"
           },
@@ -59,6 +78,199 @@
             "swingSpeed": 0.003
           }
         }
+      },
+      "doublegun": {
+        "id": "doublegun",
+        "kind": "cannon",
+        "title": "Double Gun",
+        "version": 1,
+        "gameplay": {
+          "maxHp": 100,
+          "maxAmmo": 60,
+          "entryScoreRequired": 0,
+          "damageMultiplier": 2,
+          "fireRate": {
+            "player": 0.12,
+            "bot": 0.35
+          },
+          "recoilDuration": 0.085
+        },
+        "physics": {
+          "radiusOuter": 34,
+          "radiusInner": 13,
+          "speed": {
+            "player": 260,
+            "bot": 126
+          },
+          "slowdownRadius": {
+            "player": 220,
+            "bot": 0
+          },
+          "stopRadius": {
+            "player": 50,
+            "bot": 0
+          }
+        },
+        "weapon": {
+          "barrels": [
+            -12,
+            12
+          ]
+        },
+        "render": {
+          "renderer": "sprite-cannon-canvas",
+          "sprites": {
+            "body": {
+              "src": "./assets/cannons/doublegun_body.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 256,
+              "radiusPx": 207
+            },
+            "turret": {
+              "src": "./assets/cannons/doublegun_turret.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 401,
+              "recoilDistance": 9
+            }
+          },
+          "body": {
+            "renderer": "sprite",
+            "outerRadiusPath": "physics.radiusOuter",
+            "innerRadiusPath": "physics.radiusInner"
+          }
+        }
+      },
+      "heavygun": {
+        "id": "heavygun",
+        "kind": "cannon",
+        "title": "Heavy Gun",
+        "version": 1,
+        "gameplay": {
+          "maxHp": 100,
+          "maxAmmo": 30,
+          "entryScoreRequired": 0,
+          "damage": 80,
+          "fireRate": {
+            "player": 0.36,
+            "bot": 1.05
+          },
+          "recoilDuration": 0.14
+        },
+        "physics": {
+          "radiusOuter": 34,
+          "radiusInner": 13,
+          "speed": {
+            "player": 230,
+            "bot": 112
+          },
+          "slowdownRadius": {
+            "player": 220,
+            "bot": 0
+          },
+          "stopRadius": {
+            "player": 50,
+            "bot": 0
+          }
+        },
+        "weapon": {
+          "barrels": [
+            0
+          ]
+        },
+        "render": {
+          "renderer": "sprite-cannon-canvas",
+          "sprites": {
+            "body": {
+              "src": "./assets/cannons/heavygun_body.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 256,
+              "radiusPx": 207
+            },
+            "turret": {
+              "src": "./assets/cannons/heavygun_turret.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 411,
+              "recoilDistance": 13
+            }
+          },
+          "body": {
+            "renderer": "sprite",
+            "outerRadiusPath": "physics.radiusOuter",
+            "innerRadiusPath": "physics.radiusInner"
+          }
+        }
+      },
+      "machinegun": {
+        "id": "machinegun",
+        "kind": "cannon",
+        "title": "Machine Gun",
+        "version": 1,
+        "gameplay": {
+          "maxHp": 100,
+          "maxAmmo": 90,
+          "entryScoreRequired": 0,
+          "damage": 10,
+          "fireRate": {
+            "player": 0.04,
+            "bot": 0.12
+          },
+          "recoilDuration": 0.045
+        },
+        "physics": {
+          "radiusOuter": 34,
+          "radiusInner": 13,
+          "speed": {
+            "player": 260,
+            "bot": 126
+          },
+          "slowdownRadius": {
+            "player": 220,
+            "bot": 0
+          },
+          "stopRadius": {
+            "player": 50,
+            "bot": 0
+          }
+        },
+        "weapon": {
+          "barrels": [
+            0
+          ]
+        },
+        "render": {
+          "renderer": "sprite-cannon-canvas",
+          "sprites": {
+            "body": {
+              "src": "./assets/cannons/machinegun_body.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 256,
+              "radiusPx": 207
+            },
+            "turret": {
+              "src": "./assets/cannons/machinegun_turret.png",
+              "width": 512,
+              "height": 512,
+              "pivotX": 256,
+              "pivotY": 407,
+              "recoilDistance": 5
+            }
+          },
+          "body": {
+            "renderer": "sprite",
+            "outerRadiusPath": "physics.radiusOuter",
+            "innerRadiusPath": "physics.radiusInner"
+          }
+        }
       }
     }
   },
@@ -75,7 +287,10 @@
         "maxPlayers": 16
       },
       "allowedCannons": [
-        "autogun"
+        "autogun",
+        "doublegun",
+        "heavygun",
+        "machinegun"
       ]
     }
   },
