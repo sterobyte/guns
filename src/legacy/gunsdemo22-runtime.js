@@ -125,6 +125,10 @@ const ARENA_BACKGROUND_CACHE_SCALE =
   1;
 const PERF_DEBUG =
   new URLSearchParams(window.location.search).has("fps");
+const PERF_DEBUG_LABEL =
+  new URLSearchParams(window.location.search).get("fps") ||
+  "1";
+const PERF_REPORT_RATE_MS = 250;
 
 function text(key, params) {
   return window.GUNS_I18N?.t?.(key, params) || key;
@@ -141,6 +145,10 @@ const deathOverlays = [];
 const hintMessages = [];
 const scoreboardRows = new Map();
 const remoteRenderStates = new Map();
+const playerDeathPrompt = {
+  active: false,
+  buttons: []
+};
 let arenaBackgroundCache = null;
 let lcdOverlayPattern = null;
 let lcdOverlayPatternColor = "";
@@ -722,6 +730,7 @@ window.GUNS_LEGACY = {
   skins: window.GUNS_CONFIG?.visual?.skins || { lcd: SKIN },
   setActiveSkin,
   getActiveSkin: () => SKIN,
+  clearPlayerDeathPrompt,
   setPlayerNick(nick) {
     player.displayName = nick;
   }
@@ -874,13 +883,11 @@ function resize() {
 }
 
 function reportPerf(now) {
-  if (!PERF_DEBUG) return;
-
   perfFrameCount++;
 
   const elapsed = now - perfLastReportAt;
 
-  if (elapsed < 1000) return;
+  if (elapsed < PERF_REPORT_RATE_MS) return;
 
   perfLastFps = Math.round((perfFrameCount * 1000) / elapsed);
   perfFrameCount = 0;
@@ -891,7 +898,9 @@ function reportPerf(now) {
     at: now
   };
 
-  console.log(`[GUNS FPS] ${perfLastFps}`);
+  if (PERF_DEBUG) {
+    console.log(`[GUNS FPS ${PERF_DEBUG_LABEL}] ${perfLastFps}`);
+  }
 }
 
 function clamp(v, min, max) {
@@ -1075,24 +1084,32 @@ function getPilotPoint(unit) {
 }
 
 function getEnemies(unit) {
-  if (unit.isCannonOnly) return [];
+  const enemies = [];
 
-  return units.filter(u => {
-    if (u === unit) return false;
-    if (u.tutorialHidden) return false;
-    if (u.isCannonOnly) return false;
+  forEachEnemy(unit, enemy => enemies.push(enemy));
+
+  return enemies;
+}
+
+function forEachEnemy(unit, callback) {
+  if (unit.isCannonOnly) return;
+
+  for (const enemy of units) {
+    if (enemy === unit) continue;
+    if (enemy.tutorialHidden) continue;
+    if (enemy.isCannonOnly) continue;
 
     if (
-      isPilotAirborne(u) &&
+      isPilotAirborne(enemy) &&
       unit !== player &&
-      u === player &&
+      enemy === player &&
       player.state === "pilot"
     ) {
-      return false;
+      continue;
     }
 
-    return true;
-  });
+    callback(enemy);
+  }
 }
 
 function addScore(unit, value) {
@@ -1146,7 +1163,7 @@ function isPilotAirborne(unit) {
 }
 
 function isDeathBlurActive() {
-  return deathOverlays.length > 0;
+  return playerDeathPrompt.active;
 }
 
 function getPilotFlyAmount(unit) {
@@ -1189,6 +1206,62 @@ function startPlayerFlyToggle() {
     player.pilotFlyState = "falling";
     player.pilotFlyTime = 0;
   }
+}
+
+function clearPlayerDeathPrompt() {
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  deathOverlays.length = 0;
+}
+
+function startPlayerDeathPrompt() {
+  clearPlayerDeathPrompt();
+  playerDeathPrompt.active = true;
+  mouse.down = false;
+
+  player.state = "pilot";
+  player.pilotFlyState = "rising";
+  player.pilotFlyTime = 0;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotImmunity = Math.max(
+    player.pilotImmunity,
+    PILOT_IMMUNITY_TIME
+  );
+}
+
+function continuePlayerAfterDeath() {
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  mouse.down = false;
+
+  player.pilotFlyState = "falling";
+  player.pilotFlyTime = 0;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotImmunity = PILOT_IMMUNITY_TIME;
+}
+
+function exitPlayerAfterDeath() {
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  mouse.down = false;
+
+  player.pilotFlyState = "ground";
+  player.pilotFlyTime = 0;
+  player.pilotRadius = PILOT_RADIUS;
+  player.pilotImmunity = PILOT_IMMUNITY_TIME;
+
+  if (window.GUNS_APP?.stop) {
+    window.GUNS_APP.stop();
+    return;
+  }
+
+  if (window.GUNS_APP) {
+    window.GUNS_APP.started = false;
+  }
+  window.GUNS_NET?.disconnect?.();
+  document.getElementById("start-screen")?.classList.remove("hidden");
 }
 
 function updatePilotFly(unit, dt) {
@@ -1236,7 +1309,9 @@ function updatePilotFly(unit, dt) {
 }
 
 function pairKey(a, b) {
-  return [a.id, b.id].sort().join("|");
+  return a.id < b.id
+    ? a.id + "|" + b.id
+    : b.id + "|" + a.id;
 }
 
 function getNearestEnemy(unit) {
@@ -1245,14 +1320,14 @@ function getNearestEnemy(unit) {
 
   const self = getActivePoint(unit);
 
-  for (const enemy of getEnemies(unit)) {
+  forEachEnemy(unit, enemy => {
     const d = distance(self, getActivePoint(enemy));
 
     if (d < bestD) {
       best = enemy;
       bestD = d;
     }
-  }
+  });
 
   return best;
 }
@@ -1548,8 +1623,8 @@ function chooseBotTarget(bot) {
 
   const self = getActivePoint(bot);
 
-  for (const enemy of getEnemies(bot)) {
-    if (enemy.cannonDestroyed && enemy.state !== "pilot") continue;
+  forEachEnemy(bot, enemy => {
+    if (enemy.cannonDestroyed && enemy.state !== "pilot") return;
 
     const p = getActivePoint(enemy);
     const d = distance(self, p);
@@ -1566,7 +1641,7 @@ function chooseBotTarget(bot) {
       bestScore = score;
       best = enemy;
     }
-  }
+  });
 
   bot.aiTarget = best;
   bot.aiTargetTimer = randomRange(0.06, 0.16);
@@ -1807,10 +1882,6 @@ function killPilot(victim, killer) {
     getUnitDisplayName(victim)
   );
 
-  if (victim.isPlayer) {
-    addDeathOverlay();
-  }
-
   victim.pilotDeaths++;
 
   if (killer && killer !== victim) {
@@ -1836,6 +1907,10 @@ function killPilot(victim, killer) {
   clampPilotToRoom(victim);
 
   victim.state = "pilot";
+
+  if (victim.isPlayer) {
+    startPlayerDeathPrompt();
+  }
 }
 
 function startKnockbackUnit(unit, nx, ny) {
@@ -2794,10 +2869,13 @@ function getInterceptPoint(shooter, targetUnit, bulletSpeed) {
       const root = Math.sqrt(disc);
       const t1 = (-b - root) / (2 * a);
       const t2 = (-b + root) / (2 * a);
-      const valid = [t1, t2].filter(v => v > 0);
 
-      if (valid.length > 0) {
-        t = Math.min(...valid);
+      if (t1 > 0 && t2 > 0) {
+        t = Math.min(t1, t2);
+      } else if (t1 > 0) {
+        t = t1;
+      } else if (t2 > 0) {
+        t = t2;
       }
     }
   }
@@ -2968,9 +3046,9 @@ function moveBotPilotTowardSafely(bot, target, dt, stopDistance = 0) {
   let vx = dx / (targetDistance || 1);
   let vy = dy / (targetDistance || 1);
 
-  for (const enemy of getEnemies(bot)) {
-    if (enemy.state !== "alive") continue;
-    if (enemy.cannonDestroyed) continue;
+  forEachEnemy(bot, enemy => {
+    if (enemy.state !== "alive") return;
+    if (enemy.cannonDestroyed) return;
 
     const awayX = bot.pilotX - enemy.x;
     const awayY = bot.pilotY - enemy.y;
@@ -2988,7 +3066,7 @@ function moveBotPilotTowardSafely(bot, target, dt, stopDistance = 0) {
       vx += (awayX / d) * danger * panic;
       vy += (awayY / d) * danger * panic;
     }
-  }
+  });
 
   const len = Math.hypot(vx, vy);
 
@@ -3205,6 +3283,13 @@ function updatePostEjectBrake(unit, dt) {
 }
 
 function updatePlayer(dt) {
+  if (playerDeathPrompt.active) {
+    player.pilotImmunity = Math.max(
+      player.pilotImmunity,
+      PILOT_IMMUNITY_TIME
+    );
+  }
+
   if (player.pilotImmunity > 0) {
     player.pilotImmunity = Math.max(
       0,
@@ -3299,6 +3384,7 @@ function updatePlayer(dt) {
         : updatePilotKnockback(player, dt);
 
     if (
+      !playerDeathPrompt.active &&
       !ejecting &&
       !pilotKnock &&
       mouse.active
@@ -4873,9 +4959,7 @@ function drawScoreboard() {
         }))
       : units
           .filter(unit => !unit.isCannonOnly && !unit.tutorialHidden)
-          .sort(
-          (a, b) => b.score - a.score
-        );
+          .sort((a, b) => b.score - a.score);
 
   const panelX = 12;
   const panelY = 12;
@@ -4913,6 +4997,13 @@ function drawScoreboard() {
   ctx.fillText(
     "v" + GAME_VERSION,
     panelX + 12,
+    versionY
+  );
+
+  ctx.textAlign = "right";
+  ctx.fillText(
+    "FPS " + (perfLastFps || "--"),
+    panelX + panelW - 12,
     versionY
   );
 
@@ -5121,48 +5212,33 @@ function drawLCDOverlay() {
 }
 
 function drawDeathBlur() {
-  let blur = 0;
+  let strength = 0;
 
   for (const overlay of deathOverlays) {
     const t = clamp(overlay.time / overlay.life, 0, 1);
-    blur = Math.max(
-      blur,
-      7 * (1 - easeInOutSine(t) * 0.65)
+    strength = Math.max(
+      strength,
+      1 - easeInOutSine(t) * 0.65
     );
   }
 
-  if (blur <= 0) return;
-
-  if (
-    blurCanvas.width !== canvas.width ||
-    blurCanvas.height !== canvas.height
-  ) {
-    blurCanvas.width = canvas.width;
-    blurCanvas.height = canvas.height;
-  }
-
-  blurCtx.setTransform(1, 0, 0, 1, 0, 0);
-  blurCtx.clearRect(
-    0,
-    0,
-    blurCanvas.width,
-    blurCanvas.height
-  );
-  blurCtx.drawImage(canvas, 0, 0);
+  if (strength <= 0) return;
 
   ctx.save();
-  ctx.filter = "blur(" + blur + "px)";
-  ctx.drawImage(
-    blurCanvas,
-    0,
-    0,
-    blurCanvas.width,
-    blurCanvas.height,
+
+  ctx.globalAlpha = 0.22 * strength;
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.fillRect(
     0,
     0,
     window.innerWidth,
     window.innerHeight
   );
+
+  ctx.globalAlpha = 0.12 * strength;
+  ctx.fillStyle = LCD_INK;
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
+
   ctx.restore();
 }
 
@@ -5354,23 +5430,136 @@ function drawPauseOverlay() {
   ctx.restore();
 }
 
-function drawFlyMode() {
-  if (!isPilotAirborne(player)) return;
-
+function drawModeBadge(label) {
   ctx.save();
 
   ctx.font = "12px monospace";
   ctx.textAlign = "right";
   ctx.textBaseline = "top";
-  ctx.fillStyle = LCD_INK;
 
-  ctx.fillText(
-    text("mode.fly"),
-    window.innerWidth - 16,
-    16
-  );
+  const paddingX = 8;
+  const paddingY = 5;
+  const width = ctx.measureText(label).width + paddingX * 2;
+  const height = 22;
+  const x = window.innerWidth - 16 - width;
+  const y = 16;
+
+  ctx.globalAlpha = 0.90;
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.fillRect(x, y, width, height);
+
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, height);
+
+  ctx.fillStyle = LCD_INK;
+  ctx.fillText(label, window.innerWidth - 16 - paddingX, y + paddingY);
 
   ctx.restore();
+}
+
+function drawFlyMode() {
+  if (playerDeathPrompt.active) {
+    drawModeBadge(text("mode.dead"));
+    return;
+  }
+
+  if (!isPilotAirborne(player)) return;
+
+  drawModeBadge(text("mode.fly"));
+}
+
+function getDeathPromptButtons() {
+  if (!playerDeathPrompt.active) return [];
+
+  const p = worldToScreen(player.pilotX, player.pilotY);
+  const buttonW = 116;
+  const buttonH = 28;
+  const gap = 8;
+  const groupW = buttonW * 2 + gap;
+  const x = clamp(
+    p.x - groupW / 2,
+    12,
+    window.innerWidth - groupW - 12
+  );
+  const y = clamp(
+    p.y + z(player.pilotRadius + 26),
+    52,
+    window.innerHeight - buttonH - 12
+  );
+
+  return [
+    {
+      action: "continue",
+      label: text("death.continue"),
+      x,
+      y,
+      w: buttonW,
+      h: buttonH
+    },
+    {
+      action: "exit",
+      label: text("death.exit"),
+      x: x + buttonW + gap,
+      y,
+      w: buttonW,
+      h: buttonH
+    }
+  ];
+}
+
+function drawDeathPromptButtons() {
+  if (!playerDeathPrompt.active) return;
+
+  const buttons = getDeathPromptButtons();
+  playerDeathPrompt.buttons = buttons;
+
+  ctx.save();
+
+  ctx.font = "12px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (const button of buttons) {
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = LCD_BG_LIGHT;
+    ctx.fillRect(button.x, button.y, button.w, button.h);
+
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(button.x, button.y, button.w, button.h);
+
+    ctx.fillStyle = LCD_INK;
+    ctx.fillText(
+      button.label,
+      button.x + button.w / 2,
+      button.y + button.h / 2
+    );
+  }
+
+  ctx.restore();
+}
+
+function handleDeathPromptClick(x, y) {
+  if (!playerDeathPrompt.active) return false;
+
+  const buttons = getDeathPromptButtons();
+  const hit = buttons.find(button =>
+    x >= button.x &&
+    x <= button.x + button.w &&
+    y >= button.y &&
+    y <= button.y + button.h
+  );
+
+  if (hit?.action === "continue") {
+    continuePlayerAfterDeath();
+  } else if (hit?.action === "exit") {
+    exitPlayerAfterDeath();
+  }
+
+  return true;
 }
 
 function drawHints() {
@@ -5516,11 +5705,10 @@ function draw() {
 
   drawLCDOverlay();
 
-  drawDeathBlur();
-
   drawScoreboard();
 
   drawFlyMode();
+  drawDeathPromptButtons();
   drawHints();
   drawTutorialOverlay();
 
@@ -5560,6 +5748,12 @@ window.addEventListener("mousemove", e => {
 
 window.addEventListener("mousedown", e => {
   if (e.button === 0) {
+    if (handleDeathPromptClick(e.clientX, e.clientY)) {
+      mouse.down = false;
+      e.preventDefault();
+      return;
+    }
+
     mouse.down = true;
   }
 });

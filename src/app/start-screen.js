@@ -39,6 +39,7 @@
       const cleanNick = this.setPlayerNick(nick, {
         persist: state.pilot?.nick === sanitizeNick(nick)
       });
+      window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
       this.mode = mode;
       this.started = true;
       window.GUNS_NET?.registerUser?.(cleanNick);
@@ -47,6 +48,13 @@
         nick: cleanNick
       }).catch(() => {});
       document.getElementById("start-screen")?.classList.add("hidden");
+    },
+
+    stop() {
+      this.started = false;
+      this.mode = "game";
+      window.GUNS_NET?.disconnect?.();
+      document.getElementById("start-screen")?.classList.remove("hidden");
     }
   };
 
