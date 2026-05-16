@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const files = [
   path.join(root, "src", "legacy", "gunsdemo22-runtime.js"),
+  path.join(root, "src", "content", "object-definitions.js"),
   path.join(root, "src", "app", "start-screen.js"),
   path.join(root, "src", "net", "network-adapter.js"),
   path.join(root, "src", "config", "runtime-config.js"),

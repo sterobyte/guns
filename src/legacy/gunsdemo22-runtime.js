@@ -104,6 +104,12 @@ function applySkinPalette(skin) {
   BOT5_COLOR = SKIN.bot5;
 }
 
+function invalidateRenderCaches() {
+  arenaBackgroundCache = null;
+  lcdOverlayPattern = null;
+  lcdOverlayPatternColor = "";
+}
+
 applySkinPalette(SKIN);
 const GAME_VERSION =
   window.GUNS_CONFIG?.project?.version ||
@@ -111,6 +117,14 @@ const GAME_VERSION =
 const HEALTH_BAR_OPACITY =
   window.GUNS_CONFIG?.render?.healthBarOpacity ??
   0.5;
+const CANVAS_MAX_DEVICE_PIXEL_RATIO =
+  window.GUNS_CONFIG?.render?.canvasMaxDevicePixelRatio ??
+  1;
+const ARENA_BACKGROUND_CACHE_SCALE =
+  window.GUNS_CONFIG?.render?.arenaBackgroundCacheScale ??
+  1;
+const PERF_DEBUG =
+  new URLSearchParams(window.location.search).has("fps");
 
 function text(key, params) {
   return window.GUNS_I18N?.t?.(key, params) || key;
@@ -127,6 +141,9 @@ const deathOverlays = [];
 const hintMessages = [];
 const scoreboardRows = new Map();
 const remoteRenderStates = new Map();
+let arenaBackgroundCache = null;
+let lcdOverlayPattern = null;
+let lcdOverlayPatternColor = "";
 const pilots = [];
 const cannons = [];
 const pilotUnitById = new Map();
@@ -170,10 +187,63 @@ const PILOT_FLY_TRANSITION_TIME = 0.75;
 const GRAVE_NAME_TRIGGER_RADIUS = 32;
 const GRAVE_NAME_SHOW_TIME = 1;
 
+function getCannonDefinition(type = "autogun") {
+  return window.GUNS_OBJECTS?.cannons?.get?.(type) || null;
+}
+
+function getCannonDefinitionNumber(type, path, fallback) {
+  const definition = getCannonDefinition(type);
+  const value = window.GUNS_OBJECTS?.byPath?.(
+    definition,
+    path,
+    fallback
+  );
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : fallback;
+}
+
+const cannonRenderMetrics = new Map();
+
+function getCannonRenderMetrics(type = "autogun") {
+  const key = type || "autogun";
+
+  if (cannonRenderMetrics.has(key)) {
+    return cannonRenderMetrics.get(key);
+  }
+
+  const definition = getCannonDefinition(key);
+  const render = definition?.render || {};
+  const metrics = {
+    barrelWidth: Number(render.barrel?.width) || 10,
+    barrelHeight: Number(render.barrel?.height) || 95,
+    barrelY: Number(render.barrel?.y) || -85,
+    barrelInnerWidth: Number(render.barrel?.innerWidth) || 4,
+    barrelInnerHeight: Number(render.barrel?.innerHeight) || 62,
+    coreRadius: Number(render.core?.radius) || 28,
+    antennaWidth: Number(render.antenna?.width) || 8,
+    antennaHeight: Number(render.antenna?.height) || 28,
+    antennaRadius: Number(render.antenna?.radius) || 4,
+    antennaSwing: Number(render.antenna?.swing) || 0.25,
+    antennaSwingSpeed: Number(render.antenna?.swingSpeed) || 0.003
+  };
+
+  cannonRenderMetrics.set(key, metrics);
+  return metrics;
+}
+
 const CANNON_TYPE_CONFIG = {
   autogun: {
-    maxAmmo: AMMO_MAX,
-    entryScoreRequired: 0
+    maxAmmo: getCannonDefinitionNumber(
+      "autogun",
+      "gameplay.maxAmmo",
+      AMMO_MAX
+    ),
+    entryScoreRequired: getCannonDefinitionNumber(
+      "autogun",
+      "gameplay.entryScoreRequired",
+      0
+    )
   }
 };
 
@@ -257,6 +327,8 @@ function makeUnit(
   const cannonConfig =
     CANNON_TYPE_CONFIG[gunType] ||
     CANNON_TYPE_CONFIG.autogun;
+  const cannonDefinition = getCannonDefinition(gunType);
+  const controllerKey = isPlayer ? "player" : "bot";
 
   return {
     id,
@@ -270,13 +342,35 @@ function makeUnit(
     x,
     y,
 
-    radiusOuter: 34,
-    radiusInner: 13,
+    radiusOuter: getCannonDefinitionNumber(
+      gunType,
+      "physics.radiusOuter",
+      34
+    ),
+    radiusInner: getCannonDefinitionNumber(
+      gunType,
+      "physics.radiusInner",
+      13
+    ),
 
-    speed,
+    speed:
+      speed ??
+      getCannonDefinitionNumber(
+        gunType,
+        `physics.speed.${controllerKey}`,
+        0
+      ),
 
-    slowdownRadius: isPlayer ? 220 : 0,
-    stopRadius: isPlayer ? 50 : 0,
+    slowdownRadius: getCannonDefinitionNumber(
+      gunType,
+      `physics.slowdownRadius.${controllerKey}`,
+      isPlayer ? 220 : 0
+    ),
+    stopRadius: getCannonDefinitionNumber(
+      gunType,
+      `physics.stopRadius.${controllerKey}`,
+      isPlayer ? 50 : 0
+    ),
 
     moveAngle: 0,
     lastMoveVx: 0,
@@ -287,14 +381,30 @@ function makeUnit(
     repairSpinDir: 1,
 
     fireCooldown: 0,
-    fireRate: isPlayer ? 0.12 : 0.35,
+    fireRate: getCannonDefinitionNumber(
+      gunType,
+      `gameplay.fireRate.${controllerKey}`,
+      isPlayer ? 0.12 : 0.35
+    ),
     recoilTime: 0,
-    recoilDuration: 0.085,
+    recoilDuration: getCannonDefinitionNumber(
+      gunType,
+      "gameplay.recoilDuration",
+      0.085
+    ),
 
     color,
 
-    hp: 100,
-    maxHp: 100,
+    hp: getCannonDefinitionNumber(
+      gunType,
+      "gameplay.maxHp",
+      100
+    ),
+    maxHp: getCannonDefinitionNumber(
+      gunType,
+      "gameplay.maxHp",
+      100
+    ),
     wreckHp: 0,
     cannonDestroyed: false,
 
@@ -344,6 +454,7 @@ function makeUnit(
     aiBurstPause: 0,
 
     gunType,
+    objectDefinitionId: cannonDefinition?.id || gunType,
     entryScoreRequired: cannonConfig.entryScoreRequired,
     entryLocked: false,
     damageMultiplier:
@@ -444,6 +555,7 @@ function setActiveSkin(skinId) {
   bot5.color = BOT5_COLOR;
   autoGun1.color = RED_COLOR;
   autoGun2.color = GREEN_COLOR;
+  invalidateRenderCaches();
 
   if (window.GUNS_LEGACY) {
     window.GUNS_LEGACY.skin = SKIN;
@@ -737,11 +849,20 @@ for (const unit of units) {
 let ammoSpawnTimer = 0;
 let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
+let lastDomainSyncAt = 0;
+let perfFrameCount = 0;
+let perfLastReportAt = performance.now();
+let perfLastFps = 0;
+const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  const rawDpr = window.devicePixelRatio || 1;
+  const dpr = Math.max(
+    1,
+    Math.min(rawDpr, CANVAS_MAX_DEVICE_PIXEL_RATIO)
+  );
 
   canvas.width = window.innerWidth * dpr;
   canvas.height = window.innerHeight * dpr;
@@ -750,6 +871,27 @@ function resize() {
   canvas.style.height = window.innerHeight + "px";
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function reportPerf(now) {
+  if (!PERF_DEBUG) return;
+
+  perfFrameCount++;
+
+  const elapsed = now - perfLastReportAt;
+
+  if (elapsed < 1000) return;
+
+  perfLastFps = Math.round((perfFrameCount * 1000) / elapsed);
+  perfFrameCount = 0;
+  perfLastReportAt = now;
+
+  window.GUNS_PERF = {
+    fps: perfLastFps,
+    at: now
+  };
+
+  console.log(`[GUNS FPS] ${perfLastFps}`);
 }
 
 function clamp(v, min, max) {
@@ -3526,6 +3668,144 @@ function update(dt) {
   updateEffects(dt);
 }
 
+function getArenaBackgroundCache() {
+  const scale = Math.max(0.5, ARENA_BACKGROUND_CACHE_SCALE);
+  const cacheKey = [
+    scale,
+    SKIN.name,
+    SKIN.roomTop,
+    SKIN.roomMiddle,
+    SKIN.roomBottom,
+    SKIN.gridMinor,
+    SKIN.gridMajor,
+    SKIN.roomVignette,
+    LCD_INK,
+    LCD_BG_DARK
+  ].join("|");
+
+  if (arenaBackgroundCache?.key === cacheKey) {
+    return arenaBackgroundCache;
+  }
+
+  const cacheCanvas = document.createElement("canvas");
+  const paddingWorld = 16;
+  const cacheSize = Math.ceil((ROOM_WIDTH + paddingWorld * 2) * scale);
+
+  cacheCanvas.width = cacheSize;
+  cacheCanvas.height = cacheSize;
+
+  const cacheCtx = cacheCanvas.getContext("2d");
+  const center = cacheSize / 2;
+  const radius = ROOM_RADIUS * scale;
+  const toCache = value => (value - ROOM_LEFT + paddingWorld) * scale;
+  const lineScale = Math.max(1, scale);
+
+  const grad = cacheCtx.createLinearGradient(0, 0, 0, cacheSize);
+  grad.addColorStop(0, LCD_BG_LIGHT);
+  grad.addColorStop(0.52, LCD_BG);
+  grad.addColorStop(1, LCD_BG_DARK);
+
+  cacheCtx.fillStyle = grad;
+  cacheCtx.beginPath();
+  cacheCtx.arc(center, center, radius, 0, Math.PI * 2);
+  cacheCtx.fill();
+
+  const left = ROOM_LEFT;
+  const top = ROOM_TOP;
+  const endX = ROOM_RIGHT;
+  const endY = ROOM_BOTTOM;
+  const startX = Math.ceil(left / gridSize) * gridSize;
+  const startY = Math.ceil(top / gridSize) * gridSize;
+
+  cacheCtx.save();
+  cacheCtx.beginPath();
+  cacheCtx.arc(center, center, radius, 0, Math.PI * 2);
+  cacheCtx.clip();
+
+  cacheCtx.strokeStyle = SKIN.gridMinor;
+  cacheCtx.lineWidth = lineScale;
+  cacheCtx.beginPath();
+
+  for (let x = startX; x <= endX; x += gridSize) {
+    const cx = toCache(x);
+
+    cacheCtx.moveTo(cx, 0);
+    cacheCtx.lineTo(cx, cacheSize);
+  }
+
+  for (let y = startY; y <= endY; y += gridSize) {
+    const cy = toCache(y);
+
+    cacheCtx.moveTo(0, cy);
+    cacheCtx.lineTo(cacheSize, cy);
+  }
+
+  cacheCtx.stroke();
+
+  cacheCtx.strokeStyle = SKIN.gridMajor;
+  cacheCtx.lineWidth = lineScale;
+
+  const bigGrid = gridSize * 4;
+  const bigStartX = Math.ceil(left / bigGrid) * bigGrid;
+  const bigStartY = Math.ceil(top / bigGrid) * bigGrid;
+
+  cacheCtx.beginPath();
+
+  for (let x = bigStartX; x <= endX; x += bigGrid) {
+    const cx = toCache(x);
+
+    cacheCtx.moveTo(cx, 0);
+    cacheCtx.lineTo(cx, cacheSize);
+  }
+
+  for (let y = bigStartY; y <= endY; y += bigGrid) {
+    const cy = toCache(y);
+
+    cacheCtx.moveTo(0, cy);
+    cacheCtx.lineTo(cacheSize, cy);
+  }
+
+  cacheCtx.stroke();
+
+  cacheCtx.fillStyle = SKIN.roomVignette;
+
+  for (let x = startX; x <= endX; x += gridSize) {
+    for (let y = startY; y <= endY; y += gridSize) {
+      if (((Math.floor(x / gridSize) + Math.floor(y / gridSize)) % 4) !== 0) {
+        continue;
+      }
+
+      cacheCtx.fillRect(
+        toCache(x) - scale,
+        toCache(y) - scale,
+        2 * scale,
+        2 * scale
+      );
+    }
+  }
+
+  cacheCtx.restore();
+
+  cacheCtx.strokeStyle = LCD_INK;
+  cacheCtx.lineWidth = 10 * scale;
+  cacheCtx.beginPath();
+  cacheCtx.arc(center, center, radius, 0, Math.PI * 2);
+  cacheCtx.stroke();
+
+  cacheCtx.strokeStyle = LCD_BG_DARK;
+  cacheCtx.lineWidth = 3 * scale;
+  cacheCtx.beginPath();
+  cacheCtx.arc(center, center, Math.max(0, radius - 8 * scale), 0, Math.PI * 2);
+  cacheCtx.stroke();
+
+  arenaBackgroundCache = {
+    key: cacheKey,
+    canvas: cacheCanvas
+  };
+
+  return arenaBackgroundCache;
+}
+
 function drawGrid() {
   ctx.fillStyle = SKIN.roomOutside;
   ctx.fillRect(
@@ -3535,127 +3815,16 @@ function drawGrid() {
     window.innerHeight
   );
 
-  const topLeft = worldToScreen(ROOM_LEFT, ROOM_TOP);
-  const bottomRight = worldToScreen(ROOM_RIGHT, ROOM_BOTTOM);
-  const center = worldToScreen(0, 0);
-  const arenaRadius = z(ROOM_RADIUS);
+  const topLeft = worldToScreen(ROOM_LEFT - 16, ROOM_TOP - 16);
+  const cache = getArenaBackgroundCache();
 
-  const grad = ctx.createLinearGradient(
-    0,
+  ctx.drawImage(
+    cache.canvas,
+    topLeft.x,
     topLeft.y,
-    0,
-    bottomRight.y
+    z(ROOM_WIDTH + 32),
+    z(ROOM_HEIGHT + 32)
   );
-
-  grad.addColorStop(0, LCD_BG_LIGHT);
-  grad.addColorStop(0.52, LCD_BG);
-  grad.addColorStop(1, LCD_BG_DARK);
-
-  ctx.fillStyle = grad;
-
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
-  ctx.fill();
-
-  const left = ROOM_LEFT;
-  const top = ROOM_TOP;
-  const endX = ROOM_RIGHT;
-  const endY = ROOM_BOTTOM;
-
-  const startX =
-    Math.ceil(left / gridSize) *
-    gridSize;
-
-  const startY =
-    Math.ceil(top / gridSize) *
-    gridSize;
-
-  ctx.save();
-
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
-  ctx.clip();
-
-  ctx.strokeStyle = SKIN.gridMinor;
-  ctx.lineWidth = 1;
-
-  ctx.beginPath();
-
-  for (let x = startX; x <= endX; x += gridSize) {
-    const p1 = worldToScreen(x, ROOM_TOP);
-    const p2 = worldToScreen(x, ROOM_BOTTOM);
-
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-  }
-
-  for (let y = startY; y <= endY; y += gridSize) {
-    const p1 = worldToScreen(ROOM_LEFT, y);
-    const p2 = worldToScreen(ROOM_RIGHT, y);
-
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-  }
-
-  ctx.stroke();
-
-  ctx.strokeStyle = SKIN.gridMajor;
-  ctx.lineWidth = 1;
-
-  const bigGrid = gridSize * 4;
-  const bigStartX = Math.ceil(left / bigGrid) * bigGrid;
-  const bigStartY = Math.ceil(top / bigGrid) * bigGrid;
-
-  ctx.beginPath();
-
-  for (let x = bigStartX; x <= endX; x += bigGrid) {
-    const p1 = worldToScreen(x, ROOM_TOP);
-    const p2 = worldToScreen(x, ROOM_BOTTOM);
-
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-  }
-
-  for (let y = bigStartY; y <= endY; y += bigGrid) {
-    const p1 = worldToScreen(ROOM_LEFT, y);
-    const p2 = worldToScreen(ROOM_RIGHT, y);
-
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-  }
-
-  ctx.stroke();
-
-  ctx.fillStyle = SKIN.roomVignette;
-
-  for (let x = startX; x <= endX; x += gridSize) {
-    for (let y = startY; y <= endY; y += gridSize) {
-      if (((Math.floor(x / gridSize) + Math.floor(y / gridSize)) % 4) === 0) {
-        const p = worldToScreen(x, y);
-
-        ctx.fillRect(
-          p.x - 1,
-          p.y - 1,
-          2,
-          2
-        );
-      }
-    }
-  }
-
-  ctx.restore();
-
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = 10;
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, arenaRadius, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.strokeStyle = LCD_BG_DARK;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(center.x, center.y, Math.max(0, arenaRadius - 8), 0, Math.PI * 2);
-  ctx.stroke();
 }
 
 function drawHealthBar(unit) {
@@ -4071,6 +4240,7 @@ function drawStains() {
 
 function drawCannonBody(unit, angle, alpha = 1) {
   const p = worldToScreen(unit.x, unit.y);
+  const renderMetrics = getCannonRenderMetrics(unit.gunType);
 
   ctx.save();
 
@@ -4115,27 +4285,44 @@ function drawCannonBody(unit, angle, alpha = 1) {
 
   ctx.fillStyle = CANNON_INK;
 
-  ctx.fillRect(-5, -85 + recoil, 10, 95);
+  ctx.fillRect(
+    -renderMetrics.barrelWidth / 2,
+    renderMetrics.barrelY + recoil,
+    renderMetrics.barrelWidth,
+    renderMetrics.barrelHeight
+  );
 
   ctx.fillStyle = LCD_BG;
 
-  ctx.fillRect(-2, -85 + recoil, 4, 62);
+  ctx.fillRect(
+    -renderMetrics.barrelInnerWidth / 2,
+    renderMetrics.barrelY + recoil,
+    renderMetrics.barrelInnerWidth,
+    renderMetrics.barrelInnerHeight
+  );
 
   ctx.beginPath();
-  ctx.arc(0, 0, 28, 0, Math.PI * 2);
+  ctx.arc(0, 0, renderMetrics.coreRadius, 0, Math.PI * 2);
   ctx.fillStyle = LCD_BG;
   ctx.fill();
 
   ctx.save();
 
   ctx.rotate(
-    Math.sin(performance.now() * 0.003) * 0.25
+    Math.sin(performance.now() * renderMetrics.antennaSwingSpeed) *
+      renderMetrics.antennaSwing
   );
 
   ctx.fillStyle = CANNON_INK;
 
   ctx.beginPath();
-  ctx.roundRect(-4, -14, 8, 28, 4);
+  ctx.roundRect(
+    -renderMetrics.antennaWidth / 2,
+    -renderMetrics.antennaHeight / 2,
+    renderMetrics.antennaWidth,
+    renderMetrics.antennaHeight,
+    renderMetrics.antennaRadius
+  );
   ctx.fill();
 
   ctx.restore();
@@ -4900,15 +5087,31 @@ function drawPlayerCannonMarker() {
   ctx.restore();
 }
 
+function getLCDOverlayPattern() {
+  if (lcdOverlayPattern && lcdOverlayPatternColor === LCD_INK) {
+    return lcdOverlayPattern;
+  }
+
+  const patternCanvas = document.createElement("canvas");
+  const patternCtx = patternCanvas.getContext("2d");
+
+  patternCanvas.width = 1;
+  patternCanvas.height = 4;
+  patternCtx.fillStyle = LCD_INK;
+  patternCtx.fillRect(0, 0, 1, 1);
+
+  lcdOverlayPattern = ctx.createPattern(patternCanvas, "repeat");
+  lcdOverlayPatternColor = LCD_INK;
+
+  return lcdOverlayPattern;
+}
+
 function drawLCDOverlay() {
   ctx.save();
 
   ctx.globalAlpha = 0.12;
-  ctx.fillStyle = LCD_INK;
-
-  for (let y = 0; y < window.innerHeight; y += 4) {
-    ctx.fillRect(0, y, window.innerWidth, 1);
-  }
+  ctx.fillStyle = getLCDOverlayPattern() || LCD_INK;
+  ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
   // LCD frame removed.
 
@@ -5334,9 +5537,13 @@ function loop(now) {
 
   if (window.GUNS_APP?.started !== false) {
     update(dt);
-    syncDomainEntities();
+    if (now - lastDomainSyncAt >= DOMAIN_SYNC_RATE_MS) {
+      lastDomainSyncAt = now;
+      syncDomainEntities();
+    }
     sendNetworkSnapshot(now);
     draw();
+    reportPerf(now);
   }
 
   requestAnimationFrame(loop);
