@@ -1,12 +1,13 @@
 {
   "name": "guns-next1",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "private": true,
   "description": "Project wrapper around gunsdemo22.html with legacy behavior preserved.",
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "dev:all": "start-local.cmd",
     "server": "node server/index.mjs",
+    "build:config": "node scripts/build-config.mjs",
     "check": "node scripts/check.mjs"
   }
 }

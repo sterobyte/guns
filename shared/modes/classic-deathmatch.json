@@ -1,0 +1,9 @@
+{
+  "id": "classic-deathmatch",
+  "title": "Classic Deathmatch",
+  "enabled": true,
+  "rules": {
+    "pilotKillScore": 100,
+    "cannonBreakScore": 50
+  }
+}

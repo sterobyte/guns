@@ -1,0 +1,15 @@
+{
+  "id": "main",
+  "title": "Main Arena",
+  "enabled": true,
+  "modeId": "classic-deathmatch",
+  "arena": {
+    "radius": 860
+  },
+  "limits": {
+    "maxPlayers": 16
+  },
+  "allowedCannons": [
+    "autogun"
+  ]
+}

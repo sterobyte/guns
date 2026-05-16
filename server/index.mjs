@@ -10,7 +10,7 @@ import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.11.6";
+const version = "0.11.7";
 const serverStartedAt = Date.now();
 const publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
@@ -53,6 +53,30 @@ const server = http.createServer((req, res) => {
       ok: true,
       version,
       config: publishedConfig
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/objects") {
+    sendJson(req, res, 200, {
+      ok: true,
+      objects: publishedConfig.objects
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms") {
+    sendJson(req, res, 200, {
+      ok: true,
+      rooms: publishedConfig.rooms
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/modes") {
+    sendJson(req, res, 200, {
+      ok: true,
+      modes: publishedConfig.modes
     });
     return;
   }
