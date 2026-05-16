@@ -129,6 +129,7 @@ const PERF_DEBUG_LABEL =
   new URLSearchParams(window.location.search).get("fps") ||
   "1";
 const PERF_REPORT_RATE_MS = 250;
+const PERF_SMOOTHING = 0.18;
 
 function text(key, params) {
   return window.GUNS_I18N?.t?.(key, params) || key;
@@ -859,9 +860,10 @@ let ammoSpawnTimer = 0;
 let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
-let perfFrameCount = 0;
+let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
+let perfFrameMs = 1000 / 60;
 const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
@@ -883,23 +885,30 @@ function resize() {
 }
 
 function reportPerf(now) {
-  perfFrameCount++;
+  const frameMs = now - perfLastFrameAt;
+  perfLastFrameAt = now;
+
+  if (frameMs > 0) {
+    perfFrameMs += (frameMs - perfFrameMs) * PERF_SMOOTHING;
+    perfLastFps = 1000 / perfFrameMs;
+
+    window.GUNS_PERF = {
+      fps: perfLastFps,
+      frameMs: perfFrameMs,
+      at: now
+    };
+  }
 
   const elapsed = now - perfLastReportAt;
 
   if (elapsed < PERF_REPORT_RATE_MS) return;
 
-  perfLastFps = Math.round((perfFrameCount * 1000) / elapsed);
-  perfFrameCount = 0;
   perfLastReportAt = now;
 
-  window.GUNS_PERF = {
-    fps: perfLastFps,
-    at: now
-  };
-
   if (PERF_DEBUG) {
-    console.log(`[GUNS FPS ${PERF_DEBUG_LABEL}] ${perfLastFps}`);
+    console.log(
+      `[GUNS FPS ${PERF_DEBUG_LABEL}] ${perfLastFps.toFixed(1)}`
+    );
   }
 }
 
@@ -5002,7 +5011,7 @@ function drawScoreboard() {
 
   ctx.textAlign = "right";
   ctx.fillText(
-    "FPS " + (perfLastFps || "--"),
+    "FPS " + (perfLastFps ? perfLastFps.toFixed(1) : "--"),
     panelX + panelW - 12,
     versionY
   );
