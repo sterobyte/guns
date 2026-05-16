@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +10,7 @@ const files = [
   path.join(root, "src", "app", "start-screen.js"),
   path.join(root, "src", "net", "network-adapter.js"),
   path.join(root, "src", "config", "runtime-config.js"),
+  path.join(root, "src", "config", "config-loader.js"),
   path.join(root, "scripts", "dev-all.mjs"),
   path.join(root, "scripts", "watch-backend.mjs"),
   path.join(root, "server", "protocol.mjs"),
@@ -28,5 +30,9 @@ for (const file of files) {
     process.exit(result.status || 1);
   }
 }
+
+JSON.parse(
+  fs.readFileSync(path.join(root, "shared", "game-config.json"), "utf8")
+);
 
 console.log("syntax ok");

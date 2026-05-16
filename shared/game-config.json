@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "configVersion": "0.1.0",
+  "status": "published",
+  "objects": {
+    "cannons": {
+      "autogun": {
+        "id": "autogun",
+        "kind": "cannon",
+        "title": "Auto Gun",
+        "version": 1,
+        "gameplay": {
+          "maxHp": 100,
+          "maxAmmo": 30,
+          "entryScoreRequired": 0,
+          "fireRate": {
+            "player": 0.12,
+            "bot": 0.35
+          },
+          "recoilDuration": 0.085
+        },
+        "physics": {
+          "radiusOuter": 34,
+          "radiusInner": 13,
+          "speed": {
+            "player": 260,
+            "bot": 126
+          },
+          "slowdownRadius": {
+            "player": 220,
+            "bot": 0
+          },
+          "stopRadius": {
+            "player": 50,
+            "bot": 0
+          }
+        },
+        "render": {
+          "renderer": "legacy-autogun-canvas",
+          "body": {
+            "outerRadiusPath": "physics.radiusOuter",
+            "innerRadiusPath": "physics.radiusInner"
+          },
+          "barrel": {
+            "width": 10,
+            "height": 95,
+            "y": -85,
+            "innerWidth": 4,
+            "innerHeight": 62
+          },
+          "core": {
+            "radius": 28
+          },
+          "antenna": {
+            "width": 8,
+            "height": 28,
+            "radius": 4,
+            "swing": 0.25,
+            "swingSpeed": 0.003
+          }
+        }
+      }
+    }
+  },
+  "rooms": {
+    "main": {
+      "id": "main",
+      "title": "Main Arena",
+      "enabled": true,
+      "modeId": "classic-deathmatch",
+      "arena": {
+        "radius": 860
+      },
+      "limits": {
+        "maxPlayers": 16
+      },
+      "allowedCannons": [
+        "autogun"
+      ]
+    }
+  },
+  "modes": {
+    "classic-deathmatch": {
+      "id": "classic-deathmatch",
+      "title": "Classic Deathmatch",
+      "enabled": true,
+      "rules": {
+        "pilotKillScore": 100,
+        "cannonBreakScore": 50
+      }
+    }
+  }
+}

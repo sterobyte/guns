@@ -1,13 +1,18 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
 import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.11.5";
+const version = "0.11.6";
 const serverStartedAt = Date.now();
+const publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
@@ -40,6 +45,15 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === "/rooms") {
     sendJson(req, res, 200, hub.snapshot());
+    return;
+  }
+
+  if (url.pathname === "/api/config/current") {
+    sendJson(req, res, 200, {
+      ok: true,
+      version,
+      config: publishedConfig
+    });
     return;
   }
 
@@ -292,6 +306,23 @@ const server = http.createServer((req, res) => {
     rooms: "/rooms"
   });
 });
+
+function loadPublishedConfig() {
+  const file = path.join(root, "shared", "game-config.json");
+
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {
+      schemaVersion: 1,
+      configVersion: "fallback",
+      status: "fallback",
+      objects: {},
+      rooms: {},
+      modes: {}
+    };
+  }
+}
 
 globalThis.GUNS_MULTIPLAYER_SERVER = server;
 

@@ -1,7 +1,7 @@
 (function () {
   const CANNON_KIND = "cannon";
 
-  const definitions = {
+  const fallbackDefinitions = {
     cannons: {
       autogun: {
         id: "autogun",
@@ -80,6 +80,10 @@
 
     return value ?? fallback;
   }
+
+  const definitions =
+    window.GUNS_SHARED_CONFIG?.objects ||
+    fallbackDefinitions;
 
   function getCannonDefinition(type) {
     return definitions.cannons[type] || definitions.cannons.autogun;
