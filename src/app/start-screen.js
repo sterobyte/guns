@@ -891,21 +891,67 @@
   }
 
   function createLocalCallsign() {
-    if (state.localCallsign) return state.localCallsign;
+    if (isValidLocalCallsign(state.localCallsign)) return state.localCallsign;
 
-    state.localCallsign = FALLBACK_SERVICE_NICK;
+    try {
+      const stored = localStorage.getItem("guns.localCallsign") || "";
+      if (isValidLocalCallsign(stored)) {
+        state.localCallsign = stored;
+        return state.localCallsign;
+      }
+    } catch {}
+
+    state.localCallsign = `visitor-${createLocalVisitCode()}`;
+    try {
+      localStorage.setItem("guns.localCallsign", state.localCallsign);
+    } catch {}
     return state.localCallsign;
   }
 
-  function createTail() {
-    const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-    let tail = "";
+  function isValidLocalCallsign(callsign) {
+    return /^visitor-\d{4}$/u.test(String(callsign || "")) &&
+      callsign !== FALLBACK_SERVICE_NICK;
+  }
 
-    for (let i = 0; i < 3; i++) {
-      tail += alphabet[Math.floor(Math.random() * alphabet.length)];
+  function createLocalVisitCode() {
+    const firstSeenKey = "guns.localFirstSeenAt";
+    let firstSeenAt = 0;
+
+    try {
+      firstSeenAt = Number(localStorage.getItem(firstSeenKey) || 0);
+      if (!Number.isFinite(firstSeenAt) || firstSeenAt <= 0) {
+        firstSeenAt = Date.now();
+        localStorage.setItem(firstSeenKey, String(firstSeenAt));
+      }
+    } catch {
+      firstSeenAt = Date.now();
     }
 
-    return tail;
+    const meta = collectVisitMeta();
+    const source = [
+      meta.browser,
+      meta.os,
+      meta.device,
+      meta.language,
+      meta.timezone,
+      meta.screenWidth,
+      meta.screenHeight,
+      meta.pixelRatio,
+      firstSeenAt
+    ].join("|");
+
+    return String(1000 + (hashStringToNumber(source) % 9000)).padStart(4, "0");
+  }
+
+  function hashStringToNumber(value) {
+    let hash = 2166136261;
+
+    for (let i = 0; i < String(value || "").length; i++) {
+      hash ^= String(value).charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return Math.abs(hash >>> 0);
   }
 
   function buildSkinButtons() {
