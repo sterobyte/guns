@@ -1354,7 +1354,7 @@ let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
 let perfFrameMs = 1000 / 60;
-let cannonSpritesPrewarmed = false;
+let arenaGraphicsPrewarmed = false;
 const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
@@ -1437,10 +1437,32 @@ function getSpriteImage(src) {
   }
 
   const image = new Image();
+  image.decoding = "async";
   image.src = src;
   cannonSpriteCache.set(src, image);
 
   return image;
+}
+
+function isSpriteImageReady(image) {
+  return Boolean(
+    image?.complete &&
+    (image.naturalWidth || image.width) &&
+    (image.naturalHeight || image.height)
+  );
+}
+
+function watchSpriteImagePrewarm(image) {
+  if (!image || image.gunsPrewarmWatch) return;
+
+  image.gunsPrewarmWatch = true;
+  image.addEventListener(
+    "load",
+    () => {
+      arenaGraphicsPrewarmed = prewarmArenaGraphics();
+    },
+    { once: true }
+  );
 }
 
 function preloadCannonSprites() {
@@ -1449,13 +1471,14 @@ function preloadCannonSprites() {
   for (const definition of Object.values(definitions)) {
     const sprites = definition?.render?.sprites || {};
 
-    getSpriteImage(sprites.body?.src);
-    getSpriteImage(sprites.turret?.src);
+    watchSpriteImagePrewarm(getSpriteImage(sprites.body?.src));
+    watchSpriteImagePrewarm(getSpriteImage(sprites.turret?.src));
   }
 }
 
-function prewarmCannonSpritePalettes() {
+function prewarmArenaGraphics() {
   const definitions = window.GUNS_OBJECTS?.definitions?.cannons || {};
+  let allReady = true;
 
   for (const definition of Object.values(definitions)) {
     const render = definition?.render || {};
@@ -1463,17 +1486,31 @@ function prewarmCannonSpritePalettes() {
     if (render.renderer !== "sprite-cannon-canvas") continue;
 
     const sprites = render.sprites || {};
+    const bodyConfig = sprites.body || {};
+    const turretConfig = sprites.turret || {};
     const body = getSpriteImage(sprites.body?.src);
     const turret = getSpriteImage(sprites.turret?.src);
+    const bodyReady = isSpriteImageReady(body);
+    const turretReady = isSpriteImageReady(turret);
 
-    if (body?.complete) {
-      getPaletteSprite(body, sprites.body?.src);
+    if (!bodyReady || !turretReady) {
+      watchSpriteImagePrewarm(body);
+      watchSpriteImagePrewarm(turret);
+      allReady = false;
+      continue;
     }
 
-    if (turret?.complete) {
-      getPaletteSprite(turret, sprites.turret?.src);
-    }
+    const bodySprite = getPaletteSprite(body, sprites.body?.src);
+    const turretSprite = getPaletteSprite(turret, sprites.turret?.src);
+    const bodyRadiusPx = Number(bodyConfig.radiusPx) || 207;
+    const radiusOuter = Number(definition?.physics?.radiusOuter) || 34;
+    const spriteScale = radiusOuter / bodyRadiusPx;
+
+    getScaledSprite(bodySprite, sprites.body?.src || "", bodyConfig, spriteScale);
+    getScaledSprite(turretSprite, sprites.turret?.src || "", turretConfig, spriteScale);
   }
+
+  return allReady;
 }
 
 preloadCannonSprites();
@@ -2274,6 +2311,7 @@ function addTrail(x, y, radius, color, life = 0.34) {
 function updateMovementTrails() {
   for (const unit of units) {
     if (unit.isCannonOnly) continue;
+    if (isUnitHidden(unit)) continue;
 
     const cannonMoving =
       Math.hypot(unit.lastMoveVx || 0, unit.lastMoveVy || 0) > 18;
@@ -7112,9 +7150,8 @@ function loop(now) {
   lastTime = now;
 
   if (window.GUNS_APP?.started !== false) {
-    if (!cannonSpritesPrewarmed) {
-      prewarmCannonSpritePalettes();
-      cannonSpritesPrewarmed = true;
+    if (!arenaGraphicsPrewarmed) {
+      arenaGraphicsPrewarmed = prewarmArenaGraphics();
     }
 
     update(dt);

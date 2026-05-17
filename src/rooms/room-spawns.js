@@ -41,6 +41,8 @@
 
       if (botSpawn) {
         applyActorRoomSpawn(unit, botSpawn, room, options);
+      } else if (unit.roomHidden) {
+        options.resetUnit?.(unit);
       }
     }
   }
@@ -76,7 +78,12 @@
       ? !spawn
       : !options.isCannonAllowed?.(unit.gunType);
 
-    if (!spawn) return;
+    if (!spawn) {
+      if (unit.roomHidden) {
+        options.resetUnit?.(unit);
+      }
+      return;
+    }
 
     options.resetUnit?.(unit);
     unit.state = "pilot";
