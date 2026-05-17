@@ -447,6 +447,8 @@ function invalidateRenderCaches() {
   lcdOverlayPatternColor = "";
   cannonTintedSpriteCache?.clear?.();
   cannonScaledSpriteCache?.clear?.();
+  deathUiSpriteCache?.clear?.();
+  modeBadgeSpriteCache?.clear?.();
 }
 
 applySkinPalette(SKIN);
@@ -560,6 +562,8 @@ const cannonRenderMetrics = new Map();
 const cannonSpriteCache = new Map();
 const cannonTintedSpriteCache = new Map();
 const cannonScaledSpriteCache = new Map();
+const deathUiSpriteCache = new Map();
+const modeBadgeSpriteCache = new Map();
 
 function getCannonRenderMetrics(type = "autogun") {
   const key = type || "autogun";
@@ -1509,6 +1513,8 @@ function prewarmArenaGraphics() {
     getScaledSprite(bodySprite, sprites.body?.src || "", bodyConfig, spriteScale);
     getScaledSprite(turretSprite, sprites.turret?.src || "", turretConfig, spriteScale);
   }
+
+  prewarmDeathUiGraphics();
 
   return allReady;
 }
@@ -6778,32 +6784,53 @@ function drawPauseOverlay() {
 }
 
 function drawModeBadge(label) {
-  ctx.save();
-
-  ctx.font = "12px monospace";
-  ctx.textAlign = "right";
-  ctx.textBaseline = "top";
-
-  const paddingX = 8;
-  const paddingY = 5;
-  const width = ctx.measureText(label).width + paddingX * 2;
-  const height = 22;
+  const sprite = getModeBadgeSprite(label);
+  const width = sprite.width;
+  const height = sprite.height;
   const x = window.innerWidth - 16 - width;
   const y = 16;
 
-  ctx.globalAlpha = 0.90;
-  ctx.fillStyle = LCD_BG_LIGHT;
-  ctx.fillRect(x, y, width, height);
+  ctx.drawImage(sprite, x, y);
+}
 
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, width, height);
+function getModeBadgeSprite(label) {
+  const textValue = String(label || "");
+  const key = `${textValue}|${LCD_BG_LIGHT}|${LCD_INK}`;
 
-  ctx.fillStyle = LCD_INK;
-  ctx.fillText(label, window.innerWidth - 16 - paddingX, y + paddingY);
+  if (modeBadgeSpriteCache.has(key)) {
+    return modeBadgeSpriteCache.get(key);
+  }
 
-  ctx.restore();
+  const scratch = getModeBadgeSprite.scratch ||
+    (getModeBadgeSprite.scratch = document.createElement("canvas"));
+  const scratchCtx = getModeBadgeSprite.ctx ||
+    (getModeBadgeSprite.ctx = scratch.getContext("2d"));
+  const paddingX = 8;
+  const paddingY = 5;
+
+  scratchCtx.font = "12px monospace";
+  const width = Math.ceil(scratchCtx.measureText(textValue).width + paddingX * 2);
+  const height = 22;
+  const canvas = document.createElement("canvas");
+  const spriteCtx = canvas.getContext("2d");
+
+  canvas.width = width;
+  canvas.height = height;
+  spriteCtx.font = "12px monospace";
+  spriteCtx.textAlign = "right";
+  spriteCtx.textBaseline = "top";
+  spriteCtx.globalAlpha = 0.90;
+  spriteCtx.fillStyle = LCD_BG_LIGHT;
+  spriteCtx.fillRect(0, 0, width, height);
+  spriteCtx.globalAlpha = 1;
+  spriteCtx.strokeStyle = LCD_INK;
+  spriteCtx.lineWidth = 1;
+  spriteCtx.strokeRect(0.5, 0.5, width - 1, height - 1);
+  spriteCtx.fillStyle = LCD_INK;
+  spriteCtx.fillText(textValue, width - paddingX, paddingY);
+  modeBadgeSpriteCache.set(key, canvas);
+
+  return canvas;
 }
 
 function formatModeTime(ms) {
@@ -6913,31 +6940,58 @@ function drawDeathPromptButtons() {
   const buttons = getDeathPromptButtons();
   playerDeathPrompt.buttons = buttons;
 
-  ctx.save();
-
-  ctx.font = "12px monospace";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
   for (const button of buttons) {
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = LCD_BG_LIGHT;
-    ctx.fillRect(button.x, button.y, button.w, button.h);
-
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = LCD_INK;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(button.x, button.y, button.w, button.h);
-
-    ctx.fillStyle = LCD_INK;
-    ctx.fillText(
-      button.label,
-      button.x + button.w / 2,
-      button.y + button.h / 2
+    ctx.drawImage(
+      getDeathButtonSprite(
+        button.label,
+        button.w,
+        button.h
+      ),
+      button.x,
+      button.y
     );
   }
+}
 
-  ctx.restore();
+function getDeathButtonSprite(label, width = 116, height = 28) {
+  const textValue = String(label || "");
+  const key = `${textValue}|${width}x${height}|${LCD_BG_LIGHT}|${LCD_INK}`;
+
+  if (deathUiSpriteCache.has(key)) {
+    return deathUiSpriteCache.get(key);
+  }
+
+  const canvas = document.createElement("canvas");
+  const spriteCtx = canvas.getContext("2d");
+
+  canvas.width = width;
+  canvas.height = height;
+  spriteCtx.font = "12px monospace";
+  spriteCtx.textAlign = "center";
+  spriteCtx.textBaseline = "middle";
+  spriteCtx.globalAlpha = 0.92;
+  spriteCtx.fillStyle = LCD_BG_LIGHT;
+  spriteCtx.fillRect(0, 0, width, height);
+  spriteCtx.globalAlpha = 1;
+  spriteCtx.strokeStyle = LCD_INK;
+  spriteCtx.lineWidth = 1;
+  spriteCtx.strokeRect(0.5, 0.5, width - 1, height - 1);
+  spriteCtx.fillStyle = LCD_INK;
+  spriteCtx.fillText(
+    textValue,
+    width / 2,
+    height / 2
+  );
+  deathUiSpriteCache.set(key, canvas);
+
+  return canvas;
+}
+
+function prewarmDeathUiGraphics() {
+  getModeBadgeSprite(text("mode.dead"));
+  getModeBadgeSprite(text("mode.fly"));
+  getDeathButtonSprite(text("death.continue"), 116, 28);
+  getDeathButtonSprite(text("death.exit"), 116, 28);
 }
 
 function handleDeathPromptClick(x, y) {
