@@ -304,6 +304,22 @@
       })
         .then((result) => result?.data || null);
     },
+    exchangeScore(nickValue, scoreValue) {
+      const cleanNick = String(nickValue || getStoredNick()).trim();
+
+      if (!cleanNick) {
+        return Promise.resolve(null);
+      }
+
+      return apiFetch("/users/exchange-score", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: cleanNick,
+          score: Math.max(0, Math.floor(Number(scoreValue) || 0))
+        })
+      })
+        .then((result) => result?.data || null);
+    },
     on(type, handler) {
       if (!listeners.has(type)) {
         listeners.set(type, new Set());

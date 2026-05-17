@@ -395,6 +395,36 @@ export class UserRegistry {
     };
   }
 
+  exchangeScore(rawNick, score) {
+    const nick = sanitizeNick(rawNick);
+    const pilot = this.pilots.get(normalizeNick(nick));
+    const entity = pilot || this.getVisitByNick(nick);
+
+    if (!entity) return error("user_required", "User is required to exchange score.");
+
+    const scoreValue = Math.max(0, Math.floor(Number(score) || 0));
+    const rate = Math.max(1, this.economyConfig.gunsCoin.exchangeScorePerCoin || 100);
+    const coins = Math.floor(scoreValue / rate);
+
+    if (coins <= 0) {
+      return error("not_enough_score", `At least ${rate} score is required for 1 gs.`);
+    }
+
+    ensureWallet(entity);
+    entity.wallet.gunsCoin += coins;
+    entity.lastSeenAt = Date.now();
+    this.persist();
+
+    return {
+      ok: true,
+      user: pilot ? publicPilot(entity) : publicVisit(entity),
+      exchangedScore: coins * rate,
+      remainingScore: scoreValue - coins * rate,
+      gunsCoinAdded: coins,
+      rate
+    };
+  }
+
   list() {
     const visits = Array.from(this.anonymousVisits.values())
       .map((visit) => this.withPublicIds(publicVisit(visit), {
@@ -821,8 +851,10 @@ function ensureWallet(entity) {
 }
 
 function publicWallet(entity = {}) {
+  ensureWallet(entity);
+
   return {
-    gunsCoin: normalizeCoinAmount(entity.economyAwards?.garageCoinsPickup?.amount)
+    gunsCoin: normalizeCoinAmount(entity.wallet?.gunsCoin)
   };
 }
 
@@ -868,9 +900,18 @@ function normalizeEconomyConfig(config = {}) {
     gunsCoin: {
       visitorGrant: normalizeCoinAmount(gunsCoin.visitorGrant),
       playGrant: normalizeCoinAmount(gunsCoin.playGrant),
-      registrationGrant: normalizeCoinAmount(gunsCoin.registrationGrant)
+      registrationGrant: normalizeCoinAmount(gunsCoin.registrationGrant),
+      exchangeScorePerCoin: normalizeExchangeRate(gunsCoin.exchangeScorePerCoin)
     }
   };
+}
+
+function normalizeExchangeRate(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number <= 0) return 100;
+
+  return Math.floor(number);
 }
 
 function normalizeCoinAmount(value) {

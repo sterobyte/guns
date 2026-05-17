@@ -682,6 +682,21 @@
           }
         },
         {
+          "instanceId": "exchange-terminal",
+          "objectId": "menu-terminal",
+          "x": 0,
+          "y": 0,
+          "rotation": 0,
+          "anchor": {
+            "position": "top-center",
+            "marginY": 150
+          },
+          "params": {
+            "label": "EXCHANGER",
+            "action": "exchange-score"
+          }
+        },
+        {
           "instanceId": "deathmatch-teleport",
           "objectId": "teleport",
           "x": 0,
@@ -736,7 +751,8 @@
       "gunsCoin": {
         "visitorGrant": 0,
         "playGrant": 0,
-        "registrationGrant": 0
+        "registrationGrant": 0,
+        "exchangeScorePerCoin": 100
       }
     }
   }

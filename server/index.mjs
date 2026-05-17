@@ -14,7 +14,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.14.7";
+const version = "0.14.19";
 const serverStartedAt = Date.now();
 let publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
@@ -615,6 +615,23 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === "/users/exchange-score" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.exchangeScore(body?.nick, body?.score);
+
+        if (!result.ok) {
+          sendJson(req, res, 400, result);
+          return;
+        }
+
+        sendJson(req, res, 200, result);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
   if (url.pathname === "/admin/users") {
     sendJson(req, res, 200, {
       ...users.snapshot(),
@@ -788,7 +805,7 @@ function setEconomySettings(config, economy) {
   nextConfig.settings.economy ||= {};
   nextConfig.settings.economy.gunsCoin ||= {};
 
-  for (const key of ["visitorGrant", "playGrant", "registrationGrant"]) {
+  for (const key of ["visitorGrant", "playGrant", "registrationGrant", "exchangeScorePerCoin"]) {
     if (gunsCoin[key] === undefined) continue;
 
     const value = Number(gunsCoin[key]);
@@ -814,9 +831,21 @@ function getEconomyConfig(config) {
       ),
       registrationGrant: normalizeCoinAmount(
         config?.settings?.economy?.gunsCoin?.registrationGrant
+      ),
+      exchangeScorePerCoin: normalizePositiveInteger(
+        config?.settings?.economy?.gunsCoin?.exchangeScorePerCoin,
+        100
       )
     }
   };
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+
+  return Math.floor(number);
 }
 
 function normalizeCoinAmount(value) {

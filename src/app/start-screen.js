@@ -9,12 +9,16 @@
     pendingMode: "game",
     pendingNick: "",
     localCallsign: "",
+    exchangeScore: 0,
     walletGunsCoin: 0,
     walletConfirmedByPickup: false
   };
   const teleportConfirm = {
     onYes: null,
     onNo: null
+  };
+  const cabinetMessageButtons = {
+    ok: null
   };
 
   window.GUNS_APP = {
@@ -36,13 +40,33 @@
     },
 
     getWalletGunsCoin() {
-      if (isServiceNick(this.playerNick)) return 0;
-
       return state.walletGunsCoin;
     },
 
     notifyWalletIncrease(entity) {
       notifyWalletIncrease(entity);
+    },
+
+    bankExchangeScore(score) {
+      const value = Math.max(0, Math.floor(Number(score) || 0));
+
+      state.exchangeScore = value;
+    },
+
+    addExchangeScore(score) {
+      const value = Math.floor(Number(score) || 0);
+
+      if (value !== 0) {
+        state.exchangeScore = Math.max(0, state.exchangeScore + value);
+      }
+    },
+
+    getExchangeScore() {
+      return state.exchangeScore;
+    },
+
+    handleCabinetExchange() {
+      handleCabinetExchange();
     },
 
     showCabinetMessage(message) {
@@ -65,9 +89,7 @@
       if (state.pilot) {
         logoutPilot();
       } else {
-        showCabinetMessage("COMING SOON", {
-          onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal")
-        });
+        window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal");
       }
     },
 
@@ -273,7 +295,11 @@
     });
 
     cabinetMessageOk?.addEventListener("click", () => {
-      closeCabinetMessage();
+      if (cabinetMessageButtons.ok) {
+        cabinetMessageButtons.ok();
+      } else {
+        closeCabinetMessage();
+      }
     });
 
     cabinetMessageClose?.addEventListener("click", () => {
@@ -348,6 +374,7 @@
     cabinetMessageOnClose =
       typeof options.onClose === "function" ? options.onClose : null;
     if (text) text.textContent = message || "";
+    setCabinetMessageButtons(options.buttons);
     dialog?.classList.remove("hidden");
   }
 
@@ -355,7 +382,18 @@
     document.getElementById("cabinet-message-dialog")?.classList.add("hidden");
     const onClose = cabinetMessageOnClose;
     cabinetMessageOnClose = null;
+    setCabinetMessageButtons();
     onClose?.();
+  }
+
+  function setCabinetMessageButtons(buttons = {}) {
+    const okButton = document.getElementById("cabinet-message-ok");
+    const okLabel = buttons.okLabel || "OK";
+
+    cabinetMessageButtons.ok =
+      typeof buttons.onOk === "function" ? buttons.onOk : null;
+
+    if (okButton) okButton.textContent = okLabel;
   }
 
   function showTeleportConfirm(options = {}) {
@@ -542,8 +580,6 @@
   }
 
   function syncKnownWallet(entity) {
-    if (!state.walletConfirmedByPickup) return;
-
     const coins = Number(entity?.wallet?.gunsCoin);
 
     if (!Number.isFinite(coins)) return;
@@ -563,6 +599,61 @@
     state.walletGunsCoin = Math.max(0, Math.floor(coins));
 
     if (delta <= 0) return;
+  }
+
+  async function handleCabinetExchange() {
+    window.GUNS_APP.bankExchangeScore(
+      window.GUNS_LEGACY?.player?.score || state.exchangeScore
+    );
+
+    const score = Math.max(0, Math.floor(state.exchangeScore || 0));
+
+    if (score <= 0) {
+      window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal");
+      return;
+    }
+
+    showCabinetMessage(`EXCHANGE ${score} SCORE?`, {
+      buttons: {
+        okLabel: "CHANGE",
+        onOk: () => confirmCabinetExchange(score)
+      }
+    });
+  }
+
+  async function confirmCabinetExchange(score) {
+    setCabinetMessageButtons();
+
+    try {
+      const result = await window.GUNS_NET?.exchangeScore?.(
+        state.pilot?.nick || window.GUNS_APP.playerNick,
+        score
+      );
+
+      if (!result?.ok) {
+        throw new Error(result?.message || result?.error || "Exchange rejected");
+      }
+
+      state.exchangeScore = Math.max(0, Math.floor(result.remainingScore || 0));
+      if (window.GUNS_LEGACY?.player) {
+        window.GUNS_LEGACY.player.score = state.exchangeScore;
+      }
+      const previousCoins = state.walletGunsCoin;
+      syncKnownWallet(result.user);
+      if (state.walletGunsCoin <= previousCoins && result.gunsCoinAdded > 0) {
+        state.walletGunsCoin = previousCoins + Math.floor(result.gunsCoinAdded);
+      }
+      showCabinetMessage(
+        `EXCHANGED ${result.exchangedScore} SCORE FOR ${result.gunsCoinAdded} GS`,
+        {
+          onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
+        }
+      );
+    } catch (error) {
+      showCabinetMessage(String(error?.message || "EXCHANGE FAILED").toUpperCase(), {
+        onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
+      });
+    }
   }
 
   async function handlePlay(mode) {

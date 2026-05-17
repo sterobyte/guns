@@ -272,6 +272,12 @@ function getPlayerGunsCoinBalance() {
   return Number.isFinite(coins) ? Math.max(0, Math.floor(coins)) : 0;
 }
 
+function getPlayerExchangeScoreBalance() {
+  const score = Number(window.GUNS_APP?.getExchangeScore?.());
+
+  return Number.isFinite(score) ? Math.max(0, Math.floor(score)) : 0;
+}
+
 function isPilotDialogOpen() {
   return window.GUNS_APP?.isPilotDialogOpen?.() === true;
 }
@@ -300,6 +306,10 @@ function applyActiveRoomToUnits() {
 }
 
 function enterRoom(roomId) {
+  if (roomId === "user-cabinet" && !isUserCabinetRoom()) {
+    window.GUNS_APP?.bankExchangeScore?.(player.score);
+  }
+
   const entryState = window.GUNS_ROOM_ENTRY.createRoomEntryState(roomId);
 
   applyRoomEntryState(entryState);
@@ -332,6 +342,7 @@ function applyRoomEntryState(entryState) {
 
 function applyRoomGameplayState() {
   applyActiveRoomToUnits();
+  player.score = getPlayerExchangeScoreBalance();
 
   if (isUserCabinetRoom()) {
     player.pilotImmunity = 0;
@@ -1857,6 +1868,9 @@ function addScore(unit, value, reason = "") {
   const scoreValue = Number(value) || 0;
 
   unit.score += scoreValue;
+  if (unit.isPlayer) {
+    window.GUNS_APP?.addExchangeScore?.(scoreValue);
+  }
   window.GUNS_MODE_REGISTRY?.onScore?.(activeModeState, {
     unit,
     value: scoreValue,
@@ -4346,6 +4360,7 @@ function updateTutorial(dt) {
 function updateRoomObjects(dt) {
   roomObjectActivationCooldown = Math.max(0, roomObjectActivationCooldown - dt);
 
+  if (isPilotDialogOpen()) return;
   if (player.state !== "pilot" || isPilotAirborne(player)) return;
 
   const hit = getNearRoomObjectInstance();
@@ -4454,6 +4469,12 @@ function activateMenuTerminal(instance) {
   if (action === "open-pilot") {
     roomObjectActivationCooldown = 0.6;
     window.GUNS_APP?.handleCabinetPilotAction?.();
+    return;
+  }
+
+  if (action === "exchange-score") {
+    roomObjectActivationCooldown = 0.6;
+    window.GUNS_APP?.handleCabinetExchange?.();
     return;
   }
 
@@ -4911,6 +4932,14 @@ function drawUserCabinetFloorCallsign() {
   ctx.strokeText(callsign, p.x, p.y);
   ctx.globalAlpha = 0.08;
   ctx.fillText(callsign, p.x, p.y);
+
+  const balance = `${getPlayerGunsCoinBalance()} gs`;
+
+  ctx.globalAlpha = 0.18;
+  ctx.font = `bold ${z(66)}px monospace`;
+  ctx.strokeText(balance, p.x, p.y + z(82));
+  ctx.globalAlpha = 0.10;
+  ctx.fillText(balance, p.x, p.y + z(82));
   ctx.restore();
 }
 
@@ -5763,6 +5792,16 @@ function drawPilot(unit) {
     unit.color,
     unit.pilotRadius / PILOT_RADIUS
   );
+
+  if (unit.isPlayer && isUserCabinetRoom()) {
+    drawNameLabel(
+      `${getPlayerExchangeScoreBalance()} score`,
+      p.x,
+      p.y - z(unit.pilotRadius + 32),
+      unit.color,
+      unit.pilotRadius / PILOT_RADIUS
+    );
+  }
 }
 
 function angleDelta(from, to) {
