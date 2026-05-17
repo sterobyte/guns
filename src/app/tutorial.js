@@ -353,7 +353,7 @@
   }
 
   function getTutorialPilotName() {
-    return document.getElementById("pilot-nick")?.value || "CADET";
+    return document.getElementById("pilot-nick")?.value || "visitor-0000";
   }
 
   function showPopup() {

@@ -1,6 +1,7 @@
 (function () {
   const AUTH_MIN_PASSWORD_LENGTH = 6;
-  const SERVICE_NICK = "CADET";
+  const SERVICE_NICK_PREFIX = "visitor-";
+  const FALLBACK_SERVICE_NICK = "visitor-0000";
   const state = {
     visit: null,
     pilot: null,
@@ -8,7 +9,12 @@
     pendingMode: "game",
     pendingNick: "",
     localCallsign: "",
-    walletGunsCoin: 0
+    walletGunsCoin: 0,
+    walletConfirmedByPickup: false
+  };
+  const teleportConfirm = {
+    onYes: null,
+    onNo: null
   };
 
   window.GUNS_APP = {
@@ -17,12 +23,52 @@
     playerNick: "",
     roomId: "",
 
+    openPilotDialog() {
+      openPilotDialog();
+    },
+
+    isPilotDialogOpen() {
+      return (
+        !document.getElementById("pilot-dialog")?.classList.contains("hidden") ||
+        !document.getElementById("cabinet-message-dialog")?.classList.contains("hidden") ||
+        !document.getElementById("teleport-confirm-dialog")?.classList.contains("hidden")
+      );
+    },
+
     getWalletGunsCoin() {
+      if (isServiceNick(this.playerNick)) return 0;
+
       return state.walletGunsCoin;
     },
 
     notifyWalletIncrease(entity) {
       notifyWalletIncrease(entity);
+    },
+
+    showCabinetMessage(message) {
+      showCabinetMessage(message);
+    },
+
+    confirmServiceTeleport(options = {}) {
+      showTeleportConfirm(options);
+    },
+
+    isLoggedIn() {
+      return Boolean(state.pilot);
+    },
+
+    getCabinetPilotActionLabel() {
+      return state.pilot ? "LOGOUT" : "CHANGE CALLSIGN";
+    },
+
+    handleCabinetPilotAction() {
+      if (state.pilot) {
+        logoutPilot();
+      } else {
+        showCabinetMessage("COMING SOON", {
+          onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal")
+        });
+      }
     },
 
     setPlayerNick(nick, options = {}) {
@@ -58,7 +104,7 @@
       this.started = true;
       window.GUNS_NET?.registerUser?.(cleanNick)
         ?.then((result) => {
-          notifyWalletIncrease(result?.user);
+          syncKnownWallet(result?.user);
         })
         .catch(() => {});
       window.GUNS_NET?.connect?.({
@@ -69,10 +115,11 @@
     },
 
     stop() {
-      this.started = false;
+      this.started = true;
       this.mode = "game";
       window.GUNS_NET?.disconnect?.();
-      document.getElementById("start-screen")?.classList.remove("hidden");
+      window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
+      document.getElementById("start-screen")?.classList.add("cabinet-start");
     }
   };
 
@@ -85,11 +132,20 @@
     const passwordRepeat = document.getElementById("pilot-password-repeat");
     const authConfirm = document.getElementById("auth-confirm");
     const authCancel = document.getElementById("auth-cancel");
-    const choicePlay = document.getElementById("nick-choice-play");
     const choiceRegister = document.getElementById("nick-choice-register");
     const choiceClose = document.getElementById("nick-choice-close");
     const loggedInPlay = document.getElementById("logged-in-play");
     const logout = document.getElementById("auth-logout");
+    const pilotDialogNick = document.getElementById("pilot-dialog-nick");
+    const pilotDialogPassword = document.getElementById("pilot-dialog-password");
+    const pilotDialogPasswordRepeat = document.getElementById("pilot-dialog-password-repeat");
+    const pilotDialogConfirm = document.getElementById("pilot-dialog-confirm");
+    const pilotDialogBack = document.getElementById("pilot-dialog-back");
+    const pilotDialogClose = document.getElementById("pilot-dialog-close");
+    const cabinetMessageOk = document.getElementById("cabinet-message-ok");
+    const cabinetMessageClose = document.getElementById("cabinet-message-close");
+    const teleportConfirmYes = document.getElementById("teleport-confirm-yes");
+    const teleportConfirmNo = document.getElementById("teleport-confirm-no");
 
     applyRandomStartBackground();
     buildSkinButtons();
@@ -122,11 +178,7 @@
     input.value = "";
     setStatus(t("identity.loading"));
     initializeIdentity().finally(() => {
-      requestAnimationFrame(() => {
-        if (!state.pilot) {
-          input.focus();
-        }
-      });
+      enterCabinetStart();
     });
 
     form.addEventListener("submit", event => {
@@ -143,8 +195,6 @@
       hideNickChoicePanel();
       if (state.pilot && normalize(input.value) !== normalize(state.pilot.nick)) {
         setStatus("");
-      } else if (!state.pilot && isKnownUnclaimedNick(input.value)) {
-        setStatus(t("identity.unclaimedHint", { nick: state.visit.unclaimedNick }));
       } else if (!state.pilot && isServiceNick(input.value)) {
         setStatus(t("identity.guestReady"));
       } else {
@@ -161,10 +211,6 @@
       password.value = "";
       passwordRepeat.value = "";
       setStatus(state.pilot ? t("identity.welcome", { nick: state.pilot.nick }) : t("identity.guestReady"));
-    });
-
-    choicePlay?.addEventListener("click", () => {
-      playUnclaimedNick();
     });
 
     choiceRegister?.addEventListener("click", () => {
@@ -185,31 +231,286 @@
     });
 
     logout?.addEventListener("click", () => {
-      window.GUNS_NET?.logout?.()
-        .finally(async () => {
-          state.pilot = null;
-          state.walletGunsCoin = 0;
-          const result = await window.GUNS_NET?.startAnonymousVisit?.(collectVisitMeta());
-          if (result?.visit) {
-            state.visit = result.visit;
-            syncKnownWallet(result.visit);
-          } else {
-            state.localCallsign = createLocalCallsign();
-            state.visit = {
-              callsign: state.localCallsign,
-              source: "local-fallback"
-            };
-          }
-          input.value = getCallsign();
-          hideAuthPanel();
-          hideNickChoicePanel();
-          syncLogoutButton();
-          setStatus(t("identity.loggedOut"));
-          requestAnimationFrame(() => input.focus());
-        });
+      logoutPilot();
+    });
+
+    pilotDialogConfirm?.addEventListener("click", () => {
+      submitPilotDialog();
+    });
+
+    pilotDialogBack?.addEventListener("click", () => {
+      resetPilotDialogToCheck(pilotDialogNick?.value || "", { force: true });
+      requestAnimationFrame(() => pilotDialogNick?.focus());
+    });
+
+    pilotDialogNick?.addEventListener("input", () => {
+      resetPilotDialogToCheck(pilotDialogNick.value);
+    });
+
+    pilotDialogNick?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitPilotDialog();
+      }
+    });
+
+    pilotDialogPassword?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitPilotDialog();
+      }
+    });
+
+    pilotDialogPasswordRepeat?.addEventListener("keydown", event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submitPilotDialog();
+      }
+    });
+
+    pilotDialogClose?.addEventListener("click", () => {
+      closePilotDialog();
+    });
+
+    cabinetMessageOk?.addEventListener("click", () => {
+      closeCabinetMessage();
+    });
+
+    cabinetMessageClose?.addEventListener("click", () => {
+      closeCabinetMessage();
+    });
+
+    teleportConfirmYes?.addEventListener("click", () => {
+      closeTeleportConfirm();
+      teleportConfirm.onYes?.();
+    });
+
+    teleportConfirmNo?.addEventListener("click", () => {
+      closeTeleportConfirm();
+      teleportConfirm.onNo?.();
     });
 
   });
+
+  function enterCabinetStart() {
+    window.GUNS_APP.setPlayerNick(state.pilot?.nick || getCallsign(), {
+      persist: Boolean(state.pilot?.nick)
+    });
+    window.GUNS_APP.roomId = "user-cabinet";
+    window.GUNS_APP.started = true;
+    window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
+    window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
+    document.getElementById("start-screen")?.classList.add("cabinet-start");
+  }
+
+  let pilotDialogCheckTimer = 0;
+  let pilotDialogMode = "guest";
+  let pilotDialogNick = "";
+
+  function openPilotDialog() {
+    const dialog = document.getElementById("pilot-dialog");
+    const nickInput = document.getElementById("pilot-dialog-nick");
+    const passwordInput = document.getElementById("pilot-dialog-password");
+    const passwordRepeatInput = document.getElementById("pilot-dialog-password-repeat");
+    const backButton = document.getElementById("pilot-dialog-back");
+
+    if (dialog && !dialog.classList.contains("hidden")) {
+      requestAnimationFrame(() => nickInput?.focus());
+      return;
+    }
+
+    pilotDialogMode = "guest";
+    pilotDialogNick = "";
+    setPilotDialogMessage("Hello, stranger. Enter your callsign.");
+    setPilotDialogConfirm("CHECK");
+    passwordInput?.classList.add("hidden");
+    passwordRepeatInput?.classList.add("hidden");
+    backButton?.classList.add("hidden");
+    if (nickInput) nickInput.disabled = false;
+    if (passwordInput) passwordInput.value = "";
+    if (passwordRepeatInput) passwordRepeatInput.value = "";
+    if (nickInput) nickInput.value = "";
+    dialog?.classList.remove("hidden");
+    requestAnimationFrame(() => nickInput?.focus());
+  }
+
+  function closePilotDialog() {
+    document.getElementById("pilot-dialog")?.classList.add("hidden");
+    window.clearTimeout(pilotDialogCheckTimer);
+  }
+
+  let cabinetMessageOnClose = null;
+
+  function showCabinetMessage(message, options = {}) {
+    const dialog = document.getElementById("cabinet-message-dialog");
+    const text = document.getElementById("cabinet-message-text");
+
+    cabinetMessageOnClose =
+      typeof options.onClose === "function" ? options.onClose : null;
+    if (text) text.textContent = message || "";
+    dialog?.classList.remove("hidden");
+  }
+
+  function closeCabinetMessage() {
+    document.getElementById("cabinet-message-dialog")?.classList.add("hidden");
+    const onClose = cabinetMessageOnClose;
+    cabinetMessageOnClose = null;
+    onClose?.();
+  }
+
+  function showTeleportConfirm(options = {}) {
+    teleportConfirm.onYes = typeof options.onYes === "function" ? options.onYes : null;
+    teleportConfirm.onNo = typeof options.onNo === "function" ? options.onNo : null;
+    document.getElementById("teleport-confirm-dialog")?.classList.remove("hidden");
+  }
+
+  function closeTeleportConfirm() {
+    document.getElementById("teleport-confirm-dialog")?.classList.add("hidden");
+  }
+
+  function resetPilotDialogToCheck(rawNick = "", options = {}) {
+    const passwordInput = document.getElementById("pilot-dialog-password");
+    const passwordRepeatInput = document.getElementById("pilot-dialog-password-repeat");
+    const nickInput = document.getElementById("pilot-dialog-nick");
+    const backButton = document.getElementById("pilot-dialog-back");
+    const nextNick = sanitizeNick(rawNick);
+
+    if (
+      !options.force &&
+      pilotDialogMode !== "guest" &&
+      normalize(nextNick) === normalize(pilotDialogNick)
+    ) {
+      return;
+    }
+
+    pilotDialogMode = "guest";
+    pilotDialogNick = "";
+    passwordInput?.classList.add("hidden");
+    passwordRepeatInput?.classList.add("hidden");
+    backButton?.classList.add("hidden");
+    if (nickInput) nickInput.disabled = false;
+    if (passwordInput) passwordInput.value = "";
+    if (passwordRepeatInput) passwordRepeatInput.value = "";
+    setPilotDialogConfirm("CHECK");
+    setPilotDialogMessage("Hello, stranger. Enter your callsign.");
+  }
+
+  async function checkPilotDialogNick() {
+    const nick = sanitizeNick(document.getElementById("pilot-dialog-nick")?.value);
+    const passwordInput = document.getElementById("pilot-dialog-password");
+    const passwordRepeatInput = document.getElementById("pilot-dialog-password-repeat");
+    const nickInput = document.getElementById("pilot-dialog-nick");
+    const backButton = document.getElementById("pilot-dialog-back");
+
+    pilotDialogNick = nick;
+
+    if (!nick || isServiceNick(nick)) {
+      pilotDialogMode = "guest";
+      passwordInput?.classList.add("hidden");
+      passwordRepeatInput?.classList.add("hidden");
+      backButton?.classList.add("hidden");
+      if (nickInput) nickInput.disabled = false;
+      setPilotDialogConfirm("CHECK");
+      setPilotDialogMessage("Hello, stranger. Enter your callsign.");
+      return;
+    }
+
+    const result = await window.GUNS_NET?.checkPilot?.(nick);
+    const pilotInfo = result?.pilot;
+
+    if (pilotInfo?.exists) {
+      pilotDialogMode = "login";
+      pilotDialogNick = pilotInfo.nick || nick;
+      passwordInput?.classList.remove("hidden");
+      passwordRepeatInput?.classList.add("hidden");
+      backButton?.classList.remove("hidden");
+      if (nickInput) nickInput.disabled = true;
+      if (passwordInput) passwordInput.autocomplete = "current-password";
+      if (passwordInput) passwordInput.placeholder = "PASSWORD";
+      if (passwordRepeatInput) passwordRepeatInput.value = "";
+      setPilotDialogConfirm("WELCOME BACK");
+      setPilotDialogMessage("");
+      return;
+    }
+
+    if (pilotInfo?.available) {
+      pilotDialogMode = "register";
+      pilotDialogNick = pilotInfo.nick || nick;
+      passwordInput?.classList.remove("hidden");
+      passwordRepeatInput?.classList.remove("hidden");
+      backButton?.classList.remove("hidden");
+      if (nickInput) nickInput.disabled = true;
+      if (passwordInput) passwordInput.autocomplete = "new-password";
+      if (passwordInput) passwordInput.placeholder = "CREATE PASSWORD";
+      setPilotDialogConfirm("REGISTER");
+      setPilotDialogMessage("NEW PILOT: CREATE PASSWORD");
+      return;
+    }
+
+    pilotDialogMode = "guest";
+    passwordInput?.classList.add("hidden");
+    passwordRepeatInput?.classList.add("hidden");
+    backButton?.classList.add("hidden");
+    if (nickInput) nickInput.disabled = false;
+    setPilotDialogConfirm("CHECK");
+    setPilotDialogMessage(t("identity.reserved"));
+  }
+
+  async function submitPilotDialog() {
+    if (pilotDialogMode === "guest") {
+      await checkPilotDialogNick();
+      return;
+    }
+
+    const nick = sanitizeNick(pilotDialogNick || document.getElementById("pilot-dialog-nick")?.value);
+    const password = document.getElementById("pilot-dialog-password")?.value || "";
+    const passwordRepeat = document.getElementById("pilot-dialog-password-repeat")?.value || "";
+
+    if (!nick || isServiceNick(nick)) {
+      setPilotDialogMessage("ENTER PILOT CALLSIGN");
+      return;
+    }
+
+    setPilotDialogMessage(t("identity.authWorking"));
+
+    if (String(password || "").length < AUTH_MIN_PASSWORD_LENGTH) {
+      setPilotDialogMessage(t("identity.passwordShort"));
+      return;
+    }
+
+    if (pilotDialogMode === "register" && password !== passwordRepeat) {
+      setPilotDialogMessage(t("identity.passwordMismatch"));
+      return;
+    }
+
+    if (pilotDialogMode === "login" || pilotDialogMode === "register") {
+      const result = pilotDialogMode === "login"
+        ? await window.GUNS_NET?.loginPilot?.(nick, password, collectVisitMeta())
+        : await window.GUNS_NET?.claimPilot?.(nick, password, collectVisitMeta());
+
+      if (!result?.ok || !result?.pilot) {
+        setPilotDialogMessage(t(getAuthErrorKey(result?.error)));
+        return;
+      }
+
+      state.pilot = result.pilot;
+      syncKnownWallet(result.pilot);
+      window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
+      syncLogoutButton();
+      closePilotDialog();
+      return;
+    }
+  }
+
+  function setPilotDialogConfirm(label) {
+    const button = document.getElementById("pilot-dialog-confirm");
+    if (button) button.textContent = label;
+  }
+
+  function setPilotDialogMessage(message) {
+    const element = document.getElementById("pilot-dialog-message");
+    if (element) element.textContent = message || "";
+  }
 
   async function initializeIdentity() {
     const result = await window.GUNS_NET?.startAnonymousVisit?.(collectVisitMeta());
@@ -232,36 +533,36 @@
       window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
       setStatus(t("identity.welcome", { nick: result.pilot.nick }));
     } else {
-      document.getElementById("pilot-nick").value = state.visit?.unclaimedNick || getCallsign();
-      setStatus(
-        state.visit?.unclaimedNick
-          ? t("identity.unclaimedHint", { nick: state.visit.unclaimedNick })
-          : t("identity.guestReady")
-      );
+      document.getElementById("pilot-nick").value = getCallsign();
+      window.GUNS_APP.setPlayerNick(getCallsign());
+      setStatus(t("identity.guestReady"));
     }
 
     syncLogoutButton();
   }
 
   function syncKnownWallet(entity) {
+    if (!state.walletConfirmedByPickup) return;
+
     const coins = Number(entity?.wallet?.gunsCoin);
 
     if (!Number.isFinite(coins)) return;
 
-    state.walletGunsCoin = Math.max(state.walletGunsCoin, coins);
+    state.walletGunsCoin = Math.max(0, Math.floor(coins));
   }
 
   function notifyWalletIncrease(entity) {
+    if (isServiceNick(window.GUNS_APP?.playerNick)) return;
+
     const coins = Number(entity?.wallet?.gunsCoin);
 
     if (!Number.isFinite(coins)) return;
 
+    state.walletConfirmedByPickup = true;
     const delta = coins - state.walletGunsCoin;
-    state.walletGunsCoin = Math.max(state.walletGunsCoin, coins);
+    state.walletGunsCoin = Math.max(0, Math.floor(coins));
 
     if (delta <= 0) return;
-
-    window.alert(`+${delta} Guns Coin`);
   }
 
   async function handlePlay(mode) {
@@ -284,8 +585,8 @@
     }
 
     if (isServiceNick(nick)) {
-      input.value = SERVICE_NICK;
-      window.GUNS_APP.start(SERVICE_NICK, mode);
+      input.value = getCallsign();
+      window.GUNS_APP.start(getCallsign(), mode);
       return;
     }
 
@@ -307,7 +608,7 @@
     }
 
     if (pilotInfo.available) {
-      showNickChoicePanel(state.pendingNick);
+      showAuthPanel("claim", t("identity.claim", { nick: state.pendingNick }));
       return;
     }
 
@@ -340,35 +641,11 @@
     }
 
     state.pilot = result.pilot;
-    notifyWalletIncrease(result.pilot);
+    syncKnownWallet(result.pilot);
     document.getElementById("pilot-nick").value = result.pilot.nick;
     window.GUNS_APP.setPlayerNick(result.pilot.nick, { persist: true });
     syncLogoutButton();
     window.GUNS_APP.start(result.pilot.nick, state.pendingMode);
-  }
-
-  async function playUnclaimedNick() {
-    const nick = state.pendingNick;
-
-    if (!nick || isServiceNick(nick)) {
-      hideNickChoicePanel();
-      return;
-    }
-
-    setNickChoiceMessage(t("identity.authWorking"));
-
-    const unclaimed = await window.GUNS_NET?.useUnclaimedNick?.(nick, collectVisitMeta());
-
-    if (!unclaimed?.ok || !unclaimed.visit) {
-      hideNickChoicePanel();
-      setStatus(t(unclaimed?.error === "nick_taken" ? "identity.nickTaken" : "identity.authFailed"));
-      return;
-    }
-
-    state.visit = unclaimed.visit;
-    notifyWalletIncrease(unclaimed.visit);
-    hideNickChoicePanel();
-    window.GUNS_APP.start(nick, state.pendingMode);
   }
 
   function showAuthPanel(mode, message) {
@@ -461,11 +738,30 @@
     }
   }
 
-  function isKnownUnclaimedNick(value) {
-    return Boolean(
-      state.visit?.unclaimedNick &&
-        normalize(value) === normalize(state.visit.unclaimedNick)
-    );
+  function logoutPilot() {
+    window.GUNS_NET?.logout?.()
+      .finally(async () => {
+        state.pilot = null;
+        state.walletGunsCoin = 0;
+        const result = await window.GUNS_NET?.startAnonymousVisit?.(collectVisitMeta());
+        if (result?.visit) {
+          state.visit = result.visit;
+          syncKnownWallet(result.visit);
+        } else {
+          state.localCallsign = createLocalCallsign();
+          state.visit = {
+            callsign: state.localCallsign,
+            source: "local-fallback"
+          };
+        }
+        const callsign = getCallsign();
+        document.getElementById("pilot-nick").value = callsign;
+        window.GUNS_APP.setPlayerNick(callsign);
+        hideAuthPanel();
+        hideNickChoicePanel();
+        syncLogoutButton();
+        setStatus(t("identity.loggedOut"));
+      });
   }
 
   function getCallsign() {
@@ -513,7 +809,9 @@
       .forEach(room => {
         const option = document.createElement("option");
         option.value = room.id;
-        option.textContent = room.title || room.id;
+        option.textContent = room.description
+          ? `${room.title || room.id} - ${room.description}`
+          : room.title || room.id;
         select.appendChild(option);
       });
 
@@ -595,7 +893,7 @@
   function createLocalCallsign() {
     if (state.localCallsign) return state.localCallsign;
 
-    state.localCallsign = SERVICE_NICK;
+    state.localCallsign = FALLBACK_SERVICE_NICK;
     return state.localCallsign;
   }
 
@@ -715,7 +1013,7 @@
   }
 
   function isServiceNick(value) {
-    return normalize(value) === normalize(SERVICE_NICK);
+    return normalize(value).startsWith(SERVICE_NICK_PREFIX);
   }
 
   function t(key, params = {}) {
@@ -726,12 +1024,11 @@
         "identity.guestReady": "TEMPORARY PILOT READY",
         "identity.emptyNick": "ENTER PILOT CALLSIGN",
         "identity.welcome": "WELCOME BACK, {nick}",
-        "identity.unclaimedHint": "YOU PLAYED AS {nick}. PLAY OR CLAIM IT.",
         "identity.checking": "CHECKING PILOT...",
         "identity.freeNick": "{nick} IS FREE",
-        "identity.claim": "CLAIM {nick}: CREATE PASSWORD",
+        "identity.claim": "REGISTER {nick}: CREATE PASSWORD",
         "identity.login": "{nick} IS CLAIMED: ENTER PASSWORD",
-        "identity.claimButton": "CLAIM",
+        "identity.claimButton": "REGISTER",
         "identity.loginButton": "LOGIN",
         "identity.passwordShort": "PASSWORD: 6+ SYMBOLS",
         "identity.passwordMismatch": "PASSWORDS DO NOT MATCH",
@@ -748,12 +1045,11 @@
         "identity.guestReady": "ВРЕМЕННЫЙ ПИЛОТ ГОТОВ",
         "identity.emptyNick": "ВВЕДИ ПОЗЫВНОЙ ПИЛОТА",
         "identity.welcome": "С ВОЗВРАЩЕНИЕМ, {nick}",
-        "identity.unclaimedHint": "ТЫ ИГРАЛ КАК {nick}. ИГРАЙ ИЛИ ЗАСТОЛБИ.",
         "identity.checking": "ПРОВЕРЯЕМ ПИЛОТА...",
         "identity.freeNick": "{nick} СВОБОДЕН",
-        "identity.claim": "ЗАСТОЛБИТЬ {nick}: СОЗДАЙ ПАРОЛЬ",
+        "identity.claim": "РЕГИСТРАЦИЯ {nick}: СОЗДАЙ ПАРОЛЬ",
         "identity.login": "{nick} УЖЕ ЗАНЯТ: ВВЕДИ ПАРОЛЬ",
-        "identity.claimButton": "ЗАСТОЛБИТЬ",
+        "identity.claimButton": "РЕГИСТРАЦИЯ",
         "identity.loginButton": "ВОЙТИ",
         "identity.passwordShort": "ПАРОЛЬ: 6+ СИМВОЛОВ",
         "identity.passwordMismatch": "ПАРОЛИ НЕ СОВПАЛИ",

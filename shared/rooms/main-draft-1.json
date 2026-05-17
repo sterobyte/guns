@@ -1,13 +1,14 @@
 {
   "id": "main-draft-1",
   "title": "Main Arena Draft",
+  "description": "Draft classic arena",
   "enabled": true,
   "published": false,
   "modeId": "classic-deathmatch",
   "arena": {
     "shape": "circle",
     "params": {
-      "radius": 1600
+      "radius": 1000
     }
   },
   "limits": {
@@ -20,6 +21,7 @@
     "machinegun"
   ],
   "spawns": {
+    "mode": "random",
     "player": {
       "state": "pilot",
       "pilotX": 0,

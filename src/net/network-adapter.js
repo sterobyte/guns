@@ -9,6 +9,12 @@
   const remoteSnapshots = new Map();
   const listeners = new Map();
 
+  function clearSessionState() {
+    serverArena = null;
+    peers.clear();
+    remoteSnapshots.clear();
+  }
+
   function emit(type, payload) {
     const handlers = listeners.get(type);
     if (!handlers) return;
@@ -220,6 +226,10 @@
       if (socket) {
         socket.close();
       }
+
+      socket = null;
+      clientId = "";
+      clearSessionState();
     },
     startAnonymousVisit(meta = {}) {
       return apiFetch("/visits/start", {
@@ -235,15 +245,6 @@
     checkPilot(nickValue) {
       const nickParam = encodeURIComponent(String(nickValue || "").trim());
       return apiFetch(`/pilots/check?nick=${nickParam}`).then((result) => result?.data || null);
-    },
-    useUnclaimedNick(nickValue, meta = {}) {
-      return apiFetch("/visits/unclaimed-nick", {
-        method: "POST",
-        body: JSON.stringify({
-          nick: nickValue,
-          meta
-        })
-      }).then((result) => result?.data || null);
     },
     claimPilot(nickValue, passwordValue, meta = {}) {
       return apiFetch("/pilots/claim", {

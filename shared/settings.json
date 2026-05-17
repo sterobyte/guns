@@ -2,9 +2,9 @@
   "botNameBrackets": true,
   "economy": {
     "gunsCoin": {
-      "visitorGrant": 100,
-      "playGrant": 25,
-      "registrationGrant": 250
+      "visitorGrant": 0,
+      "playGrant": 0,
+      "registrationGrant": 0
     }
   }
 }

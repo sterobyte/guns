@@ -1,9 +1,11 @@
 {
-  "id": "classic-deathmatch",
+  "id": "deathmatch",
   "kind": "deathmatch",
-  "title": "Classic Deathmatch",
+  "title": "Deathmatch",
   "enabled": true,
   "rules": {
+    "durationSec": 300,
+    "showTimer": 1,
     "passiveScorePerTick": 1,
     "bulletHitScore": 30,
     "ammoPickupScore": 40,

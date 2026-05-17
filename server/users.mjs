@@ -9,12 +9,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { sanitizeNick } from "./rooms.mjs";
 
-const AUTH_SESSION_TTL = 1000 * 60 * 60 * 24 * 30;
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 128;
-const SERVICE_NICK = "CADET";
+const SERVICE_NICK_PREFIX = "visitor-";
 
-export const VISIT_COOKIE = "guns_vid";
 export const AUTH_COOKIE = "guns_sid";
 export const DEVICE_COOKIE = "guns_did";
 
@@ -23,7 +21,6 @@ export class UserRegistry {
     this.economyConfig = normalizeEconomyConfig(economyConfig);
     this.storageFile = options.storageFile || "";
     this.anonymousVisits = new Map();
-    this.visitIdByTokenHash = new Map();
     this.pilots = new Map();
     this.authSessions = new Map();
     this.devices = new Map();
@@ -35,12 +32,15 @@ export class UserRegistry {
   }
 
   startVisit(cookies = {}, meta = {}) {
-    const existing = this.getVisitByToken(cookies[VISIT_COOKIE]);
     const now = Date.now();
     const deviceResult = this.ensureDevice(cookies, meta, now);
+    const device = deviceResult.device;
+    const existing = this.getVisitByDevice(device);
 
     if (existing) {
+      normalizeVisitCallsign(existing);
       ensureWallet(existing);
+      existing.deviceId = device?.id || existing.deviceId || "";
       existing.lastSeenAt = now;
       existing.views += 1;
       existing.meta = mergeMeta(existing.meta, meta);
@@ -52,14 +52,15 @@ export class UserRegistry {
       };
     }
 
-    const token = createToken();
-    const tokenHash = hashToken(token);
-    const segment = getVisitSegment(meta);
+    const segment = getVisitSegment({
+      ...meta,
+      stableDeviceId: device?.id || "",
+      firstSeenAt: now
+    });
     const visit = {
-      id: randomUUID(),
-      callsign: createCallsign(),
+      id: device?.id || randomUUID(),
+      callsign: createCallsign(segment),
       code: segment.code,
-      tokenHash,
       firstSeenAt: now,
       lastSeenAt: now,
       views: 1,
@@ -69,9 +70,7 @@ export class UserRegistry {
       connectionIds: new Set(),
       roomId: "",
       source: "anonymous",
-      unclaimedNick: "",
-      unclaimedNickUsedAt: 0,
-      unclaimedNickSessions: 0,
+      deviceId: device?.id || "",
       meta: {
         ...meta,
         segment: segment.label
@@ -84,12 +83,10 @@ export class UserRegistry {
     ensureWallet(visit);
 
     this.anonymousVisits.set(visit.id, visit);
-    this.visitIdByTokenHash.set(tokenHash, visit.id);
     this.persist();
 
     return {
       visit: publicVisit(visit),
-      visitToken: token,
       deviceToken: deviceResult.deviceToken
     };
   }
@@ -131,17 +128,20 @@ export class UserRegistry {
     };
   }
 
-  getVisitByToken(token) {
-    const tokenHash = hashToken(token || "");
-    const visitId = this.visitIdByTokenHash.get(tokenHash);
-
-    return visitId ? this.anonymousVisits.get(visitId) || null : null;
-  }
-
   getDeviceByToken(token) {
     const tokenHash = hashToken(token || "");
 
     return tokenHash ? this.devices.get(tokenHash) || null : null;
+  }
+
+  getVisitByDevice(device) {
+    if (!device?.id) return null;
+
+    return this.anonymousVisits.get(device.id) || null;
+  }
+
+  getVisitByDeviceToken(token) {
+    return this.getVisitByDevice(this.getDeviceByToken(token));
   }
 
   getAuthenticatedPilot(cookies = {}) {
@@ -178,55 +178,6 @@ export class UserRegistry {
     };
   }
 
-  useUnclaimedNick(rawNick, cookies = {}, meta = {}) {
-    const checked = this.checkPilot(rawNick);
-
-    if (checked.reserved) {
-      return error("reserved_nick", "This pilot name is reserved.");
-    }
-
-    if (!checked.available) {
-      return error("nick_taken", "This pilot name is already claimed.");
-    }
-
-    const safeMeta = { ...meta };
-    delete safeMeta.visitToken;
-
-    const currentVisit = this.getVisitByToken(cookies[VISIT_COOKIE]);
-    const visitCookies = currentVisit?.claimedPilotId
-      ? { [DEVICE_COOKIE]: cookies[DEVICE_COOKIE] || "" }
-      : cookies;
-    const visitResult = this.startVisit(
-      visitCookies,
-      safeMeta
-    );
-    const visit = this.anonymousVisits.get(visitResult.visit.id);
-
-    if (!visit) {
-      return error("visit_missing", "Anonymous visit is missing.");
-    }
-
-    const now = Date.now();
-
-    visit.unclaimedNick = checked.nick;
-    visit.unclaimedNickUsedAt = now;
-    visit.unclaimedNickSessions = (visit.unclaimedNickSessions || 0) + 1;
-    visit.lastSeenAt = now;
-    awardGunsCoinOnce(
-      visit,
-      "playGrant",
-      this.economyConfig.gunsCoin.playGrant
-    );
-    this.persist();
-
-    return {
-      ok: true,
-      visit: publicVisit(visit),
-      visitToken: visitResult.visitToken,
-      deviceToken: visitResult.deviceToken || ""
-    };
-  }
-
   claimPilot(rawNick, password, cookies = {}, meta = {}) {
     const checked = this.checkPilot(rawNick);
     const now = Date.now();
@@ -239,6 +190,10 @@ export class UserRegistry {
 
     if (!checked.available) {
       return error("nick_taken", "This pilot name is already claimed.");
+    }
+
+    if (device?.claimedPilotId && !this.getPilotById(device.claimedPilotId)) {
+      this.clearDeviceClaim(device);
     }
 
     if (device?.claimedPilotId) {
@@ -270,7 +225,7 @@ export class UserRegistry {
       connectionIds: new Set(),
       roomId: "",
       source: "pilot",
-      firstVisitId: visit?.id || "",
+      firstDeviceId: device?.id || visit?.deviceId || "",
       telegramId: null,
       telegramUsername: "",
       telegramLinkedAt: 0
@@ -282,28 +237,17 @@ export class UserRegistry {
       this.linkVisitToPilot(visit, pilot, now);
     }
 
-    awardGunsCoinOnce(
-      pilot,
-      "registrationGrant",
-      this.economyConfig.gunsCoin.registrationGrant
-    );
-
     this.pilots.set(pilot.normalizedNick, pilot);
 
-    if (device) {
-      device.claimedPilotId = pilot.id;
-      device.claimedNick = pilot.nick;
-      device.claimedAt = now;
-    }
+    this.linkDeviceToPilot(device, pilot, now);
 
-    const session = this.createAuthSession(pilot.id, meta);
+    const session = this.createAuthSession(pilot.id, meta, device);
     this.persist();
 
     return {
       ok: true,
       pilot: publicPilot(pilot),
       visit: visit ? publicVisit(visit) : visitResult.visit,
-      visitToken: visitResult.visitToken,
       deviceToken: deviceResult.deviceToken || visitResult.deviceToken || "",
       session: publicSession(session),
       sessionToken: session.token
@@ -324,19 +268,21 @@ export class UserRegistry {
 
     const visitResult = this.startVisit(cookies, meta);
     const visit = this.anonymousVisits.get(visitResult.visit.id);
+    const device = this.getDeviceByToken(cookies[DEVICE_COOKIE] || visitResult.deviceToken || "");
 
     if (visit) {
       this.linkVisitToPilot(visit, pilot, pilot.lastLoginAt);
     }
 
-    const session = this.createAuthSession(pilot.id, meta);
+    this.linkDeviceToPilot(device, pilot, pilot.lastLoginAt);
+
+    const session = this.createAuthSession(pilot.id, meta, device);
     this.persist();
 
     return {
       ok: true,
       pilot: publicPilot(pilot),
       visit: visit ? publicVisit(visit) : visitResult.visit,
-      visitToken: visitResult.visitToken,
       deviceToken: visitResult.deviceToken || "",
       session: publicSession(session),
       sessionToken: session.token
@@ -362,15 +308,12 @@ export class UserRegistry {
     const nick = sanitizeNick(rawNick);
     const now = Date.now();
     const countSession = meta.source !== "game-start";
-    const cookieVisit = this.getVisitByToken(meta.visitToken);
+    const cookieVisit = this.getVisitByDeviceToken(meta.deviceToken);
 
     if (cookieVisit && isReservedNick(nick)) {
       ensureWallet(cookieVisit);
-      cookieVisit.unclaimedNick = "";
-      cookieVisit.unclaimedNickUsedAt = 0;
       cookieVisit.lastSeenAt = now;
       cookieVisit.sessions += countSession ? 1 : 0;
-      awardRoomEntryCoins(cookieVisit, meta, this.economyConfig);
       updatePresence(cookieVisit, meta);
       this.persist();
       return publicVisit(cookieVisit);
@@ -381,14 +324,6 @@ export class UserRegistry {
     if (pilot) {
       ensureWallet(pilot);
       pilot.lastSeenAt = now;
-      if (meta.source === "game-start") {
-        awardGunsCoinOnce(
-          pilot,
-          "playGrant",
-          this.economyConfig.gunsCoin.playGrant
-        );
-      }
-      awardRoomEntryCoins(pilot, meta, this.economyConfig);
       updatePresence(pilot, meta);
 
       if (cookieVisit) {
@@ -399,88 +334,26 @@ export class UserRegistry {
       return publicPilot(pilot);
     }
 
-    if (cookieVisit && visitMatchesNick(cookieVisit, nick)) {
-      ensureWallet(cookieVisit);
-      cookieVisit.lastSeenAt = now;
-      cookieVisit.sessions += countSession ? 1 : 0;
-      if (meta.source === "game-start") {
-        awardGunsCoinOnce(
-          cookieVisit,
-          "playGrant",
-          this.economyConfig.gunsCoin.playGrant
-        );
-      }
-      awardRoomEntryCoins(cookieVisit, meta, this.economyConfig);
-      updatePresence(cookieVisit, meta);
-      this.persist();
-      return publicVisit(cookieVisit);
-    }
+    const fallback = cookieVisit || this.startVisit({
+      [DEVICE_COOKIE]: meta.deviceToken || ""
+    }, meta).visit;
+    const visit = fallback?.id
+      ? this.anonymousVisits.get(fallback.id) || cookieVisit
+      : cookieVisit;
 
-    const visit = this.getVisitByNick(nick);
+    if (!visit) return publicVisit(fallback);
 
-    if (visit) {
-      ensureWallet(visit);
-      visit.lastSeenAt = now;
-      visit.sessions += countSession ? 1 : 0;
-      if (meta.source === "game-start") {
-        awardGunsCoinOnce(
-          visit,
-          "playGrant",
-          this.economyConfig.gunsCoin.playGrant
-        );
-      }
-      awardRoomEntryCoins(visit, meta, this.economyConfig);
-      updatePresence(visit, meta);
-      this.persist();
-      return publicVisit(visit);
-    }
-
-    if (cookieVisit && !isReservedNick(nick)) {
-      const result = this.useUnclaimedNick(nick, {
-        [VISIT_COOKIE]: meta.visitToken
-      }, meta);
-
-      if (result.ok) return result.visit;
-    }
-
-    const fallback = {
-      id: `transient:${normalizeNick(nick)}`,
-      callsign: nick,
-      firstSeenAt: now,
-      lastSeenAt: now,
-      views: 0,
-      sessions: countSession ? 1 : 0,
-      online: meta.online === undefined ? false : Boolean(meta.online),
-      activeConnections: 0,
-      connectionIds: new Set(),
-      roomId: meta.roomId || "",
-      source: "transient",
-      unclaimedNick: nick,
-      unclaimedNickUsedAt: now,
-      unclaimedNickSessions: 1,
-      claimedPilotId: null,
-      claimedNick: ""
-    };
-
-    ensureWallet(fallback);
-    if (meta.source === "game-start" && !isReservedNick(nick)) {
-      awardGunsCoinOnce(
-        fallback,
-        "playGrant",
-        this.economyConfig.gunsCoin.playGrant
-      );
-    }
-    awardRoomEntryCoins(fallback, meta, this.economyConfig);
-
-    this.anonymousVisits.set(fallback.id, fallback);
-    updatePresence(fallback, meta);
+    ensureWallet(visit);
+    visit.lastSeenAt = now;
+    visit.sessions += countSession ? 1 : 0;
+    updatePresence(visit, meta);
     this.persist();
-    return publicVisit(fallback);
+    return publicVisit(visit);
   }
 
   setOnline(rawNick, online, meta = {}) {
     const nick = sanitizeNick(rawNick);
-    const visit = this.getVisitByToken(meta.visitToken);
+    const visit = this.getVisitByDeviceToken(meta.deviceToken);
     const pilot = this.pilots.get(normalizeNick(nick));
     const entity = pilot || visit || this.getVisitByNick(nick);
 
@@ -499,15 +372,19 @@ export class UserRegistry {
 
   collectGarageCoins(rawNick, cookies = {}) {
     const nick = sanitizeNick(rawNick);
-    const visit = this.getVisitByToken(cookies[VISIT_COOKIE]);
-    const pilot = this.pilots.get(normalizeNick(nick));
-    const entity = pilot || visit || this.getVisitByNick(nick);
 
-    if (!entity) return error("user_not_found", "User row was not found.");
+    if (isReservedNick(nick)) {
+      return error("reserved_nick", "This pilot name is reserved.");
+    }
+
+    const pilot = this.pilots.get(normalizeNick(nick));
+    const entity = pilot;
+
+    if (!entity) return error("pilot_required", "Only registered pilots can collect gs.");
 
     awardGunsCoinOnce(
       entity,
-      "visitorGrant",
+      "garageCoinsPickup",
       this.economyConfig.gunsCoin.visitorGrant
     );
     this.persist();
@@ -520,9 +397,20 @@ export class UserRegistry {
 
   list() {
     const visits = Array.from(this.anonymousVisits.values())
-      .filter((visit) => !visit.claimedPilotId)
-      .map(publicVisit);
-    const pilots = Array.from(this.pilots.values()).map(publicPilot);
+      .map((visit) => this.withPublicIds(publicVisit(visit), {
+        deviceId: visit.deviceId || "",
+        deviceIds: visit.deviceId ? [visit.deviceId] : [],
+        pilotId: "",
+        sessionId: "",
+        sessionIds: []
+      }));
+    const pilots = Array.from(this.pilots.values()).map((pilot) =>
+      this.withPublicIds(publicPilot(pilot), {
+        deviceIds: this.getDeviceIdsByPilotId(pilot.id),
+        pilotId: pilot.id,
+        sessions: this.getSessionsByPilotId(pilot.id)
+      })
+    );
 
     return [...pilots, ...visits]
       .sort((a, b) => b.lastSeenAt - a.lastSeenAt || a.nick.localeCompare(b.nick));
@@ -530,29 +418,115 @@ export class UserRegistry {
 
   snapshot() {
     const users = this.list();
+    const devices = Array.from(this.devices.values()).map(publicDevice);
+    const sessions = Array.from(this.authSessions.values()).map(publicAuthSession);
 
     return {
       users,
+      devices,
+      sessions,
       total: users.length,
       anonymousTotal: this.anonymousVisits.size,
       pilotsTotal: this.pilots.size,
-      devicesTotal: this.devices.size,
+      devicesTotal: devices.length,
+      sessionsTotal: sessions.length,
       online: users.filter((user) => user.online).length,
       connections: users.reduce((sum, user) => sum + (user.activeConnections || 0), 0),
       serverTime: Date.now()
     };
   }
 
+  withPublicIds(user, ids) {
+    const deviceIds = Array.isArray(ids.deviceIds) ? ids.deviceIds : [];
+    const sessions = Array.isArray(ids.sessions) ? ids.sessions : [];
+    const explicitSessionIds = Array.isArray(ids.sessionIds) ? ids.sessionIds : [];
+    const sessionIds = sessions.map((session) => session.id).filter(Boolean);
+    const visibleSessionIds = sessionIds.length ? sessionIds : explicitSessionIds;
+
+    return {
+      ...user,
+      deviceId: ids.deviceId || deviceIds[0] || "",
+      deviceIds,
+      deviceCount: deviceIds.length,
+      pilotId: ids.pilotId || "",
+      sessionId: ids.sessionId || visibleSessionIds[0] || "",
+      sessionIds: visibleSessionIds,
+      authSessions: sessions,
+      sessionCount: visibleSessionIds.length
+    };
+  }
+
+  getDeviceIdsByPilotId(pilotId) {
+    const ids = [];
+
+    for (const device of this.devices.values()) {
+      if (device.claimedPilotId === pilotId) {
+        ids.push(device.id || "");
+      }
+    }
+
+    return ids.filter(Boolean);
+  }
+
+  getSessionsByPilotId(pilotId) {
+    return Array.from(this.authSessions.values())
+      .filter((session) => session.pilotId === pilotId && !session.revokedAt)
+      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      .map((session) => ({
+        id: session.id,
+        deviceId: session.deviceId || "",
+        createdAt: session.createdAt,
+        lastSeenAt: session.lastSeenAt
+      }));
+  }
+
+  linkDeviceToPilot(device, pilot, now = Date.now()) {
+    if (!device || !pilot) return null;
+
+    device.claimedPilotId = pilot.id;
+    device.claimedNick = pilot.nick;
+    device.claimedAt ||= now;
+    device.lastLoginAt = now;
+
+    if (!pilot.firstDeviceId) {
+      pilot.firstDeviceId = device.id || "";
+    }
+
+    return device;
+  }
+
+  clearDeviceClaim(device) {
+    if (!device) return null;
+
+    device.claimedPilotId = "";
+    device.claimedNick = "";
+    device.claimedAt = 0;
+    device.lastLoginAt = 0;
+
+    return device;
+  }
+
+  reconcileIdentityLinks() {
+    for (const device of this.devices.values()) {
+      if (device.claimedPilotId && !this.getPilotById(device.claimedPilotId)) {
+        this.clearDeviceClaim(device);
+      }
+    }
+
+    for (const visit of this.anonymousVisits.values()) {
+      if (visit.claimedPilotId && !this.getPilotById(visit.claimedPilotId)) {
+        visit.claimedPilotId = null;
+        visit.claimedNick = "";
+        visit.convertedAt = 0;
+      }
+    }
+  }
+
   deleteUser(userId) {
     const id = String(userId || "");
 
     if (this.anonymousVisits.has(id)) {
-      const visit = this.anonymousVisits.get(id);
       this.anonymousVisits.delete(id);
-
-      if (visit?.tokenHash) {
-        this.visitIdByTokenHash.delete(visit.tokenHash);
-      }
 
       this.persist();
       return {
@@ -575,6 +549,12 @@ export class UserRegistry {
         }
       }
 
+      for (const device of this.devices.values()) {
+        if (device.claimedPilotId === id) {
+          this.clearDeviceClaim(device);
+        }
+      }
+
       this.persist();
       return {
         ok: true,
@@ -588,8 +568,8 @@ export class UserRegistry {
     return error("user_not_found", "User row was not found.");
   }
 
-  linkVisitToPilotByToken(token, pilotId) {
-    const visit = this.getVisitByToken(token);
+  linkVisitToPilotByDeviceToken(token, pilotId) {
+    const visit = this.getVisitByDeviceToken(token);
     const pilot = this.getPilotById(pilotId);
 
     if (!visit || !pilot) return null;
@@ -605,8 +585,8 @@ export class UserRegistry {
     visit.convertedAt = visit.convertedAt || now;
     visit.lastSeenAt = now;
 
-    if (!pilot.firstVisitId) {
-      pilot.firstVisitId = visit.id;
+    if (!pilot.firstDeviceId) {
+      pilot.firstDeviceId = visit.deviceId || visit.id;
     }
 
     return visit;
@@ -653,7 +633,7 @@ export class UserRegistry {
 
     if (!session) return null;
 
-    if (session.expiresAt <= Date.now() || session.revokedAt) {
+    if (session.revokedAt) {
       this.authSessions.delete(tokenHash);
       this.persist();
       return null;
@@ -662,7 +642,7 @@ export class UserRegistry {
     return session;
   }
 
-  createAuthSession(pilotId, meta = {}) {
+  createAuthSession(pilotId, meta = {}, device = null) {
     const token = createToken();
     const now = Date.now();
     const session = {
@@ -670,9 +650,10 @@ export class UserRegistry {
       token,
       tokenHash: hashToken(token),
       pilotId,
+      deviceId: device?.id || "",
       createdAt: now,
       lastSeenAt: now,
-      expiresAt: now + AUTH_SESSION_TTL,
+      expiresAt: 0,
       revokedAt: 0,
       meta
     };
@@ -688,11 +669,13 @@ export class UserRegistry {
       const data = JSON.parse(fs.readFileSync(this.storageFile, "utf8"));
       this.anonymousVisits = new Map(
         (data.anonymousVisits || []).map((visit) => [
-          visit.id,
-          hydratePresenceEntity(visit)
+          visit.deviceId || visit.id,
+          normalizeVisitCallsign(hydratePresenceEntity({
+            ...visit,
+            id: visit.deviceId || visit.id
+          }))
         ])
       );
-      this.visitIdByTokenHash = new Map(data.visitIdByTokenHash || []);
       this.pilots = new Map(
         (data.pilots || []).map((pilot) => [
           pilot.normalizedNick,
@@ -705,6 +688,7 @@ export class UserRegistry {
       this.devices = new Map(
         (data.devices || []).map((device) => [device.tokenHash, device])
       );
+      this.reconcileIdentityLinks();
     } catch (error) {
       console.warn(`Failed to load users storage: ${error.message}`);
     }
@@ -717,7 +701,6 @@ export class UserRegistry {
       version: 1,
       savedAt: Date.now(),
       anonymousVisits: Array.from(this.anonymousVisits.values()).map(dehydratePresenceEntity),
-      visitIdByTokenHash: Array.from(this.visitIdByTokenHash.entries()),
       pilots: Array.from(this.pilots.values()).map(dehydratePresenceEntity),
       authSessions: Array.from(this.authSessions.values()),
       devices: Array.from(this.devices.values())
@@ -747,13 +730,10 @@ function publicVisit(visit) {
     roomId: visit.roomId || "",
     source: visit.source || "anonymous",
     status,
-    unclaimedNick: visit.unclaimedNick || "",
-    unclaimedNickUsedAt: visit.unclaimedNickUsedAt || 0,
-    unclaimedNickSessions: visit.unclaimedNickSessions || 0,
     claimedPilotId: visit.claimedPilotId || null,
     claimedNick: visit.claimedNick || "",
     convertedAt: visit.convertedAt || 0,
-    wallet: publicWallet(visit.wallet),
+    wallet: publicWallet(visit),
     meta: visit.meta || {}
   };
 }
@@ -772,7 +752,7 @@ function hydratePresenceEntity(entity = {}) {
 }
 
 function dehydratePresenceEntity(entity = {}) {
-  const { connectionIds, ...stored } = entity;
+  const { connectionIds, firstVisitId, tokenHash, ...stored } = entity;
 
   return {
     ...stored,
@@ -797,10 +777,39 @@ function publicPilot(pilot) {
     roomId: pilot.roomId || "",
     source: pilot.source || "pilot",
     status: "claimed",
-    firstVisitId: pilot.firstVisitId || "",
-    wallet: publicWallet(pilot.wallet),
+    firstDeviceId: pilot.firstDeviceId || "",
+    wallet: publicWallet(pilot),
     telegramLinked: Boolean(pilot.telegramId),
     telegramUsername: pilot.telegramUsername || ""
+  };
+}
+
+function publicDevice(device = {}) {
+  return {
+    id: device.id || "",
+    tokenHash: device.tokenHash || "",
+    firstSeenAt: device.firstSeenAt || 0,
+    lastSeenAt: device.lastSeenAt || 0,
+    views: device.views || 0,
+    claimedPilotId: device.claimedPilotId || "",
+    claimedNick: device.claimedNick || "",
+    claimedAt: device.claimedAt || 0,
+    lastLoginAt: device.lastLoginAt || 0,
+    meta: device.meta || {}
+  };
+}
+
+function publicAuthSession(session = {}) {
+  return {
+    id: session.id || "",
+    tokenHash: session.tokenHash || "",
+    pilotId: session.pilotId || "",
+    deviceId: session.deviceId || "",
+    createdAt: session.createdAt || 0,
+    lastSeenAt: session.lastSeenAt || 0,
+    expiresAt: session.expiresAt || 0,
+    revokedAt: session.revokedAt || 0,
+    meta: session.meta || {}
   };
 }
 
@@ -811,9 +820,9 @@ function ensureWallet(entity) {
   return entity.wallet;
 }
 
-function publicWallet(wallet = {}) {
+function publicWallet(entity = {}) {
   return {
-    gunsCoin: normalizeCoinAmount(wallet.gunsCoin)
+    gunsCoin: normalizeCoinAmount(entity.economyAwards?.garageCoinsPickup?.amount)
   };
 }
 
@@ -873,11 +882,11 @@ function normalizeCoinAmount(value) {
 }
 
 function getVisitStatus(visit) {
-  return visit.unclaimedNick ? "unclaimed" : "visitor";
+  return "visitor";
 }
 
 function getVisitNick(visit) {
-  return visit.unclaimedNick || visit.callsign;
+  return visit.callsign;
 }
 
 function visitMatchesNick(visit, nick) {
@@ -980,11 +989,34 @@ function normalizeNick(nick) {
 }
 
 function isReservedNick(nick) {
-  return normalizeNick(nick) === normalizeNick(SERVICE_NICK);
+  return normalizeNick(nick).startsWith(SERVICE_NICK_PREFIX);
 }
 
-function createCallsign() {
-  return SERVICE_NICK;
+function createCallsign(segment = {}) {
+  const code = Number(segment.code);
+  const suffix = Number.isFinite(code) && code > 0
+    ? Math.floor(code)
+    : 0;
+
+  return `${SERVICE_NICK_PREFIX}${String(suffix).padStart(4, "0")}`;
+}
+
+function normalizeVisitCallsign(visit) {
+  if (!visit) return visit;
+
+  const current = normalizeNick(visit.callsign);
+
+  if (current === "cadet" || !current || /^visitor-\d{1,3}$/u.test(current)) {
+    const segment = getVisitSegment({
+      ...visit.meta,
+      stableDeviceId: visit.deviceId || visit.id || "",
+      firstSeenAt: visit.firstSeenAt || 0
+    });
+    visit.code = segment.code;
+    visit.callsign = createCallsign(segment);
+  }
+
+  return visit;
 }
 
 function createTail() {
@@ -1030,12 +1062,32 @@ function getVisitSegment(meta = {}) {
     referral: 4,
     campaign: 5
   });
-  const code = 100 + ((browser * 97 + os * 53 + device * 31 + language * 17 + source * 7) % 900);
+  const stableDeviceId = String(meta.stableDeviceId || "");
+  const firstSeenSecond = Math.floor(Number(meta.firstSeenAt || 0) / 1000);
+  const deviceSeed = hashStringToNumber(stableDeviceId);
+  const firstSeenSeed = hashStringToNumber(String(firstSeenSecond || ""));
+  const code = 1000 + ((
+    browser * 997 +
+    os * 541 +
+    device * 307 +
+    language * 173 +
+    source * 79 +
+    deviceSeed +
+    firstSeenSeed
+  ) % 9000);
 
   return {
     code,
-    label: `${browser}.${os}.${device}.${language}.${source}`
+    label: `${browser}.${os}.${device}.${language}.${source}.${deviceSeed % 997}.${firstSeenSecond % 997}`
   };
+}
+
+function hashStringToNumber(value) {
+  if (!value) return 0;
+
+  const hash = createHash("sha256").update(value).digest();
+
+  return hash.readUInt32BE(0);
 }
 
 function categoryCode(value, dictionary) {

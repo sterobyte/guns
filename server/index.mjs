@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
-import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry, VISIT_COOKIE } from "./users.mjs";
+import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry } from "./users.mjs";
 import { buildGameConfig, validateGameConfig } from "../scripts/config-tools.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,7 +14,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.13.36";
+const version = "0.14.0";
 const serverStartedAt = Date.now();
 let publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
@@ -453,12 +453,6 @@ const server = http.createServer((req, res) => {
         const auth = users.getAuthenticatedPilot(cookies);
         const setCookies = [];
 
-        if (result.visitToken) {
-          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
-            maxAge: 60 * 60 * 24 * 365
-          }));
-        }
-
         if (result.deviceToken) {
           setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
             maxAge: 60 * 60 * 24 * 365
@@ -466,8 +460,8 @@ const server = http.createServer((req, res) => {
         }
 
         if (auth?.pilot) {
-          const linkedVisit = users.linkVisitToPilotByToken(
-            cookies[VISIT_COOKIE] || result.visitToken || "",
+          const linkedVisit = users.linkVisitToPilotByDeviceToken(
+            cookies[DEVICE_COOKIE] || result.deviceToken || "",
             auth.pilot.id
           );
 
@@ -507,44 +501,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === "/visits/unclaimed-nick" && req.method === "POST") {
-    readJsonBody(req)
-      .then((body) => {
-        const result = users.useUnclaimedNick(
-          body?.nick,
-          cookies,
-          body?.meta || {}
-        );
-
-        if (!result.ok) {
-          sendJson(req, res, 409, result);
-          return;
-        }
-
-        const setCookies = [];
-
-        if (result.visitToken) {
-          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
-            maxAge: 60 * 60 * 24 * 365
-          }));
-        }
-
-        if (result.deviceToken) {
-          setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
-            maxAge: 60 * 60 * 24 * 365
-          }));
-        }
-
-        sendJson(req, res, 200, {
-          ok: true,
-          visit: result.visit
-        }, setCookies);
-      })
-      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
-
-    return;
-  }
-
   if (url.pathname === "/pilots/claim" && req.method === "POST") {
     readJsonBody(req)
       .then((body) => {
@@ -561,16 +517,8 @@ const server = http.createServer((req, res) => {
         }
 
         const setCookies = [
-          makeCookie(AUTH_COOKIE, result.sessionToken, {
-            maxAge: 60 * 60 * 24 * 30
-          })
+          makeCookie(AUTH_COOKIE, result.sessionToken)
         ];
-
-        if (result.visitToken) {
-          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
-            maxAge: 60 * 60 * 24 * 365
-          }));
-        }
 
         if (result.deviceToken) {
           setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
@@ -601,16 +549,8 @@ const server = http.createServer((req, res) => {
         }
 
         const setCookies = [
-          makeCookie(AUTH_COOKIE, result.sessionToken, {
-            maxAge: 60 * 60 * 24 * 30
-          })
+          makeCookie(AUTH_COOKIE, result.sessionToken)
         ];
-
-        if (result.visitToken) {
-          setCookies.push(makeCookie(VISIT_COOKIE, result.visitToken, {
-            maxAge: 60 * 60 * 24 * 365
-          }));
-        }
 
         if (result.deviceToken) {
           setCookies.push(makeCookie(DEVICE_COOKIE, result.deviceToken, {
@@ -634,8 +574,7 @@ const server = http.createServer((req, res) => {
     sendJson(req, res, 200, {
       ok: true
     }, [
-      clearCookie(AUTH_COOKIE),
-      clearCookie(VISIT_COOKIE)
+      clearCookie(AUTH_COOKIE)
     ]);
     return;
   }
@@ -646,7 +585,7 @@ const server = http.createServer((req, res) => {
         const user = users.register(body?.nick, {
           source: "game-start",
           roomId: sanitizeRoomId(body?.roomId),
-          visitToken: cookies[VISIT_COOKIE] || ""
+          deviceToken: cookies[DEVICE_COOKIE] || ""
         });
 
         sendJson(req, res, 200, {
@@ -1104,13 +1043,13 @@ server.on("upgrade", (req, socket) => {
   const client = createClient(socket);
   const roomId = sanitizeRoomId(url.searchParams.get("room"));
   const nick = sanitizeNick(url.searchParams.get("nick"));
-  const visitToken = cookies[VISIT_COOKIE] || "";
+  const deviceToken = cookies[DEVICE_COOKIE] || "";
 
-  client.visitToken = visitToken;
+  client.deviceToken = deviceToken;
   hub.join(client, roomId, nick);
   users.register(nick, {
     source: "websocket",
-    visitToken,
+    deviceToken,
     connectionId: client.id,
     online: true,
     roomId
@@ -1153,7 +1092,7 @@ server.on("upgrade", (req, socket) => {
     users.setOnline(client.nick, false, {
       roomId: "",
       connectionId: client.id,
-      visitToken: client.visitToken
+      deviceToken: client.deviceToken
     });
   });
   socket.on("error", () => {
@@ -1161,7 +1100,7 @@ server.on("upgrade", (req, socket) => {
     users.setOnline(client.nick, false, {
       roomId: "",
       connectionId: client.id,
-      visitToken: client.visitToken
+      deviceToken: client.deviceToken
     });
   });
 });
@@ -1178,7 +1117,7 @@ function createClient(socket) {
     roomId: "",
     connectedAt: Date.now(),
     lastSeenAt: Date.now(),
-    visitToken: "",
+    deviceToken: "",
     buffer: Buffer.alloc(0),
     socket,
     send(message) {

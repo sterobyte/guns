@@ -2,6 +2,8 @@
 
 Use this file when continuing the project in a fresh Codex chat.
 
+> This file is older historical context. For current state and handoff instructions, read `NEXT_CHAT_HANDOFF.md` first.
+
 ## Current project
 
 - Workspace: `C:\Users\stero\Documents\Codex\2026-05-12\files-mentioned-by-the-user-guns\guns-next1`
@@ -100,4 +102,3 @@ Do not deploy every tiny experiment unless the user asks.
 ## Communication preference
 
 Answer in Russian, short and strictly practical.
-

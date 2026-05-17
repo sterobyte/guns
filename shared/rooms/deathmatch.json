@@ -1,15 +1,14 @@
 {
-  "id": "main",
-  "title": "Main Arena",
-  "description": "Classic public arena",
+  "id": "deathmatch",
+  "title": "Deathmatch",
+  "description": "5 mins, 6 players",
   "enabled": true,
-  "published": true,
-  "modeId": "classic-deathmatch",
+  "published": false,
+  "modeId": "deathmatch",
   "arena": {
-    "shape": "rectangle",
+    "shape": "circle",
     "params": {
-      "width": 1720,
-      "height": 1720
+      "radius": 1000
     }
   },
   "limits": {
@@ -74,19 +73,37 @@
         "unitId": "autogun0",
         "gunType": "autogun",
         "x": 0,
-        "y": 0
+        "y": -420
       },
       {
         "unitId": "autogun1",
-        "gunType": "heavygun",
-        "x": -520,
+        "gunType": "autogun",
+        "x": 420,
         "y": 0
       },
       {
         "unitId": "autogun2",
-        "gunType": "machinegun",
-        "x": 520,
+        "gunType": "autogun",
+        "x": 0,
+        "y": 420
+      },
+      {
+        "unitId": "autogun3",
+        "gunType": "autogun",
+        "x": -420,
         "y": 0
+      },
+      {
+        "unitId": "heavygun1",
+        "gunType": "heavygun",
+        "x": -560,
+        "y": -560
+      },
+      {
+        "unitId": "heavygun2",
+        "gunType": "heavygun",
+        "x": 560,
+        "y": 560
       }
     ]
   }

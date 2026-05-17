@@ -280,7 +280,7 @@
         "title": "Menu Terminal",
         "version": 1,
         "render": {
-          "width": 150,
+          "width": 190,
           "height": 54
         },
         "interaction": {
@@ -302,16 +302,17 @@
     }
   },
   "rooms": {
-    "main-draft-1": {
-      "id": "main-draft-1",
-      "title": "Main Arena Draft",
+    "deathmatch": {
+      "id": "deathmatch",
+      "title": "Deathmatch",
+      "description": "5 mins, 6 players",
       "enabled": true,
       "published": false,
-      "modeId": "classic-deathmatch",
+      "modeId": "deathmatch",
       "arena": {
         "shape": "circle",
         "params": {
-          "radius": 1600
+          "radius": 1000
         }
       },
       "limits": {
@@ -324,6 +325,117 @@
         "machinegun"
       ],
       "spawns": {
+        "mode": "random",
+        "player": {
+          "state": "pilot",
+          "pilotX": 0,
+          "pilotY": -58
+        },
+        "bots": [
+          {
+            "unitId": "bot1",
+            "name": "Yuriy",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun1",
+            "x": 950,
+            "y": 620
+          },
+          {
+            "unitId": "bot2",
+            "name": "Sidorova",
+            "state": "alive",
+            "gunType": "autogun",
+            "cannonEntityId": "autogun2",
+            "x": -950,
+            "y": -620
+          },
+          {
+            "unitId": "bot3",
+            "name": "Kirk",
+            "state": "pilot",
+            "pilotX": -760,
+            "pilotY": 520
+          },
+          {
+            "unitId": "bot4",
+            "name": "Lara",
+            "state": "pilot",
+            "pilotX": 760,
+            "pilotY": -520
+          },
+          {
+            "unitId": "bot5",
+            "name": "Danila",
+            "state": "pilot",
+            "pilotX": 0,
+            "pilotY": 620
+          }
+        ],
+        "cannons": [
+          {
+            "unitId": "autogun0",
+            "gunType": "autogun",
+            "x": 0,
+            "y": -420
+          },
+          {
+            "unitId": "autogun1",
+            "gunType": "autogun",
+            "x": 420,
+            "y": 0
+          },
+          {
+            "unitId": "autogun2",
+            "gunType": "autogun",
+            "x": 0,
+            "y": 420
+          },
+          {
+            "unitId": "autogun3",
+            "gunType": "autogun",
+            "x": -420,
+            "y": 0
+          },
+          {
+            "unitId": "heavygun1",
+            "gunType": "heavygun",
+            "x": -560,
+            "y": -560
+          },
+          {
+            "unitId": "heavygun2",
+            "gunType": "heavygun",
+            "x": 560,
+            "y": 560
+          }
+        ]
+      }
+    },
+    "main-draft-1": {
+      "id": "main-draft-1",
+      "title": "Main Arena Draft",
+      "description": "Draft classic arena",
+      "enabled": true,
+      "published": false,
+      "modeId": "classic-deathmatch",
+      "arena": {
+        "shape": "circle",
+        "params": {
+          "radius": 1000
+        }
+      },
+      "limits": {
+        "maxPlayers": 16
+      },
+      "allowedCannons": [
+        "autogun",
+        "doublegun",
+        "heavygun",
+        "machinegun"
+      ],
+      "spawns": {
+        "mode": "random",
         "player": {
           "state": "pilot",
           "pilotX": 0,
@@ -395,6 +507,7 @@
     "main": {
       "id": "main",
       "title": "Main Arena",
+      "description": "Classic public arena",
       "enabled": true,
       "published": true,
       "modeId": "classic-deathmatch",
@@ -415,6 +528,7 @@
         "machinegun"
       ],
       "spawns": {
+        "mode": "random",
         "player": {
           "state": "pilot",
           "pilotX": 0,
@@ -486,6 +600,7 @@
     "test-range": {
       "id": "test-range",
       "title": "Test Range",
+      "description": "Small weapon test room",
       "enabled": true,
       "published": true,
       "inherits": "main",
@@ -524,14 +639,16 @@
     "user-cabinet": {
       "id": "user-cabinet",
       "title": "User Cabinet",
+      "description": "Private pilot room",
       "roomKind": "user-cabinet",
       "enabled": true,
       "published": false,
       "modeId": "classic-deathmatch",
       "arena": {
-        "shape": "circle",
+        "shape": "rectangle",
         "params": {
-          "radius": 610
+          "width": 800,
+          "height": 800
         }
       },
       "limits": {
@@ -539,6 +656,7 @@
       },
       "allowedCannons": [],
       "spawns": {
+        "mode": "fixed",
         "player": {
           "state": "pilot",
           "pilotX": 0,
@@ -551,45 +669,30 @@
         {
           "instanceId": "settings-terminal",
           "objectId": "menu-terminal",
-          "x": -240,
-          "y": -120,
-          "rotation": 0,
-          "params": {
-            "label": "SETTINGS",
-            "action": "open-settings"
-          }
-        },
-        {
-          "instanceId": "music-terminal",
-          "objectId": "menu-terminal",
           "x": 0,
-          "y": -120,
+          "y": 0,
           "rotation": 0,
+          "anchor": {
+            "position": "top-center",
+            "marginY": 72
+          },
           "params": {
-            "label": "MUSIC",
-            "action": "open-music"
+            "label": "CHANGE CALLSIGN",
+            "action": "open-pilot"
           }
         },
         {
-          "instanceId": "sounds-terminal",
-          "objectId": "menu-terminal",
-          "x": 240,
-          "y": -120,
-          "rotation": 0,
-          "params": {
-            "label": "SOUNDS",
-            "action": "open-sounds"
-          }
-        },
-        {
-          "instanceId": "main-arena-teleport",
+          "instanceId": "deathmatch-teleport",
           "objectId": "teleport",
-          "x": 430,
-          "y": 400,
+          "x": 0,
+          "y": 0,
           "rotation": 0,
+          "anchor": {
+            "position": "bottom-center",
+            "marginY": 126
+          },
           "params": {
-            "label": "MAIN ARENA",
-            "targetRoomId": "main"
+            "targetRoomId": "deathmatch"
           }
         }
       ]
@@ -598,9 +701,30 @@
   "modes": {
     "classic-deathmatch": {
       "id": "classic-deathmatch",
+      "kind": "deathmatch",
       "title": "Classic Deathmatch",
       "enabled": true,
       "rules": {
+        "passiveScorePerTick": 1,
+        "bulletHitScore": 30,
+        "ammoPickupScore": 40,
+        "ammoLoadScore": 40,
+        "pilotKillScore": 100,
+        "cannonBreakScore": 50
+      }
+    },
+    "deathmatch": {
+      "id": "deathmatch",
+      "kind": "deathmatch",
+      "title": "Deathmatch",
+      "enabled": true,
+      "rules": {
+        "durationSec": 300,
+        "showTimer": 1,
+        "passiveScorePerTick": 1,
+        "bulletHitScore": 30,
+        "ammoPickupScore": 40,
+        "ammoLoadScore": 40,
         "pilotKillScore": 100,
         "cannonBreakScore": 50
       }
@@ -610,9 +734,9 @@
     "botNameBrackets": true,
     "economy": {
       "gunsCoin": {
-        "visitorGrant": 100,
-        "playGrant": 25,
-        "registrationGrant": 250
+        "visitorGrant": 0,
+        "playGrant": 0,
+        "registrationGrant": 0
       }
     }
   }

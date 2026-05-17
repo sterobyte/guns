@@ -36,8 +36,12 @@
       const config = payload?.config || payload;
 
       if (config) {
-        window.GUNS_SHARED_CONFIG = config;
-        window.GUNS_OBJECTS?.refreshFromConfig?.(config);
+        const nextConfig =
+          chooseNewestConfig(window.GUNS_SHARED_CONFIG, config) ||
+          window.GUNS_SHARED_CONFIG;
+
+        window.GUNS_SHARED_CONFIG = nextConfig;
+        window.GUNS_OBJECTS?.refreshFromConfig?.(nextConfig);
       }
     } catch {}
 
@@ -69,7 +73,7 @@
     return compareVersions(
       localConfig.configVersion,
       apiConfig.configVersion
-    ) > 0
+    ) >= 0
       ? localConfig
       : apiConfig;
   }

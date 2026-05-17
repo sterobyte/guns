@@ -89,6 +89,7 @@ export function validateGameConfig(config) {
     validateRoom(id, room, config);
   }
 
+  validateRoomIdentityUniqueness(config.rooms);
 }
 
 function validateSettings(settings) {
@@ -141,6 +142,7 @@ function validateCannon(id, cannon) {
 
 function validateMode(id, mode) {
   requireMatchingId(id, mode, "mode");
+  requireString(mode.kind, `mode.${id}.kind`);
   requireString(mode.title, `mode.${id}.title`);
   requireBoolean(mode.enabled, `mode.${id}.enabled`);
   requireObject(mode.rules, `mode.${id}.rules`);
@@ -162,6 +164,7 @@ function validateRoomObject(id, roomObject) {
 function validateRoom(id, room, config) {
   requireMatchingId(id, room, "room");
   requireString(room.title, `room.${id}.title`);
+  requireString(room.description, `room.${id}.description`);
   if (room.roomKind !== undefined) {
     requireString(room.roomKind, `room.${id}.roomKind`);
   }
@@ -200,8 +203,40 @@ function validateRoom(id, room, config) {
     validateRoomSpawns(id, room.spawns, config);
   }
 
+  if (room.powerups !== undefined) {
+    validateRoomPowerups(id, room.powerups);
+  }
+
   if (room.objects !== undefined) {
     validateRoomObjectInstances(id, room.objects, config);
+  }
+}
+
+function validateRoomIdentityUniqueness(rooms) {
+  const identities = new Map();
+
+  for (const [id, room] of Object.entries(rooms)) {
+    const key = `${room.title}\n${room.description}`.toLocaleLowerCase("en-US");
+    const existingId = identities.get(key);
+
+    if (existingId) {
+      throw new Error(
+        `rooms ${existingId} and ${id} have duplicate title + description`
+      );
+    }
+
+    identities.set(key, id);
+  }
+}
+
+function validateRoomPowerups(roomId, powerups) {
+  requireObject(powerups, `room.${roomId}.powerups`);
+
+  if (powerups.initialCount !== undefined) {
+    requireNonNegativeNumber(
+      powerups.initialCount,
+      `room.${roomId}.powerups.initialCount`
+    );
   }
 }
 
@@ -225,11 +260,49 @@ function validateRoomObjectInstances(roomId, objects, config) {
       requireObject(item.params, `room.${roomId}.objects.item.params`);
     }
 
+    if (item.anchor !== undefined) {
+      validateRoomObjectAnchor(roomId, item);
+    }
+
     if (!config.objects.roomObjects[item.objectId]) {
       throw new Error(
         `room.${roomId}.objects.item.objectId references missing room object ${item.objectId}`
       );
     }
+  }
+}
+
+function validateRoomObjectAnchor(roomId, item) {
+  requireObject(item.anchor, `room.${roomId}.objects.${item.instanceId}.anchor`);
+  requireString(
+    item.anchor.position,
+    `room.${roomId}.objects.${item.instanceId}.anchor.position`
+  );
+
+  if (
+    ![
+      "center",
+      "top-center",
+      "bottom-center",
+      "left-center",
+      "right-center"
+    ].includes(item.anchor.position)
+  ) {
+    throw new Error(`room.${roomId}.objects.${item.instanceId}.anchor.position is not supported`);
+  }
+
+  if (item.anchor.marginX !== undefined) {
+    requireNumber(
+      item.anchor.marginX,
+      `room.${roomId}.objects.${item.instanceId}.anchor.marginX`
+    );
+  }
+
+  if (item.anchor.marginY !== undefined) {
+    requireNumber(
+      item.anchor.marginY,
+      `room.${roomId}.objects.${item.instanceId}.anchor.marginY`
+    );
   }
 }
 

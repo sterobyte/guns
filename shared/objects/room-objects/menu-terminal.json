@@ -4,7 +4,7 @@
   "title": "Menu Terminal",
   "version": 1,
   "render": {
-    "width": 150,
+    "width": 190,
     "height": 54
   },
   "interaction": {
