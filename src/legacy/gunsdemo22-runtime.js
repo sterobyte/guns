@@ -488,10 +488,7 @@ let roomRuntimeState = createRoomRuntimeState();
 const hintMessages = [];
 const scoreboardRows = new Map();
 const remoteRenderStates = new Map();
-const playerDeathPrompt = {
-  active: false,
-  buttons: []
-};
+const playerDeathPrompt = window.GUNS_DEATH_FLOW.createPlayerDeathPrompt();
 let arenaBackgroundCache = null;
 const cabinetBackdropImages = [];
 const CABINET_BACKDROP_INTERVAL_MS = 30000;
@@ -1912,7 +1909,7 @@ function isPilotAirborne(unit) {
 }
 
 function isDeathBlurActive() {
-  return playerDeathPrompt.active;
+  return window.GUNS_DEATH_FLOW.isDeathPromptActive(playerDeathPrompt);
 }
 
 function getPilotFlyAmount(unit) {
@@ -1959,59 +1956,39 @@ function startPlayerFlyToggle() {
 }
 
 function clearPlayerDeathPrompt() {
-  playerDeathPrompt.active = false;
-  playerDeathPrompt.buttons = [];
-  roomRuntimeState.deathOverlays.length = 0;
-}
-
-function startPlayerDeathPrompt() {
-  clearPlayerDeathPrompt();
-  playerDeathPrompt.active = true;
-  mouse.down = false;
-
-  player.state = "pilot";
-  player.pilotFlyState = "rising";
-  player.pilotFlyTime = 0;
-  player.pilotKnockback = null;
-  player.pilotEject = null;
-  player.pilotImmunity = Math.max(
-    player.pilotImmunity,
-    PILOT_IMMUNITY_TIME
+  window.GUNS_DEATH_FLOW.clearPlayerDeathPrompt(
+    playerDeathPrompt,
+    roomRuntimeState
   );
 }
 
-function continuePlayerAfterDeath() {
-  playerDeathPrompt.active = false;
-  playerDeathPrompt.buttons = [];
-  mouse.down = false;
+function startPlayerDeathPrompt() {
+  window.GUNS_DEATH_FLOW.startPlayerDeathPrompt({
+    prompt: playerDeathPrompt,
+    roomRuntimeState,
+    player,
+    mouse,
+    pilotImmunityTime: PILOT_IMMUNITY_TIME
+  });
+}
 
-  player.pilotFlyState = "falling";
-  player.pilotFlyTime = 0;
-  player.pilotKnockback = null;
-  player.pilotEject = null;
-  player.pilotImmunity = PILOT_IMMUNITY_TIME;
+function continuePlayerAfterDeath() {
+  window.GUNS_DEATH_FLOW.continuePlayerAfterDeath({
+    prompt: playerDeathPrompt,
+    player,
+    mouse,
+    pilotImmunityTime: PILOT_IMMUNITY_TIME
+  });
 }
 
 function exitPlayerAfterDeath() {
-  playerDeathPrompt.active = false;
-  playerDeathPrompt.buttons = [];
-  mouse.down = false;
-
-  player.pilotFlyState = "ground";
-  player.pilotFlyTime = 0;
-  player.pilotRadius = PILOT_RADIUS;
-  player.pilotImmunity = PILOT_IMMUNITY_TIME;
-
-  if (window.GUNS_APP?.stop) {
-    window.GUNS_APP.stop();
-    return;
-  }
-
-  if (window.GUNS_APP) {
-    window.GUNS_APP.started = false;
-  }
-  window.GUNS_NET?.disconnect?.();
-  document.getElementById("start-screen")?.classList.remove("hidden");
+  window.GUNS_DEATH_FLOW.exitPlayerAfterDeath({
+    prompt: playerDeathPrompt,
+    player,
+    mouse,
+    pilotRadius: PILOT_RADIUS,
+    pilotImmunityTime: PILOT_IMMUNITY_TIME
+  });
 }
 
 function updatePilotFly(unit, dt) {
@@ -2138,6 +2115,35 @@ function getBulletColor(owner) {
   return owner.color;
 }
 
+function getPowerupOptions() {
+  return {
+    roomRuntimeState,
+    room: ACTIVE_ROOM,
+    units,
+    ammoPackValue: AMMO_PACK_VALUE,
+    repairPackHealRatio: REPAIR_PACK_HEAL_RATIO,
+    packFadeTime: AMMO_PACK_FADE_TIME,
+    packLifeTime: AMMO_PACK_LIFE_TIME,
+    wreckRepairTime: WRECK_REPAIR_TIME,
+    spawnTimer: ammoSpawnTimer,
+    randomPointInRoom,
+    clampPointToRoom,
+    getMaxAmmo,
+    addScore,
+    getActiveModeRule,
+    isUnitHidden,
+    isPilotAirborne,
+    isUserCabinetRoom,
+    distance,
+    clamp,
+    onAmmoPicked(unit) {
+      if (isTutorialMode() && unit === player) {
+        tutorial.ammoPicked = true;
+      }
+    }
+  };
+}
+
 function addPowerup(x, y, type, value) {
   roomRuntimeState.ammoPacks.push({
     x,
@@ -2150,11 +2156,11 @@ function addPowerup(x, y, type, value) {
 }
 
 function addAmmoPack(x, y, value = AMMO_PACK_VALUE) {
-  addPowerup(x, y, POWERUP_AMMO, value);
+  window.GUNS_POWERUPS.addAmmoPack(getPowerupOptions(), x, y, value);
 }
 
 function addRepairPack(x, y, value = REPAIR_PACK_HEAL_RATIO) {
-  addPowerup(x, y, POWERUP_REPAIR, value);
+  window.GUNS_POWERUPS.addRepairPack(getPowerupOptions(), x, y, value);
 }
 
 function spawnAmmoPack() {
@@ -2168,11 +2174,7 @@ function spawnRepairPack() {
 }
 
 function spawnPowerup() {
-  if (Math.random() < 0.28) {
-    spawnRepairPack();
-  } else {
-    spawnAmmoPack();
-  }
+  window.GUNS_POWERUPS.spawnPowerup(getPowerupOptions());
 }
 
 function getInitialRoomPowerupCount() {
@@ -2182,9 +2184,7 @@ function getInitialRoomPowerupCount() {
 }
 
 function spawnInitialRoomPowerups() {
-  for (let i = 0; i < getInitialRoomPowerupCount(); i++) {
-    spawnPowerup();
-  }
+  window.GUNS_POWERUPS.spawnInitialRoomPowerups(getPowerupOptions());
 }
 
 function dropCarriedAmmo(unit) {
@@ -2206,41 +2206,19 @@ function dropCarriedRepair(unit) {
 }
 
 function dropCarriedPowerups(unit) {
-  dropCarriedAmmo(unit);
-  dropCarriedRepair(unit);
+  window.GUNS_POWERUPS.dropCarriedPowerups(getPowerupOptions(), unit);
 }
 
 function getCarriedPowerup(unit) {
-  if (unit.carriedAmmoValue > 0) {
-    return {
-      type: POWERUP_AMMO,
-      value: unit.carriedAmmoValue
-    };
-  }
-
-  if (unit.carriedRepairValue > 0) {
-    return {
-      type: POWERUP_REPAIR,
-      value: unit.carriedRepairValue
-    };
-  }
-
-  return null;
+  return window.GUNS_POWERUPS.getCarriedPowerup(unit);
 }
 
 function clearCarriedPowerups(unit) {
-  unit.carriedAmmoValue = 0;
-  unit.carriedRepairValue = 0;
+  window.GUNS_POWERUPS.clearCarriedPowerups(unit);
 }
 
 function setCarriedPowerup(unit, type, value) {
-  clearCarriedPowerups(unit);
-
-  if (type === POWERUP_AMMO) {
-    unit.carriedAmmoValue = value;
-  } else if (type === POWERUP_REPAIR) {
-    unit.carriedRepairValue = value;
-  }
+  window.GUNS_POWERUPS.setCarriedPowerup(unit, type, value);
 }
 
 function getPowerupSwapDropPoint(unit, pack) {
@@ -2673,23 +2651,12 @@ function killPilot(victim, killer) {
     });
   }
 
-  victim.pilotHp = 1;
-  victim.pilotImmunity = PILOT_IMMUNITY_TIME;
-
-  victim.pilotKnockback = null;
-  victim.pilotEject = null;
-
-  victim.pilotRadius = PILOT_RADIUS;
-  victim.pilotFlyState = "ground";
-  victim.pilotFlyTime = 0;
-  victim.carriedAmmoValue = 0;
-  victim.carriedRepairValue = 0;
-  victim.pilotLastMoveVx = 0;
-  victim.pilotLastMoveVy = 0;
-
-  clampPilotToRoom(victim);
-
-  victim.state = "pilot";
+  window.GUNS_DEATH_FLOW.applyPilotDeathState({
+    victim,
+    pilotRadius: PILOT_RADIUS,
+    pilotImmunityTime: PILOT_IMMUNITY_TIME,
+    clampPilotToRoom
+  });
 
   if (victim.isPlayer) {
     startPlayerDeathPrompt();
@@ -3168,150 +3135,26 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
 }
 
 function applyCarriedPowerupToCannon(pilotUnit, cannonUnit) {
-  const carried = getCarriedPowerup(pilotUnit);
-
-  if (!carried) return false;
-
-  if (carried.type === POWERUP_AMMO) {
-    cannonUnit.ammo = Math.min(
-      getMaxAmmo(cannonUnit),
-      cannonUnit.ammo + carried.value
-    );
-
-    addScore(cannonUnit, getActiveModeRule("ammoLoadScore", 40), "ammo-load");
-  } else if (carried.type === POWERUP_REPAIR) {
-    cannonUnit.hp = Math.min(
-      cannonUnit.maxHp,
-      cannonUnit.hp + cannonUnit.maxHp * carried.value
-    );
-
-    if (cannonUnit.wreckRepair > 0) {
-      cannonUnit.wreckRepair =
-        cannonUnit.hp >= cannonUnit.maxHp
-          ? 0
-          : WRECK_REPAIR_TIME *
-            (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
-    }
-  }
-
-  clearCarriedPowerups(pilotUnit);
-
-  return true;
+  return window.GUNS_POWERUPS.applyCarriedPowerupToCannon(
+    getPowerupOptions(),
+    pilotUnit,
+    cannonUnit
+  );
 }
 
 function updateAmmoPickup() {
-  for (let i = roomRuntimeState.ammoPacks.length - 1; i >= 0; i--) {
-    const pack = roomRuntimeState.ammoPacks[i];
-
-    let picked = false;
-
-    for (const unit of units) {
-      if (isUnitHidden(unit)) continue;
-
-      if (
-        unit.state === "alive" &&
-        distance(unit, pack) <=
-          unit.radiusOuter + pack.radius
-      ) {
-        if (pack.type === POWERUP_AMMO) {
-          if (unit.ammo >= getMaxAmmo(unit)) continue;
-
-          unit.ammo = Math.min(
-            getMaxAmmo(unit),
-            unit.ammo + pack.value
-          );
-
-          addScore(unit, getActiveModeRule("ammoPickupScore", 40), "ammo-pickup");
-
-          if (isTutorialMode() && unit === player) {
-            tutorial.ammoPicked = true;
-          }
-        } else if (pack.type === POWERUP_REPAIR) {
-          if (unit.hp >= unit.maxHp) continue;
-
-          unit.hp = Math.min(
-            unit.maxHp,
-            unit.hp + unit.maxHp * pack.value
-          );
-        }
-
-        roomRuntimeState.ammoPacks.splice(i, 1);
-
-        picked = true;
-        break;
-      }
-
-      if (
-        unit.state === "pilot" &&
-        !unit.isCannonOnly &&
-        !isPilotAirborne(unit) &&
-        unit.pilotImmunity <= 0 &&
-        Math.hypot(
-          unit.pilotX - pack.x,
-          unit.pilotY - pack.y
-        ) <= unit.pilotRadius + pack.radius
-      ) {
-        const carried = getCarriedPowerup(unit);
-
-        if (carried) {
-          const dropPoint =
-            getPowerupSwapDropPoint(unit, pack);
-
-          setCarriedPowerup(unit, pack.type, pack.value);
-
-          pack.x = dropPoint.x;
-          pack.y = dropPoint.y;
-          pack.type = carried.type;
-          pack.value = carried.value;
-          pack.time = 0;
-
-          picked = true;
-          break;
-        }
-
-        if (pack.type === POWERUP_AMMO) {
-          unit.carriedAmmoValue = pack.value;
-
-          if (isTutorialMode() && unit === player) {
-            tutorial.ammoPicked = true;
-          }
-        } else if (pack.type === POWERUP_REPAIR) {
-          unit.carriedRepairValue = pack.value;
-        }
-
-        roomRuntimeState.ammoPacks.splice(i, 1);
-
-        picked = true;
-        break;
-      }
-    }
-
-    if (picked) continue;
-  }
+  window.GUNS_POWERUPS.updatePowerupPickup(getPowerupOptions());
 }
 
 function updateAmmoPacks(dt) {
-  for (let i = roomRuntimeState.ammoPacks.length - 1; i >= 0; i--) {
-    const pack = roomRuntimeState.ammoPacks[i];
-
-    pack.time += dt;
-
-    if (pack.time >= AMMO_PACK_LIFE_TIME + AMMO_PACK_FADE_TIME) {
-      roomRuntimeState.ammoPacks.splice(i, 1);
-    }
-  }
+  window.GUNS_POWERUPS.updatePowerupTimers(getPowerupOptions(), dt);
 }
 
 function updateAmmoSpawning(dt) {
-  if (isUserCabinetRoom()) return;
-
-  ammoSpawnTimer -= dt;
-
-  if (ammoSpawnTimer <= 0) {
-    spawnPowerup();
-
-    ammoSpawnTimer = 4 + Math.random() * 3;
-  }
+  ammoSpawnTimer = window.GUNS_POWERUPS.updatePowerupSpawning(
+    getPowerupOptions(),
+    dt
+  );
 }
 
 function updateCannonCollisions() {

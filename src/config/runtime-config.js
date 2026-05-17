@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.14.4",
+    version: "0.14.7",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
@@ -16,7 +16,7 @@ window.GUNS_CONFIG = {
 
   render: {
     healthBarOpacity: 0.5,
-    canvasMaxDevicePixelRatio: 2,
+    canvasMaxDevicePixelRatio: 1,
     arenaBackgroundCacheScale: 1,
     cameraZoom: {
       min: 0.72,
