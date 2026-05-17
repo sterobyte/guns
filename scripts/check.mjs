@@ -13,12 +13,18 @@ const files = [
   path.join(root, "src", "config", "runtime-config.js"),
   path.join(root, "src", "config", "config-loader.js"),
   path.join(root, "scripts", "config-tools.mjs"),
+  path.join(root, "scripts", "backup-users.mjs"),
   path.join(root, "scripts", "build-config.mjs"),
+  path.join(root, "scripts", "compare-users-store.mjs"),
   path.join(root, "scripts", "dev-all.mjs"),
+  path.join(root, "scripts", "migrate-users-to-mongo.mjs"),
+  path.join(root, "scripts", "mongo-env.mjs"),
+  path.join(root, "scripts", "run-users-mongo-migration.mjs"),
   path.join(root, "scripts", "watch-backend.mjs"),
   path.join(root, "server", "protocol.mjs"),
   path.join(root, "server", "arena.mjs"),
   path.join(root, "server", "rooms.mjs"),
+  path.join(root, "server", "user-store.mjs"),
   path.join(root, "server", "users.mjs"),
   path.join(root, "server", "index.mjs")
 ];

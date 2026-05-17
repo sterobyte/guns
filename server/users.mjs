@@ -5,9 +5,8 @@ import {
   scryptSync,
   timingSafeEqual
 } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { sanitizeNick } from "./rooms.mjs";
+import { createFileUserStore } from "./user-store.mjs";
 
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 128;
@@ -19,7 +18,9 @@ export const DEVICE_COOKIE = "guns_did";
 export class UserRegistry {
   constructor(economyConfig = {}, options = {}) {
     this.economyConfig = normalizeEconomyConfig(economyConfig);
-    this.storageFile = options.storageFile || "";
+    this.store = options.store || createFileUserStore({
+      storageFile: options.storageFile || ""
+    });
     this.anonymousVisits = new Map();
     this.pilots = new Map();
     this.authSessions = new Map();
@@ -233,15 +234,23 @@ export class UserRegistry {
     ensureWallet(pilot);
 
     if (visit) {
-      transferWallet(visit, pilot);
+      const transferred = transferWallet(visit, pilot);
+
+      if (transferred > 0) {
+        this.recordWalletTransaction(visit, -transferred, "pilot-claim-transfer-out", {
+          pilotId: pilot.id
+        });
+        this.recordWalletTransaction(pilot, transferred, "pilot-claim-transfer-in", {
+          visitId: visit.id
+        });
+      }
+
       this.linkVisitToPilot(visit, pilot, now);
     }
 
-    this.pilots.set(pilot.normalizedNick, pilot);
-
-    this.linkDeviceToPilot(device, pilot, now);
-
     const session = this.createAuthSession(pilot.id, meta, device);
+    this.pilots.set(pilot.normalizedNick, pilot);
+    this.linkDeviceToPilot(device, pilot, now);
     this.persist();
 
     return {
@@ -382,11 +391,15 @@ export class UserRegistry {
 
     if (!entity) return error("pilot_required", "Only registered pilots can collect gs.");
 
-    awardGunsCoinOnce(
+    const awarded = awardGunsCoinOnce(
       entity,
       "garageCoinsPickup",
       this.economyConfig.gunsCoin.visitorGrant
     );
+
+    this.recordWalletTransaction(entity, awarded, "garage-coins-pickup", {
+      awardKey: "garageCoinsPickup"
+    });
     this.persist();
 
     return {
@@ -414,6 +427,11 @@ export class UserRegistry {
     entity.wallet.gunsCoin += coins;
     entity.lastSeenAt = Date.now();
     this.persist();
+    this.recordWalletTransaction(entity, coins, "score-exchange", {
+      exchangedScore: coins * rate,
+      score: scoreValue,
+      rate
+    });
 
     return {
       ok: true,
@@ -463,6 +481,52 @@ export class UserRegistry {
       online: users.filter((user) => user.online).length,
       connections: users.reduce((sum, user) => sum + (user.activeConnections || 0), 0),
       serverTime: Date.now()
+    };
+  }
+
+  async getUserDetail(userId, options = {}) {
+    const id = String(userId || "");
+    const user = this.list().find((item) => item.id === id);
+
+    if (!user) {
+      return error("user_not_found", "User row was not found.");
+    }
+
+    const isPilot = user.status === "claimed";
+    const devices = Array.from(this.devices.values())
+      .filter((device) => isPilot
+        ? device.claimedPilotId === id
+        : device.id === id || device.id === user.deviceId)
+      .map(publicDevice);
+    const sessions = Array.from(this.authSessions.values())
+      .filter((session) => isPilot
+        ? session.pilotId === id
+        : session.deviceId === id || session.deviceId === user.deviceId)
+      .map(publicAuthSession);
+    const linkedVisits = isPilot
+      ? Array.from(this.anonymousVisits.values())
+        .filter((visit) => visit.claimedPilotId === id)
+        .map((visit) => this.withPublicIds(publicVisit(visit), {
+          deviceId: visit.deviceId || "",
+          deviceIds: visit.deviceId ? [visit.deviceId] : [],
+          pilotId: id,
+          sessionIds: []
+        }))
+      : [];
+    const walletTransactions = await this.listWalletTransactions({
+      limit: options.limit || 50,
+      entityType: isPilot ? "pilot" : "visit",
+      entityId: id
+    });
+
+    return {
+      ok: true,
+      user,
+      devices,
+      sessions,
+      linkedVisits,
+      walletTransactions,
+      userStore: this.storageInfo()
     };
   }
 
@@ -556,9 +620,15 @@ export class UserRegistry {
     const id = String(userId || "");
 
     if (this.anonymousVisits.has(id)) {
+      const before = publicVisit(this.anonymousVisits.get(id));
+
       this.anonymousVisits.delete(id);
 
       this.persist();
+      this.recordAdminAudit("delete-user", "visit", id, {
+        before,
+        after: null
+      });
       return {
         ok: true,
         deleted: {
@@ -570,6 +640,17 @@ export class UserRegistry {
 
     for (const [normalizedNick, pilot] of this.pilots.entries()) {
       if (pilot.id !== id) continue;
+
+      const before = publicPilot(pilot);
+      const beforeSessions = Array.from(this.authSessions.values())
+        .filter((session) => session.pilotId === id)
+        .map(publicAuthSession);
+      const beforeDevices = Array.from(this.devices.values())
+        .filter((device) => device.claimedPilotId === id)
+        .map(publicDevice);
+      const beforeLinkedVisits = Array.from(this.anonymousVisits.values())
+        .filter((visit) => visit.claimedPilotId === id)
+        .map(publicVisit);
 
       this.pilots.delete(normalizedNick);
 
@@ -585,7 +666,24 @@ export class UserRegistry {
         }
       }
 
+      for (const visit of this.anonymousVisits.values()) {
+        if (visit.claimedPilotId === id) {
+          visit.claimedPilotId = null;
+          visit.claimedNick = "";
+          visit.convertedAt = 0;
+        }
+      }
+
       this.persist();
+      this.recordAdminAudit("delete-user", "pilot", id, {
+        before: {
+          pilot: before,
+          sessions: beforeSessions,
+          devices: beforeDevices,
+          linkedVisits: beforeLinkedVisits
+        },
+        after: null
+      });
       return {
         ok: true,
         deleted: {
@@ -596,6 +694,50 @@ export class UserRegistry {
     }
 
     return error("user_not_found", "User row was not found.");
+  }
+
+  unlinkDevice(deviceId) {
+    const id = String(deviceId || "");
+    const device = this.devices.get(id);
+
+    if (!device) return error("device_not_found", "Device was not found.");
+
+    const before = publicDevice(device);
+    this.clearDeviceClaim(device);
+    this.persist();
+    this.recordAdminAudit("unlink-device", "device", id, {
+      before,
+      after: publicDevice(device)
+    });
+
+    return {
+      ok: true,
+      device: publicDevice(device)
+    };
+  }
+
+  revokeSession(sessionId) {
+    const id = String(sessionId || "");
+
+    for (const [tokenHash, session] of this.authSessions.entries()) {
+      if (session.id !== id) continue;
+
+      const before = publicAuthSession(session);
+      session.revokedAt = Date.now();
+      this.authSessions.delete(tokenHash);
+      this.persist();
+      this.recordAdminAudit("revoke-session", "session", id, {
+        before,
+        after: publicAuthSession(session)
+      });
+
+      return {
+        ok: true,
+        session: publicAuthSession(session)
+      };
+    }
+
+    return error("session_not_found", "Session was not found.");
   }
 
   linkVisitToPilotByDeviceToken(token, pilotId) {
@@ -693,10 +835,11 @@ export class UserRegistry {
   }
 
   loadStorage() {
-    if (!this.storageFile || !fs.existsSync(this.storageFile)) return;
-
     try {
-      const data = JSON.parse(fs.readFileSync(this.storageFile, "utf8"));
+      const data = this.store?.loadSnapshot?.();
+
+      if (!data) return;
+
       this.anonymousVisits = new Map(
         (data.anonymousVisits || []).map((visit) => [
           visit.deviceId || visit.id,
@@ -725,19 +868,68 @@ export class UserRegistry {
   }
 
   persist() {
-    if (!this.storageFile) return;
-
-    const data = {
-      version: 1,
-      savedAt: Date.now(),
+    this.store?.saveSnapshot?.({
       anonymousVisits: Array.from(this.anonymousVisits.values()).map(dehydratePresenceEntity),
       pilots: Array.from(this.pilots.values()).map(dehydratePresenceEntity),
       authSessions: Array.from(this.authSessions.values()),
       devices: Array.from(this.devices.values())
-    };
+    });
+  }
 
-    fs.mkdirSync(path.dirname(this.storageFile), { recursive: true });
-    fs.writeFileSync(this.storageFile, `${JSON.stringify(data, null, 2)}\n`);
+  recordWalletTransaction(entity, amount, reason, meta = {}) {
+    ensureWallet(entity);
+    this.store?.recordWalletTransaction?.({
+      entityType: getWalletEntityType(entity),
+      entityId: entity.id || entity.deviceId || entity.normalizedNick || "",
+      currency: "gs",
+      amount,
+      balanceAfter: normalizeCoinAmount(entity.wallet?.gunsCoin),
+      reason,
+      createdAt: Date.now(),
+      meta
+    });
+  }
+
+  listWalletTransactions(options = {}) {
+    return Promise.resolve(
+      this.store?.listWalletTransactions?.(options) || []
+    );
+  }
+
+  recordAdminAudit(action, entityType, entityId, details = {}) {
+    this.store?.recordAdminAudit?.({
+      action,
+      entityType,
+      entityId,
+      actor: "admin-api",
+      createdAt: Date.now(),
+      before: details.before ?? null,
+      after: details.after ?? null,
+      meta: details.meta || {}
+    });
+  }
+
+  listAdminAudit(options = {}) {
+    return Promise.resolve(
+      this.store?.listAdminAudit?.(options) || []
+    );
+  }
+
+  databaseStatus() {
+    return Promise.resolve(
+      this.store?.getDatabaseStatus?.() || {
+        ...this.storageInfo(),
+        healthy: false,
+        warning: "database-status-unavailable",
+        counts: {}
+      }
+    );
+  }
+
+  storageInfo() {
+    return this.store?.describe?.() || {
+      mode: "unknown"
+    };
   }
 }
 
@@ -889,8 +1081,16 @@ function transferWallet(from, to) {
   ensureWallet(from);
   ensureWallet(to);
 
-  to.wallet.gunsCoin += from.wallet.gunsCoin;
+  const value = from.wallet.gunsCoin;
+
+  to.wallet.gunsCoin += value;
   from.wallet.gunsCoin = 0;
+
+  return value;
+}
+
+function getWalletEntityType(entity = {}) {
+  return entity.normalizedNick ? "pilot" : "visit";
 }
 
 function normalizeEconomyConfig(config = {}) {

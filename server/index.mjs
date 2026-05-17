@@ -6,23 +6,36 @@ import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
 import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry } from "./users.mjs";
+import { createUserStore } from "./user-store.mjs";
+import { loadMongoEnv } from "../scripts/mongo-env.mjs";
+import { findLatestMongoBackup } from "../scripts/mongo-backup-utils.mjs";
 import { buildGameConfig, validateGameConfig } from "../scripts/config-tools.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+loadMongoEnv(root);
 const publishedConfigFile = path.join(root, "shared", "game-config.json");
 const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.14.19";
+const version = "0.15.1";
 const serverStartedAt = Date.now();
+const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
+  path.join(root, "server", "data", "mongo-backups");
 let publishedConfig = loadPublishedConfig();
 const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
 });
+const usersStore = await createUserStore({
+  storageFile: usersStorageFile,
+  mode: process.env.GUNS_USER_STORE || "file",
+  mongoUrl: process.env.GUNS_MONGO_URL || "",
+  mongoDatabase: process.env.GUNS_MONGO_DATABASE || "guns",
+  mongoCollection: process.env.GUNS_MONGO_USER_COLLECTION || "user_snapshots"
+});
 const users = new UserRegistry(getEconomyConfig(publishedConfig), {
-  storageFile: usersStorageFile
+  store: usersStore
 });
 
 process.stdout?.on?.("error", () => {});
@@ -44,7 +57,8 @@ const server = http.createServer((req, res) => {
       version,
       startedAt: serverStartedAt,
       uptimeMs: Date.now() - serverStartedAt,
-      time: Date.now()
+      time: Date.now(),
+      userStore: users.storageInfo()
     });
     return;
   }
@@ -636,8 +650,105 @@ const server = http.createServer((req, res) => {
     sendJson(req, res, 200, {
       ...users.snapshot(),
       serverStartedAt,
-      uptimeMs: Date.now() - serverStartedAt
+      uptimeMs: Date.now() - serverStartedAt,
+      userStore: users.storageInfo()
     });
+    return;
+  }
+
+  if (url.pathname === "/admin/database-status") {
+    Promise.resolve(users.databaseStatus())
+      .then((database) => sendJson(req, res, 200, {
+        ok: true,
+        version,
+        serverStartedAt,
+        uptimeMs: Date.now() - serverStartedAt,
+        latestMongoBackup: findLatestMongoBackup(mongoBackupRoot),
+        database
+      }))
+      .catch((error) => sendJson(req, res, 500, {
+        ok: false,
+        error: "database_status_failed",
+        message: error.message
+      }));
+    return;
+  }
+
+  if (url.pathname === "/admin/wallet-transactions") {
+    Promise.resolve(users.listWalletTransactions({
+      limit: url.searchParams.get("limit"),
+      entityType: url.searchParams.get("entityType"),
+      entityId: url.searchParams.get("entityId"),
+      reason: url.searchParams.get("reason")
+    }))
+      .then((transactions) => sendJson(req, res, 200, {
+        ok: true,
+        userStore: users.storageInfo(),
+        transactions
+      }))
+      .catch((error) => sendJson(req, res, 500, {
+        ok: false,
+        error: "wallet_transactions_failed",
+        message: error.message
+      }));
+    return;
+  }
+
+  if (url.pathname === "/admin/audit-log") {
+    Promise.resolve(users.listAdminAudit({
+      limit: url.searchParams.get("limit"),
+      action: url.searchParams.get("action"),
+      entityType: url.searchParams.get("entityType"),
+      entityId: url.searchParams.get("entityId"),
+      actor: url.searchParams.get("actor")
+    }))
+      .then((entries) => sendJson(req, res, 200, {
+        ok: true,
+        userStore: users.storageInfo(),
+        entries
+      }))
+      .catch((error) => sendJson(req, res, 500, {
+        ok: false,
+        error: "admin_audit_failed",
+        message: error.message
+      }));
+    return;
+  }
+
+  if (url.pathname.startsWith("/admin/users/") && req.method === "GET") {
+    const suffix = url.pathname.slice("/admin/users/".length);
+    const walletSuffix = "/wallet-transactions";
+    const isWalletRequest = suffix.endsWith(walletSuffix);
+    const userId = decodeURIComponent(
+      isWalletRequest ? suffix.slice(0, -walletSuffix.length) : suffix
+    );
+
+    Promise.resolve(users.getUserDetail(userId, {
+      limit: url.searchParams.get("limit")
+    }))
+      .then((result) => {
+        if (!result.ok) {
+          sendJson(req, res, 404, result);
+          return;
+        }
+
+        if (isWalletRequest) {
+          sendJson(req, res, 200, {
+            ok: true,
+            user: result.user,
+            userStore: result.userStore,
+            transactions: result.walletTransactions
+          });
+          return;
+        }
+
+        sendJson(req, res, 200, result);
+      })
+      .catch((error) => sendJson(req, res, 500, {
+        ok: false,
+        error: "user_detail_failed",
+        message: error.message
+      }));
     return;
   }
 
@@ -658,6 +769,26 @@ const server = http.createServer((req, res) => {
         uptimeMs: Date.now() - serverStartedAt
       }
     });
+    return;
+  }
+
+  if (url.pathname.startsWith("/admin/devices/") && req.method === "DELETE") {
+    const suffix = url.pathname.slice("/admin/devices/".length);
+
+    if (suffix.endsWith("/claim")) {
+      const deviceId = decodeURIComponent(suffix.slice(0, -"/claim".length));
+      const result = users.unlinkDevice(deviceId);
+
+      sendJson(req, res, result.ok ? 200 : 404, result);
+      return;
+    }
+  }
+
+  if (url.pathname.startsWith("/admin/sessions/") && req.method === "DELETE") {
+    const sessionId = decodeURIComponent(url.pathname.slice("/admin/sessions/".length));
+    const result = users.revokeSession(sessionId);
+
+    sendJson(req, res, result.ok ? 200 : 404, result);
     return;
   }
 
