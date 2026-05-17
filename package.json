@@ -1,6 +1,6 @@
 {
   "name": "guns-next1",
-  "version": "0.15.1",
+  "version": "0.16.0",
   "private": true,
   "description": "Project wrapper around gunsdemo22.html with legacy behavior preserved.",
   "dependencies": {
@@ -17,6 +17,7 @@
     "compare:users:mongo": "node scripts/compare-users-store.mjs",
     "migrate:users:mongo:pipeline": "node scripts/run-users-mongo-migration.mjs",
     "backup:mongo": "node scripts/backup-mongo.mjs",
-    "restore:mongo": "node scripts/restore-mongo.mjs"
+    "restore:mongo": "node scripts/restore-mongo.mjs",
+    "test:multiplayer": "node scripts/test-multiplayer.mjs"
   }
 }

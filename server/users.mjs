@@ -915,6 +915,16 @@ export class UserRegistry {
     );
   }
 
+  recordMatchResult(result = {}) {
+    this.store?.recordMatchResult?.(result);
+  }
+
+  listMatchResults(options = {}) {
+    return Promise.resolve(
+      this.store?.listMatchResults?.(options) || []
+    );
+  }
+
   databaseStatus() {
     return Promise.resolve(
       this.store?.getDatabaseStatus?.() || {

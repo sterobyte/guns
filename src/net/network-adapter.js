@@ -5,12 +5,16 @@
   let nick = "";
   let seq = 0;
   let serverArena = null;
+  let serverMatch = null;
+  let roomClientCount = 0;
   const peers = new Map();
   const remoteSnapshots = new Map();
   const listeners = new Map();
 
   function clearSessionState() {
     serverArena = null;
+    serverMatch = null;
+    roomClientCount = 0;
     peers.clear();
     remoteSnapshots.clear();
   }
@@ -127,13 +131,16 @@
 
     if (message.type === "room:state" && message.room?.players) {
       peers.clear();
+      roomClientCount = message.room.players.length;
 
       for (const peer of message.room.players) {
+        if (peer.id === clientId) continue;
         peers.set(peer.id, peer);
       }
 
       if (message.room.arena) {
         serverArena = message.room.arena;
+        serverMatch = message.room.match || message.room.arena.match || serverMatch;
         syncArenaSnapshots();
       }
     }
@@ -141,6 +148,12 @@
     if (message.type === "peer:left") {
       peers.delete(message.clientId);
       remoteSnapshots.delete(message.clientId);
+      roomClientCount = Math.max(0, roomClientCount - 1);
+    }
+
+    if (message.type === "peer:joined" && message.peer?.id && message.peer.id !== clientId) {
+      peers.set(message.peer.id, message.peer);
+      roomClientCount = Math.max(roomClientCount, peers.size + 1);
     }
 
     if (message.type === "peer:snapshot" && message.from && message.snapshot) {
@@ -154,6 +167,7 @@
 
     if ((message.type === "arena:state" || message.type === "arena") && message.arena) {
       serverArena = message.arena;
+      serverMatch = message.arena.match || serverMatch;
       syncArenaSnapshots();
     }
 
@@ -344,6 +358,20 @@
         clientTime: Date.now()
       });
     },
+    sendScoreEvent(event) {
+      return send({
+        type: "score:event",
+        event,
+        clientTime: Date.now()
+      });
+    },
+    sendCombatEvent(event) {
+      return send({
+        type: "combat:event",
+        event,
+        clientTime: Date.now()
+      });
+    },
     getRemoteSnapshots(maxAge = 2000) {
       const now = Date.now();
 
@@ -357,6 +385,28 @@
     },
     getScoreboardRows() {
       return serverArena?.scoreboard || null;
+    },
+    getMatchState(maxAge = 3000) {
+      if (!serverMatch) return null;
+      if (Date.now() - (serverArena?.serverTime || 0) > maxAge) return null;
+      return serverMatch;
+    },
+    getDebugState() {
+      const remoteSnapshotCount = this.getRemoteSnapshots().length;
+
+      return {
+        mode: this.mode,
+        connected: this.connected,
+        clientId,
+        roomId,
+        nick,
+        roomClientCount,
+        peerCount: peers.size,
+        matchId: serverMatch?.id || "",
+        matchState: serverMatch?.state || "",
+        matchRemainingMs: serverMatch?.remainingMs ?? null,
+        remoteSnapshotCount
+      };
     },
     ping() {
       return send({
@@ -372,6 +422,7 @@
         clientId,
         roomId,
         nick,
+        roomClientCount,
         peerCount: peers.size,
         peers: Array.from(peers.values()),
         remoteSnapshots: this.getRemoteSnapshots(),

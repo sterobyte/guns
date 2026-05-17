@@ -32,7 +32,7 @@ https://guns.gs
 
 At the moment of this handoff:
 
-- game/backend: `0.15.1`
+- game/backend: `0.16.0`
 - admin panel: `0.2.1`
 
 Important rule: after every code fix, bump the relevant version by one patch step.

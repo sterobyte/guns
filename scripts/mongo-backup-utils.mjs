@@ -9,7 +9,8 @@ export const MONGO_BACKUP_COLLECTIONS = [
   "pilots",
   "auth_sessions",
   "wallet_transactions",
-  "admin_audit_log"
+  "admin_audit_log",
+  "match_results"
 ];
 
 export function loadMongoBackupConfig(root) {

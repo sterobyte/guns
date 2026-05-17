@@ -1,0 +1,43 @@
+{
+  "id": "multiplayer-test",
+  "title": "Multiplayer Test",
+  "description": "2 autoguns, no bots",
+  "enabled": true,
+  "published": false,
+  "modeId": "deathmatch",
+  "arena": {
+    "shape": "circle",
+    "params": {
+      "radius": 720
+    }
+  },
+  "limits": {
+    "maxPlayers": 8
+  },
+  "allowedCannons": [
+    "autogun"
+  ],
+  "spawns": {
+    "mode": "random",
+    "player": {
+      "state": "pilot",
+      "pilotX": 0,
+      "pilotY": -58
+    },
+    "bots": [],
+    "cannons": [
+      {
+        "unitId": "autogun-test-1",
+        "gunType": "autogun",
+        "x": -240,
+        "y": 0
+      },
+      {
+        "unitId": "autogun-test-2",
+        "gunType": "autogun",
+        "x": 240,
+        "y": 0
+      }
+    ]
+  }
+}

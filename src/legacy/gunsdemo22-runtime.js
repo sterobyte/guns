@@ -408,6 +408,25 @@ function resetActiveModeState() {
   syncLegacyRuntimeCollections();
 }
 
+function syncActiveModeStateFromServer() {
+  const match = window.GUNS_NET?.getMatchState?.();
+
+  if (!match || !activeModeState || match.roomId !== activeRoomId) return;
+
+  activeModeState.serverMatchId = match.id || "";
+  activeModeState.serverState = match.state || "";
+  activeModeState.startedAt = match.startedAt || activeModeState.startedAt;
+  activeModeState.durationMs = Math.max(0, Number(match.durationMs) || 0);
+  activeModeState.remainingMs = Math.max(0, Number(match.remainingMs) || 0);
+  activeModeState.ended = match.state === "finished";
+  activeModeState.endedAt = match.finishedAt || activeModeState.endedAt;
+  activeModeState.endReason = match.finishReason || activeModeState.endReason;
+  activeModeState.results = match.results || activeModeState.results || null;
+  activeModeState.winnerId = match.results?.winnerId || activeModeState.winnerId || "";
+  activeModeState.winnerNick = match.results?.winnerNick || activeModeState.winnerNick || "";
+  syncLegacyRuntimeCollections();
+}
+
 function resetRoomRuntimeState() {
   hintMessages.length = 0;
   scoreboardRows.clear();
@@ -477,6 +496,8 @@ const ARENA_BACKGROUND_CACHE_SCALE =
   1;
 const PERF_DEBUG =
   new URLSearchParams(window.location.search).has("fps");
+const MULTIPLAYER_DEBUG =
+  new URLSearchParams(window.location.search).has("mp");
 const PERF_DEBUG_LABEL =
   new URLSearchParams(window.location.search).get("fps") ||
   "1";
@@ -1862,7 +1883,7 @@ function forEachEnemy(unit, callback) {
   }
 }
 
-function addScore(unit, value, reason = "") {
+function addScore(unit, value, reason = "", context = {}) {
   if (!unit) return;
   if (unit.isCannonOnly) return;
   const scoreValue = Number(value) || 0;
@@ -1870,12 +1891,44 @@ function addScore(unit, value, reason = "") {
   unit.score += scoreValue;
   if (unit.isPlayer) {
     window.GUNS_APP?.addExchangeScore?.(scoreValue);
+    const sendServerPointEvent = isCombatScoreReason(reason)
+      ? window.GUNS_NET?.sendCombatEvent
+      : window.GUNS_NET?.sendScoreEvent;
+
+    sendServerPointEvent?.({
+      value: scoreValue,
+      reason,
+      total: unit.score,
+      ...context
+    });
   }
   window.GUNS_MODE_REGISTRY?.onScore?.(activeModeState, {
     unit,
     value: scoreValue,
     reason
   });
+}
+
+function isCombatScoreReason(reason) {
+  return (
+    reason === "bullet-hit" ||
+    reason === "pilot-kill" ||
+    reason === "cannon-break" ||
+    reason === "pilot-death"
+  );
+}
+
+function getCombatTargetContext(unit, targetKind = "unit") {
+  if (!unit) return {};
+
+  return {
+    targetId:
+      unit.pilotEntityId ||
+      unit.cannonEntityId ||
+      unit.id ||
+      "",
+    targetKind
+  };
 }
 
 function updatePassiveScore(unit, dt) {
@@ -2634,7 +2687,7 @@ function destroyCannonCompletely(unit, attacker) {
   if (attacker && attacker !== unit) {
     attacker.frags++;
     attacker.cannonBreaks++;
-    addScore(attacker, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
+    addScore(attacker, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(unit, "cannon"));
     window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
       unit,
       attacker
@@ -2655,10 +2708,19 @@ function killPilot(victim, killer) {
 
   victim.pilotDeaths++;
 
+  if (victim.isPlayer) {
+    window.GUNS_NET?.sendCombatEvent?.({
+      value: 0,
+      reason: "pilot-death",
+      total: victim.score,
+      ...getCombatTargetContext(victim, "pilot")
+    });
+  }
+
   if (killer && killer !== victim) {
     killer.frags++;
     killer.pilotKills++;
-    addScore(killer, getActiveModeRule("pilotKillScore", 100), "pilot-kill");
+    addScore(killer, getActiveModeRule("pilotKillScore", 100), "pilot-kill", getCombatTargetContext(victim, "pilot"));
     window.GUNS_MODE_REGISTRY?.onPilotKill?.(activeModeState, {
       victim,
       killer
@@ -3393,7 +3455,7 @@ function updateBullets(dt) {
           d <= target.radiusOuter + bullet.radius
         ) {
           target.hp = Math.max(0, target.hp - bullet.damage);
-          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
+          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "cannon"));
 
           removeBulletAt(i);
 
@@ -3402,7 +3464,7 @@ function updateBullets(dt) {
           if (target.hp <= 0) {
             destroyCannon(target);
             bullet.owner.cannonBreaks++;
-            addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
+            addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(target, "cannon"));
             window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
               unit: target,
               attacker: bullet.owner
@@ -3428,7 +3490,7 @@ function updateBullets(dt) {
           pilotD <=
           target.pilotRadius + bullet.radius
         ) {
-          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
+          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "pilot"));
 
           if (
             !target.pilotEject &&
@@ -3459,7 +3521,7 @@ function updateBullets(dt) {
                 0,
                 target.hp - bullet.damage
               );
-              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
+              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "broken-cannon"));
 
               target.wreckRepair =
                 WRECK_REPAIR_TIME *
@@ -3474,7 +3536,7 @@ function updateBullets(dt) {
 
             if (target.wreckRepair <= 0) {
               target.hp = Math.max(0, target.hp - bullet.damage);
-              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
+              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "free-cannon"));
 
               removeBulletAt(i);
 
@@ -3483,7 +3545,7 @@ function updateBullets(dt) {
               if (target.hp <= 0) {
                 breakEmptyCannon(target);
                 bullet.owner.cannonBreaks++;
-                addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
+                addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(target, "free-cannon"));
                 window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
                   unit: target,
                   attacker: bullet.owner
@@ -4498,12 +4560,16 @@ function getMenuTerminalLabel(instance, definition) {
 }
 
 function update(dt) {
-  window.GUNS_MODE_REGISTRY?.onTick?.(activeModeState, {
-    room: ACTIVE_ROOM,
-    units,
-    player,
-    dt
-  });
+  syncActiveModeStateFromServer();
+
+  if (!activeModeState?.serverMatchId) {
+    window.GUNS_MODE_REGISTRY?.onTick?.(activeModeState, {
+      room: ACTIVE_ROOM,
+      units,
+      player,
+      dt
+    });
+  }
 
   if (isTutorialMode() && !tutorial.initialized) {
     setupTutorialScenario();
@@ -6724,6 +6790,10 @@ function formatModeTime(ms) {
 }
 
 function getModeWinnerLabel() {
+  if (activeModeState?.winnerNick) {
+    return activeModeState.winnerNick;
+  }
+
   const winnerId = activeModeState?.winnerId;
   const winner = units.find(unit => unit.id === winnerId);
 
@@ -6764,6 +6834,56 @@ function drawModeStateOverlay() {
   ctx.font = "14px monospace";
   ctx.fillText(`WINNER ${getModeWinnerLabel()}`, x + panelW / 2, y + 76);
   ctx.restore();
+}
+
+function drawMultiplayerDebugOverlay() {
+  if (!MULTIPLAYER_DEBUG) return;
+
+  const state = window.GUNS_NET?.getDebugState?.() || {};
+  const lines = [
+    `net ${state.connected ? "on" : "off"} ${state.mode || "-"}`,
+    `client ${shortDebugId(state.clientId)}`,
+    `room ${state.roomId || "-"}`,
+    `clients ${state.roomClientCount ?? 0}`,
+    `peers ${state.peerCount ?? 0}`,
+    `remote ${state.remoteSnapshotCount ?? 0}`,
+    `match ${shortDebugId(state.matchId)}`,
+    `state ${state.matchState || "-"}`,
+    `left ${formatModeTime(state.matchRemainingMs || 0)}`
+  ];
+  const panelW = 278;
+  const panelH = 18 + lines.length * 18;
+  const x = window.innerWidth - panelW - 12;
+  const y = 12;
+
+  ctx.save();
+  ctx.fillStyle = LCD_PANEL;
+  ctx.globalAlpha = 0.92;
+  ctx.fillRect(x, y, panelW, panelH);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, panelW, panelH);
+  ctx.fillStyle = LCD_INK;
+  ctx.font = "13px monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], x + 10, y + 9 + i * 18);
+  }
+
+  ctx.restore();
+}
+
+function shortDebugId(value) {
+  const textValue = String(value || "");
+
+  if (!textValue) return "-";
+
+  return textValue.length > 18
+    ? `${textValue.slice(0, 8)}...${textValue.slice(-6)}`
+    : textValue;
 }
 
 function drawFlyMode() {
@@ -7072,6 +7192,7 @@ function draw() {
     drawDeathPromptButtons();
   }
   drawHints();
+  drawMultiplayerDebugOverlay();
   drawTutorialOverlay();
 
   drawPauseOverlay();

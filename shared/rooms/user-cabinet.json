@@ -66,10 +66,26 @@
       "rotation": 0,
       "anchor": {
         "position": "bottom-center",
+        "marginX": -150,
         "marginY": 126
       },
       "params": {
         "targetRoomId": "deathmatch"
+      }
+    },
+    {
+      "instanceId": "multiplayer-test-teleport",
+      "objectId": "teleport",
+      "x": 0,
+      "y": 0,
+      "rotation": 0,
+      "anchor": {
+        "position": "bottom-center",
+        "marginX": 150,
+        "marginY": 126
+      },
+      "params": {
+        "targetRoomId": "multiplayer-test"
       }
     }
   ]

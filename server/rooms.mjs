@@ -1,5 +1,6 @@
 import { PROTOCOL_VERSION, encodeJson } from "./protocol.mjs";
 import { ArenaRoomState } from "./arena.mjs";
+import { MatchState } from "./match.mjs";
 
 const MAX_NICK_LENGTH = 14;
 const MAX_ROOM_LENGTH = 32;
@@ -26,6 +27,11 @@ export class MultiplayerHub {
   constructor(options = {}) {
     this.rooms = new Map();
     this.maxClientsPerRoom = options.maxClientsPerRoom || 16;
+    this.getRoomConfig = options.getRoomConfig || (() => null);
+    this.getModeConfig = options.getModeConfig || (() => null);
+    this.recordMatchResult = options.recordMatchResult || (() => {});
+    this.matchTick = setInterval(() => this.broadcastMatchStates(), 1000);
+    this.matchTick.unref?.();
   }
 
   join(client, requestedRoomId, requestedNick) {
@@ -120,6 +126,73 @@ export class MultiplayerHub {
       return;
     }
 
+    if (message.type === "score:event") {
+      const room = this.rooms.get(client.roomId);
+      if (!room) return;
+
+      const event = room.arena.recordScoreEvent(client, {
+        ...(message.event || {}),
+        clientTime: message.clientTime
+      }, room.modeConfig?.rules || {});
+
+      if (!event) return;
+
+      room.match.recordEvent(event.reason, {
+        scoreEventId: event.id,
+        clientId: event.clientId,
+        nick: event.nick,
+        value: event.value,
+        score: event.score,
+        clientTotal: event.clientTotal
+      }, event.serverTime);
+
+      this.broadcast(
+        client.roomId,
+        {
+          type: "score:event",
+          event,
+          serverTime: Date.now()
+        }
+      );
+      this.broadcastArenaState(client.roomId);
+      return;
+    }
+
+    if (message.type === "combat:event") {
+      const room = this.rooms.get(client.roomId);
+      if (!room) return;
+
+      const event = room.arena.recordCombatEvent(client, {
+        ...(message.event || {}),
+        clientTime: message.clientTime
+      }, room.modeConfig?.rules || {});
+
+      if (!event) return;
+
+      room.match.recordEvent(event.reason, {
+        scoreEventId: event.id,
+        source: event.source,
+        clientId: event.clientId,
+        nick: event.nick,
+        targetId: event.targetId,
+        targetKind: event.targetKind,
+        value: event.value,
+        score: event.score,
+        clientTotal: event.clientTotal
+      }, event.serverTime);
+
+      this.broadcast(
+        client.roomId,
+        {
+          type: "combat:event",
+          event,
+          serverTime: Date.now()
+        }
+      );
+      this.broadcastArenaState(client.roomId);
+      return;
+    }
+
     if (message.type === "client:snapshot") {
       const room = this.rooms.get(client.roomId);
       if (!room) return;
@@ -143,11 +216,16 @@ export class MultiplayerHub {
 
   getOrCreateRoom(roomId) {
     if (!this.rooms.has(roomId)) {
+      const roomConfig = this.getRoomConfig(roomId) || {};
+      const modeConfig = this.getModeConfig(roomConfig.modeId) || {};
       this.rooms.set(roomId, {
         id: roomId,
         createdAt: Date.now(),
+        roomConfig,
+        modeConfig,
         clients: new Map(),
-        arena: new ArenaRoomState(roomId)
+        arena: new ArenaRoomState(roomId),
+        match: new MatchState(roomId, roomConfig, modeConfig)
       });
     }
 
@@ -171,9 +249,19 @@ export class MultiplayerHub {
 
     this.broadcast(roomId, {
       type: "arena:state",
-      arena: room.arena.snapshot(),
+      arena: room.arena.snapshot(this.getMatchSnapshot(room)),
       serverTime: Date.now()
     });
+  }
+
+  broadcastMatchStates() {
+    for (const room of this.rooms.values()) {
+      if (room.clients.size <= 0) continue;
+      if (!room.match?.durationMs) continue;
+
+      room.match.update(Date.now(), room.arena.scoreboardRows());
+      this.broadcastArenaState(room.id);
+    }
   }
 
   broadcast(roomId, message, exceptClientId = null) {
@@ -201,7 +289,8 @@ export class MultiplayerHub {
     return {
       id: room.id,
       createdAt: room.createdAt,
-      arena: room.arena.snapshot(),
+      match: this.getMatchSnapshot(room),
+      arena: room.arena.snapshot(this.getMatchSnapshot(room)),
       players: Array.from(room.clients.values()).map((client) =>
         this.describeClient(client)
       )
@@ -215,6 +304,36 @@ export class MultiplayerHub {
         this.describeRoom(room)
       )
     };
+  }
+
+  getMatchSnapshot(room) {
+    const snapshot = room.match.snapshot(Date.now(), room.arena.scoreboardRows());
+
+    this.persistFinishedMatch(room, snapshot);
+    return snapshot;
+  }
+
+  persistFinishedMatch(room, matchSnapshot) {
+    if (matchSnapshot.state !== "finished") return;
+    if (!matchSnapshot.results || room.match.resultPersisted) return;
+
+    this.recordMatchResult({
+      matchId: matchSnapshot.id,
+      roomId: matchSnapshot.roomId,
+      modeId: matchSnapshot.modeId,
+      modeKind: matchSnapshot.modeKind,
+      state: matchSnapshot.state,
+      createdAt: matchSnapshot.createdAt,
+      startedAt: matchSnapshot.startedAt,
+      finishedAt: matchSnapshot.finishedAt,
+      finishReason: matchSnapshot.finishReason,
+      durationMs: matchSnapshot.durationMs,
+      leaderboard: matchSnapshot.results.leaderboard || [],
+      winnerId: matchSnapshot.results.winnerId || "",
+      winnerNick: matchSnapshot.results.winnerNick || "",
+      events: matchSnapshot.events || []
+    });
+    room.match.markResultPersisted();
   }
 }
 

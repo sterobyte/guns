@@ -38,9 +38,10 @@ Debug/admin endpoints:
 
 - `/health` returns current `userStore` mode.
 - `/admin/users` returns current `userStore` mode with the users snapshot.
-- `/admin/database-status` returns current store mode, collection counts, latest wallet transaction, and latest audit entry.
+- `/admin/database-status` returns current store mode, collection counts, latest wallet transaction, latest audit entry, and latest match result.
 - `/admin/wallet-transactions?limit=50` returns recent wallet transactions when using `mongo-collections`.
 - `/admin/audit-log?limit=50` returns recent admin actions when using `mongo-collections`.
+- `/admin/match-results?limit=50` returns recent persisted match results when using `mongo-collections`.
 
 Migration script:
 
@@ -125,6 +126,22 @@ Migration script:
 - `after`
 - `meta`
 
+### match_results
+
+- `_id`: match id
+- `matchId`
+- `roomId`
+- `modeId`
+- `modeKind`
+- `state`
+- `createdAt`, `startedAt`, `finishedAt`
+- `finishReason`
+- `durationMs`
+- `winnerId`, `winnerNick`
+- `leaderboard`
+- `events`
+- `savedAt`
+
 ### settings
 
 - `_id`: setting group, for example `economy`
@@ -141,3 +158,5 @@ Migration script:
 - `wallet_transactions.entityType + entityId + createdAt`
 - `admin_audit_log.entityType + entityId + createdAt`
 - `admin_audit_log.action + createdAt`
+- `match_results.matchId` unique
+- `match_results.roomId + finishedAt`

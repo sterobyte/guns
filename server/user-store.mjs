@@ -41,6 +41,12 @@ export class FileUserStore {
     return [];
   }
 
+  recordMatchResult() {}
+
+  listMatchResults() {
+    return [];
+  }
+
   async getDatabaseStatus() {
     const snapshot = this.loadSnapshot() || {};
 
@@ -54,10 +60,12 @@ export class FileUserStore {
         authSessions: snapshot.authSessions?.length || 0,
         devices: snapshot.devices?.length || 0,
         walletTransactions: 0,
-        adminAuditLog: 0
+        adminAuditLog: 0,
+        matchResults: 0
       },
       latestWalletTransaction: null,
-      latestAdminAuditEntry: null
+      latestAdminAuditEntry: null,
+      latestMatchResult: null
     };
   }
 
@@ -158,6 +166,12 @@ export class MongoUserStore {
     return [];
   }
 
+  recordMatchResult() {}
+
+  listMatchResults() {
+    return [];
+  }
+
   async getDatabaseStatus() {
     const snapshot = this.loadSnapshot() || {};
 
@@ -171,10 +185,12 @@ export class MongoUserStore {
         authSessions: snapshot.authSessions?.length || 0,
         devices: snapshot.devices?.length || 0,
         walletTransactions: 0,
-        adminAuditLog: 0
+        adminAuditLog: 0,
+        matchResults: 0
       },
       latestWalletTransaction: null,
-      latestAdminAuditEntry: null
+      latestAdminAuditEntry: null,
+      latestMatchResult: null
     };
   }
 
@@ -215,7 +231,8 @@ export class MongoCollectionsUserStore {
       authSessions: db.collection("auth_sessions"),
       devices: db.collection("devices"),
       walletTransactions: db.collection("wallet_transactions"),
-      adminAuditLog: db.collection("admin_audit_log")
+      adminAuditLog: db.collection("admin_audit_log"),
+      matchResults: db.collection("match_results")
     };
     let snapshot = await loadCollectionsSnapshot(collections);
 
@@ -318,6 +335,37 @@ export class MongoCollectionsUserStore {
       .then((items) => items.map(stripMongoId));
   }
 
+  recordMatchResult(result = {}) {
+    const document = {
+      _id: result.matchId || randomUUID(),
+      savedAt: Date.now(),
+      ...result
+    };
+
+    this.pendingSave = this.pendingSave
+      .catch(() => {})
+      .then(() => this.collections.matchResults.updateOne(
+        { _id: document._id },
+        { $set: document },
+        { upsert: true }
+      ))
+      .catch((error) => {
+        console.warn(`Failed to record match result: ${error.message}`);
+      });
+  }
+
+  async listMatchResults(options = {}) {
+    const limit = normalizeLimit(options.limit, 50, 200);
+    const filter = buildMatchResultFilter(options);
+
+    return this.collections.matchResults
+      .find(filter)
+      .sort({ finishedAt: -1, savedAt: -1 })
+      .limit(limit)
+      .toArray()
+      .then((items) => items.map(stripMongoId));
+  }
+
   async getDatabaseStatus() {
     const [
       visits,
@@ -326,8 +374,10 @@ export class MongoCollectionsUserStore {
       devices,
       walletTransactions,
       adminAuditLog,
+      matchResults,
       latestWalletTransaction,
-      latestAdminAuditEntry
+      latestAdminAuditEntry,
+      latestMatchResult
     ] = await Promise.all([
       this.collections.visits.countDocuments({}),
       this.collections.pilots.countDocuments({}),
@@ -335,8 +385,10 @@ export class MongoCollectionsUserStore {
       this.collections.devices.countDocuments({}),
       this.collections.walletTransactions.countDocuments({}),
       this.collections.adminAuditLog.countDocuments({}),
+      this.collections.matchResults.countDocuments({}),
       this.collections.walletTransactions.find({}).sort({ createdAt: -1 }).limit(1).toArray(),
-      this.collections.adminAuditLog.find({}).sort({ createdAt: -1 }).limit(1).toArray()
+      this.collections.adminAuditLog.find({}).sort({ createdAt: -1 }).limit(1).toArray(),
+      this.collections.matchResults.find({}).sort({ finishedAt: -1, savedAt: -1 }).limit(1).toArray()
     ]);
 
     return {
@@ -349,13 +401,17 @@ export class MongoCollectionsUserStore {
         authSessions,
         devices,
         walletTransactions,
-        adminAuditLog
+        adminAuditLog,
+        matchResults
       },
       latestWalletTransaction: latestWalletTransaction[0]
         ? stripMongoId(latestWalletTransaction[0])
         : null,
       latestAdminAuditEntry: latestAdminAuditEntry[0]
         ? stripMongoId(latestAdminAuditEntry[0])
+        : null,
+      latestMatchResult: latestMatchResult[0]
+        ? stripMongoId(latestMatchResult[0])
         : null
     };
   }
@@ -370,7 +426,8 @@ export class MongoCollectionsUserStore {
         "pilots",
         "auth_sessions",
         "wallet_transactions",
-        "admin_audit_log"
+        "admin_audit_log",
+        "match_results"
       ]
     };
   }
@@ -496,6 +553,15 @@ async function ensureCollectionsIndexes(collections) {
     collections.adminAuditLog.createIndex({
       action: 1,
       createdAt: -1
+    }),
+    collections.matchResults.createIndex({
+      matchId: 1
+    }, {
+      unique: true
+    }),
+    collections.matchResults.createIndex({
+      roomId: 1,
+      finishedAt: -1
     })
   ]);
 }
@@ -545,6 +611,20 @@ function buildAdminAuditFilter(options = {}) {
   const filter = {};
 
   for (const key of ["action", "entityType", "entityId", "actor"]) {
+    const value = String(options[key] || "").trim();
+
+    if (value) {
+      filter[key] = value;
+    }
+  }
+
+  return filter;
+}
+
+function buildMatchResultFilter(options = {}) {
+  const filter = {};
+
+  for (const key of ["matchId", "roomId", "modeId", "winnerId"]) {
     const value = String(options[key] || "").trim();
 
     if (value) {
