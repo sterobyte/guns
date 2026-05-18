@@ -15,10 +15,12 @@ const HIT_SCAN_STEP_MS = 50;
 const SERVER_DAMAGE_AUTHORITY_MS = 1500;
 const MELEE_COOLDOWN_MS = 650;
 const MELEE_EXTRA_RANGE = 12;
+const DEFAULT_ROOM_RADIUS = 1200;
 
 export class ArenaRoomState {
   constructor(roomId, roomConfig = {}, options = {}) {
     this.roomId = roomId;
+    this.roomBounds = createRoomBounds(roomConfig);
     this.createdAt = Date.now();
     this.scoreEvents = [];
     this.players = new Map();
@@ -83,10 +85,10 @@ export class ArenaRoomState {
 
   updatePlayer(client, snapshot = {}) {
     const player = this.join(client);
+    const rawX = finiteNumber(snapshot.x);
+    const rawY = finiteNumber(snapshot.y);
 
     player.nick = snapshot.nick || client.nick || player.nick;
-    player.x = finiteNumber(snapshot.x);
-    player.y = finiteNumber(snapshot.y);
     player.angle = finiteNumber(snapshot.angle);
     player.gunType = sanitizeEventText(snapshot.gunType || player.gunType || "autogun", 32);
     player.state = snapshot.state === "in-cannon" ? "in-cannon" : "on-foot";
@@ -108,6 +110,14 @@ export class ArenaRoomState {
     player.maxAmmo = Math.max(0, Math.floor(finiteNumber(snapshot.maxAmmo)));
     player.radiusOuter = Math.max(1, finiteNumber(snapshot.radiusOuter) || 34);
     player.radiusInner = Math.max(1, finiteNumber(snapshot.radiusInner) || 13);
+    const clampedPoint = clampPointToRoom(
+      this.roomBounds,
+      rawX,
+      rawY,
+      player.state === "in-cannon" ? player.radiusOuter : player.radiusInner
+    );
+    player.x = clampedPoint.x;
+    player.y = clampedPoint.y;
     player.clientScore = Math.max(0, Math.floor(finiteNumber(snapshot.score)));
     player.clientPilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.clientCannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
@@ -667,6 +677,64 @@ function playerOwnsPilotWeapon(player, weapon) {
   const pilotWeapons = normalizeInventory(player.inventory).pilotWeapons;
 
   return pilotWeapons.includes(weapon);
+}
+
+function createRoomBounds(roomConfig = {}) {
+  const shape = String(roomConfig?.arena?.shape || "circle").toLowerCase();
+  const params = roomConfig?.arena?.params || {};
+
+  if (shape === "rectangle") {
+    const width = Math.max(1, finiteNumber(params.width) || DEFAULT_ROOM_RADIUS * 2);
+    const height = Math.max(1, finiteNumber(params.height) || DEFAULT_ROOM_RADIUS * 2);
+
+    return {
+      shape,
+      width,
+      height,
+      radius: Math.min(width, height) / 2
+    };
+  }
+
+  const radius = Math.max(
+    1,
+    finiteNumber(params.radius ?? params.outerRadius ?? roomConfig?.arena?.radius) ||
+      DEFAULT_ROOM_RADIUS
+  );
+
+  return {
+    shape,
+    width: radius * 2,
+    height: radius * 2,
+    radius
+  };
+}
+
+function clampPointToRoom(bounds, x, y, radius = 0) {
+  const margin = Math.max(0, finiteNumber(radius));
+
+  if (bounds?.shape === "rectangle") {
+    const halfW = Math.max(0, finiteNumber(bounds.width) / 2 - margin);
+    const halfH = Math.max(0, finiteNumber(bounds.height) / 2 - margin);
+
+    return {
+      x: clampNumber(x, -halfW, halfW),
+      y: clampNumber(y, -halfH, halfH)
+    };
+  }
+
+  const maxDistance = Math.max(0, finiteNumber(bounds?.radius) - margin);
+  const distance = Math.hypot(x, y);
+
+  if (distance <= maxDistance || distance <= 0) {
+    return { x, y };
+  }
+
+  const ratio = maxDistance / distance;
+
+  return {
+    x: x * ratio,
+    y: y * ratio
+  };
 }
 
 function createRoomBots(roomConfig = {}) {

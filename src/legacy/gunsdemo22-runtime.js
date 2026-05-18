@@ -747,6 +747,7 @@ const keys = {
 };
 
 let paused = false;
+let baseCursorFollowEnabled = true;
 let cameraUserZoom = CAMERA_ZOOM_MIN;
 let roomObjectActivationCooldown = 0;
 let pendingTeleportActivation = null;
@@ -808,6 +809,10 @@ function adjustCameraZoom(direction) {
     CAMERA_ZOOM_MIN,
     CAMERA_ZOOM_MAX
   );
+}
+
+function canUseCursorFollow() {
+  return !isUserBaseRoom() || baseCursorFollowEnabled;
 }
 
 function randomPilotOffset() {
@@ -4282,7 +4287,7 @@ function updatePlayer(dt) {
     const inKnockback =
       updateKnockback(player, dt);
 
-    if (!controlsLocked && !inKnockback && mouse.active) {
+    if (!controlsLocked && !inKnockback && mouse.active && canUseCursorFollow()) {
       const target =
         screenToWorld(mouse.x, mouse.y);
 
@@ -4369,7 +4374,8 @@ function updatePlayer(dt) {
       !controlsLocked &&
       !ejecting &&
       !pilotKnock &&
-      mouse.active
+      mouse.active &&
+      canUseCursorFollow()
     ) {
       const target =
         screenToWorld(mouse.x, mouse.y);
@@ -8025,6 +8031,16 @@ window.addEventListener("keydown", e => {
   }
 
   if (e.code === "Space") {
+    if (isUserBaseRoom()) {
+      if (!keys.space) {
+        baseCursorFollowEnabled = !baseCursorFollowEnabled;
+      }
+
+      keys.space = true;
+      e.preventDefault();
+      return;
+    }
+
     keys.space = true;
     e.preventDefault();
   }
