@@ -1441,6 +1441,7 @@ let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
 let networkCombatEventsInitialized = false;
+let networkRoomConfigEventsInitialized = false;
 let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
@@ -1451,6 +1452,7 @@ const DOMAIN_SYNC_RATE_MS = 250;
 const collisionLocks = new Set();
 
 setupNetworkCombatEvents();
+setupNetworkRoomConfigEvents();
 
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
@@ -5828,6 +5830,33 @@ function setupNetworkCombatEvents() {
   window.GUNS_NET.on("respawn:event", message => {
     applyNetworkRespawnEvent(message.respawn);
   });
+}
+
+function setupNetworkRoomConfigEvents() {
+  if (networkRoomConfigEventsInitialized) return;
+  if (!window.GUNS_NET?.on) return;
+
+  networkRoomConfigEventsInitialized = true;
+  window.GUNS_NET.on("room:config", message => {
+    applyNetworkRoomConfig(message.room);
+  });
+}
+
+function applyNetworkRoomConfig(room) {
+  if (!room?.id) return;
+
+  window.GUNS_SHARED_CONFIG ||= {};
+  window.GUNS_SHARED_CONFIG.rooms ||= {};
+  window.GUNS_SHARED_CONFIG.rooms[room.id] = room;
+
+  if (room.id !== activeRoomId) return;
+
+  ACTIVE_ROOM = room;
+  ROOM_GEOMETRY = window.GUNS_ROOM_ENTRY.createRoomGeometryState(ACTIVE_ROOM);
+  ROOM_SHAPE = ROOM_GEOMETRY.shape;
+  ROOM_RADIUS = ROOM_GEOMETRY.radius;
+  ROOM_WIDTH = ROOM_GEOMETRY.width;
+  ROOM_HEIGHT = ROOM_GEOMETRY.height;
 }
 
 function isNetworkEventForPlayer(event) {
