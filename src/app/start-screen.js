@@ -85,9 +85,9 @@
         return false;
       }
 
-      const result = await window.GUNS_NET?.spendGunsCoin?.(
+      const result = await window.GUNS_NET?.purchasePilotWeapon?.(
         this.playerNick || getCallsign(),
-        price,
+        id,
         {
           reason: "market-purchase",
           itemType: "pilot-weapon",
@@ -98,7 +98,7 @@
       if (!result?.ok) return false;
 
       syncKnownWallet(result.user);
-      this.addPilotWeapon(id);
+      syncKnownInventory(result.user);
       return true;
     },
 
@@ -648,11 +648,23 @@
   }
 
   function syncKnownWallet(entity) {
+    syncKnownInventory(entity);
+
     const coins = Number(entity?.wallet?.gunsCoin);
 
     if (!Number.isFinite(coins)) return;
 
     state.walletGunsCoin = Math.max(0, Math.floor(coins));
+  }
+
+  function syncKnownInventory(entity) {
+    const weapons = entity?.inventory?.pilotWeapons;
+
+    if (!Array.isArray(weapons)) return;
+
+    state.pilotWeapons = Array.from(
+      new Set(weapons.map((weaponId) => String(weaponId || "").trim()).filter(Boolean))
+    );
   }
 
   function notifyWalletIncrease(entity) {

@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.43";
+const version = "0.16.44";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -798,6 +798,40 @@ const server = http.createServer((req, res) => {
         const result = users.spendGunsCoin(
           body?.nick,
           body?.amount,
+          cookies,
+          body?.meta || {}
+        );
+
+        if (!result.ok) {
+          sendJson(req, res, 400, result);
+          return;
+        }
+
+        sendJson(req, res, 200, result);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
+  if (url.pathname === "/users/purchase-pilot-weapon" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const weaponId = String(body?.weaponId || "").trim();
+        const weapon = publishedConfig.objects?.pilotWeapons?.[weaponId] || null;
+
+        if (!weapon) {
+          sendJson(req, res, 404, {
+            ok: false,
+            error: "weapon_not_found",
+            message: "Pilot weapon was not found."
+          });
+          return;
+        }
+
+        const result = users.purchasePilotWeapon(
+          body?.nick,
+          weapon,
           cookies,
           body?.meta || {}
         );

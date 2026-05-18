@@ -362,6 +362,24 @@
       })
         .then((result) => result?.data || null);
     },
+    purchasePilotWeapon(nickValue, weaponId, meta = {}) {
+      const cleanNick = String(nickValue || getStoredNick()).trim();
+      const id = String(weaponId || "").trim();
+
+      if (!cleanNick || !id) {
+        return Promise.resolve(null);
+      }
+
+      return apiFetch("/users/purchase-pilot-weapon", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: cleanNick,
+          weaponId: id,
+          meta
+        })
+      })
+        .then((result) => result?.data || null);
+    },
     on(type, handler) {
       if (!listeners.has(type)) {
         listeners.set(type, new Set());
