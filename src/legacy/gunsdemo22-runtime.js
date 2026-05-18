@@ -1340,6 +1340,24 @@ function applyServerCannonStateToUnit(unit) {
 
   const maxHp = Number(serverCannon.maxHp);
   const hp = Number(serverCannon.hp);
+  const serverX = Number(serverCannon.x);
+  const serverY = Number(serverCannon.y);
+  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
+  const occupiedBy = serverCannon.occupiedBy || "";
+  const localPlayerOwnsActiveCannon =
+    unit.isPlayer &&
+    unit.state === "alive" &&
+    ownClientId &&
+    occupiedBy === ownClientId;
+
+  if (
+    !localPlayerOwnsActiveCannon &&
+    Number.isFinite(serverX) &&
+    Number.isFinite(serverY)
+  ) {
+    unit.x = serverX;
+    unit.y = serverY;
+  }
 
   if (Number.isFinite(maxHp) && maxHp > 0) {
     unit.maxHp = maxHp;
