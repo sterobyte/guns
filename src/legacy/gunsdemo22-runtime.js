@@ -1466,6 +1466,8 @@ let lastDomainSyncAt = 0;
 let networkCombatEventsInitialized = false;
 let networkRoomConfigEventsInitialized = false;
 let networkInventoryEventsInitialized = false;
+let networkServerSnapshotEventsInitialized = false;
+let lastAppliedServerSnapshotAt = 0;
 let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
@@ -1478,6 +1480,7 @@ const collisionLocks = new Set();
 setupNetworkCombatEvents();
 setupNetworkRoomConfigEvents();
 setupNetworkInventoryEvents();
+setupNetworkServerSnapshotEvents();
 
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
@@ -5881,6 +5884,53 @@ function setupNetworkInventoryEvents() {
   window.GUNS_NET.on("inventory:sync", message => {
     window.GUNS_APP?.syncInventory?.(message.user || message.inventory);
   });
+}
+
+function setupNetworkServerSnapshotEvents() {
+  if (networkServerSnapshotEventsInitialized) return;
+  if (!window.GUNS_NET?.on) return;
+
+  networkServerSnapshotEventsInitialized = true;
+  window.GUNS_NET.on("server:snapshot", message => {
+    applyNetworkServerSnapshot(message.snapshot, message.serverTime);
+  });
+}
+
+function applyNetworkServerSnapshot(snapshot, serverTime = 0) {
+  if (!snapshot) return;
+  if (serverTime && serverTime <= lastAppliedServerSnapshotAt) return;
+
+  lastAppliedServerSnapshotAt = serverTime || Date.now();
+
+  if (snapshot.state === "on-foot" && player.state === "alive") {
+    forcePlayerToServerFootSnapshot(snapshot);
+  }
+}
+
+function forcePlayerToServerFootSnapshot(snapshot) {
+  const x = Number(snapshot.x);
+  const y = Number(snapshot.y);
+
+  player.state = "pilot";
+  player.exitRequested = false;
+  player.exitStopTimer = 0;
+  player.knockback = null;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotHp = Math.max(1, Number(snapshot.hp) || player.pilotHp || 1);
+  player.pilotImmunity = Math.max(player.pilotImmunity || 0, 0.35);
+  player.pilotFlyState = snapshot.flying ? "flying" : "ground";
+  player.pilotFlyTime = 0;
+
+  if (Number.isFinite(x)) {
+    player.pilotX = x;
+  }
+
+  if (Number.isFinite(y)) {
+    player.pilotY = y;
+  }
+
+  clampPilotToRoom(player);
 }
 
 function applyNetworkRoomConfig(room) {
