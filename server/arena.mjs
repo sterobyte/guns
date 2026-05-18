@@ -145,9 +145,9 @@ export class ArenaRoomState {
       ? player.hp
       : snapshotHp;
     player.maxHp = Math.max(1, finiteNumber(snapshot.maxHp) || 100);
-    this.syncPlayerFromAcceptedCannon(player, acceptedCannon);
     player.ammo = Math.max(0, Math.floor(finiteNumber(snapshot.ammo)));
     player.maxAmmo = Math.max(0, Math.floor(finiteNumber(snapshot.maxAmmo)));
+    this.syncPlayerFromAcceptedCannon(player, acceptedCannon);
     player.radiusOuter = Math.max(1, finiteNumber(snapshot.radiusOuter) || 34);
     player.radiusInner = Math.max(1, finiteNumber(snapshot.radiusInner) || 13);
     const clampedPoint = clampPointToRoom(
@@ -244,9 +244,13 @@ export class ArenaRoomState {
 
     const maxHp = Math.max(1, finiteNumber(cannon.maxHp) || 1);
     const hp = Math.max(0, Math.min(maxHp, finiteNumber(cannon.hp)));
+    const maxAmmo = Math.max(0, Math.floor(finiteNumber(cannon.maxAmmo)));
+    const ammo = Math.max(0, Math.min(maxAmmo, Math.floor(finiteNumber(cannon.ammo))));
 
     player.maxHp = maxHp;
     player.hp = hp;
+    player.maxAmmo = maxAmmo;
+    player.ammo = ammo;
   }
 
   recordScoreEvent(client, event = {}, rules = {}) {
@@ -518,6 +522,13 @@ export class ArenaRoomState {
   canUseWeaponNow(player, weaponId, combatSpec, now) {
     if (!["pistol", "gun"].includes(combatSpec.typeId)) return true;
 
+    if (combatSpec.typeId === "gun") {
+      const cannon = this.cannons.get(player.occupiedCannonId);
+
+      if (!cannon || isServerCannonBroken(cannon)) return false;
+      if (Math.floor(finiteNumber(cannon.ammo)) <= 0) return false;
+    }
+
     const lastUsedAt = player.weaponUsedAt?.[weaponId] || 0;
 
     return now - lastUsedAt >= combatSpec.fireRateMs;
@@ -525,6 +536,16 @@ export class ArenaRoomState {
 
   markWeaponUsed(player, weaponId, combatSpec, now) {
     if (!["pistol", "gun"].includes(combatSpec.typeId)) return;
+
+    if (combatSpec.typeId === "gun") {
+      const cannon = this.cannons.get(player.occupiedCannonId);
+
+      if (cannon) {
+        cannon.ammo = Math.max(0, Math.floor(finiteNumber(cannon.ammo)) - 1);
+        player.ammo = cannon.ammo;
+        player.maxAmmo = Math.max(0, Math.floor(finiteNumber(cannon.maxAmmo)));
+      }
+    }
 
     player.weaponUsedAt ||= {};
     player.weaponUsedAt[weaponId] = now;
@@ -999,6 +1020,14 @@ function createRoomCannons(roomConfig = {}, getCannonConfig = () => null) {
         0,
         Math.min(maxHp, finiteNumber(spawn.hp ?? maxHp))
       );
+      const maxAmmo = Math.max(
+        0,
+        Math.floor(finiteNumber(spawn.maxAmmo ?? config?.gameplay?.maxAmmo))
+      );
+      const ammo = Math.max(
+        0,
+        Math.min(maxAmmo, Math.floor(finiteNumber(spawn.ammo ?? maxAmmo)))
+      );
       const broken = Boolean(spawn.broken || spawn.destroyed) || hp <= 0;
       const now = Date.now();
 
@@ -1011,6 +1040,8 @@ function createRoomCannons(roomConfig = {}, getCannonConfig = () => null) {
           y: finiteNumber(spawn.y),
           hp,
           maxHp,
+          ammo,
+          maxAmmo,
           occupiedBy: "",
           broken,
           destroyed: Boolean(spawn.destroyed),

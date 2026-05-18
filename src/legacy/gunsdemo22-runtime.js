@@ -1340,6 +1340,8 @@ function applyServerCannonStateToUnit(unit) {
 
   const maxHp = Number(serverCannon.maxHp);
   const hp = Number(serverCannon.hp);
+  const maxAmmo = Number(serverCannon.maxAmmo);
+  const ammo = Number(serverCannon.ammo);
   const serverX = Number(serverCannon.x);
   const serverY = Number(serverCannon.y);
   const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
@@ -1365,6 +1367,18 @@ function applyServerCannonStateToUnit(unit) {
 
   if (Number.isFinite(hp)) {
     unit.hp = clamp(hp, 0, Math.max(1, unit.maxHp || maxHp || 1));
+  }
+
+  if (Number.isFinite(maxAmmo) && maxAmmo >= 0) {
+    unit.maxAmmo = Math.floor(maxAmmo);
+  }
+
+  if (Number.isFinite(ammo)) {
+    unit.ammo = clamp(
+      Math.floor(ammo),
+      0,
+      Math.max(0, Math.floor(unit.maxAmmo || maxAmmo || 0))
+    );
   }
 
   if (serverCannon.destroyed) {
