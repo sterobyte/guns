@@ -525,6 +525,9 @@ const PERF_DEBUG_LABEL =
 const PERF_REPORT_RATE_MS = 250;
 const PERF_SMOOTHING = 0.18;
 const LIVE_CONFIG_REFRESH_MS = 5000;
+const SERVER_POSITION_CORRECTION_DEADZONE = 36;
+const SERVER_POSITION_CORRECTION_SNAP_DISTANCE = 220;
+const SERVER_POSITION_CORRECTION_BLEND = 0.35;
 let liveConfigVersion =
   window.GUNS_SHARED_CONFIG?.configVersion ||
   "";
@@ -5904,7 +5907,10 @@ function applyNetworkServerSnapshot(snapshot, serverTime = 0) {
 
   if (snapshot.state === "on-foot" && player.state === "alive") {
     forcePlayerToServerFootSnapshot(snapshot);
+    return;
   }
+
+  applyServerPositionCorrection(snapshot);
 }
 
 function forcePlayerToServerFootSnapshot(snapshot) {
@@ -5931,6 +5937,43 @@ function forcePlayerToServerFootSnapshot(snapshot) {
   }
 
   clampPilotToRoom(player);
+}
+
+function applyServerPositionCorrection(snapshot) {
+  const x = Number(snapshot.x);
+  const y = Number(snapshot.y);
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  if (snapshot.state === "in-cannon" && player.state === "alive") {
+    correctPointTowardServer(player, "x", "y", x, y, player.radiusOuter);
+    return;
+  }
+
+  if (snapshot.state === "on-foot" && player.state === "pilot") {
+    correctPointTowardServer(player, "pilotX", "pilotY", x, y, player.pilotRadius);
+  }
+}
+
+function correctPointTowardServer(unit, xKey, yKey, serverX, serverY, radius = 0) {
+  const dx = serverX - unit[xKey];
+  const dy = serverY - unit[yKey];
+  const distance = Math.hypot(dx, dy);
+
+  if (distance <= SERVER_POSITION_CORRECTION_DEADZONE) return;
+
+  const ratio = distance >= SERVER_POSITION_CORRECTION_SNAP_DISTANCE
+    ? 1
+    : SERVER_POSITION_CORRECTION_BLEND;
+
+  unit[xKey] += dx * ratio;
+  unit[yKey] += dy * ratio;
+
+  if (xKey === "x") {
+    clampToRoomPoint(unit, radius);
+  } else {
+    clampPilotToRoom(unit);
+  }
 }
 
 function applyNetworkRoomConfig(room) {
