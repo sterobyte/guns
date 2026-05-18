@@ -55,6 +55,7 @@
   };
 
   let activeView = "users";
+  let adminAccessReady = false;
   const walletFilters = {
     entityType: "",
     entityId: "",
@@ -94,7 +95,7 @@
       if (!views[nextView]) return;
       activeView = nextView;
       renderActiveNav();
-      loadActiveView();
+      bootPanel();
     });
   }
 
@@ -105,10 +106,30 @@
     try {
       await views[activeView].load();
       setServerState(true, "Server online");
-    } catch {
+    } catch (error) {
+      if (isAdminAuthError(error)) {
+        adminAccessReady = false;
+        await bootPanel();
+        return;
+      }
+
       setServerState(false, "Server offline");
-      renderEmpty("Backend unavailable");
+      renderEmpty(error.message || "Backend unavailable");
     }
+  }
+
+  async function bootPanel() {
+    if (!adminAccessReady) {
+      adminAccessReady = await ensureAdminAccess();
+    }
+
+    if (!adminAccessReady) {
+      setServerState(false, "Admin locked");
+      renderEmpty("ADMIN TOKEN REQUIRED");
+      return;
+    }
+
+    await loadActiveView();
   }
 
   async function loadUsers() {
@@ -1438,7 +1459,11 @@
     }
 
     if (!response.ok) {
-      throw new Error(data.message || data.error || `HTTP ${response.status}`);
+      const error = new Error(data.message || data.error || `HTTP ${response.status}`);
+
+      error.status = response.status;
+      error.code = data.error || "";
+      throw error;
     }
 
     return data;
@@ -1815,14 +1840,41 @@
       .join(", ");
   }
 
-  function ensureAdminToken() {
-    if (getAdminToken()) return;
+  async function ensureAdminAccess() {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!getAdminToken()) {
+        const token = window.prompt("ADMIN TOKEN");
 
-    const token = window.prompt("ADMIN TOKEN");
+        if (!String(token || "").trim()) {
+          return false;
+        }
 
-    if (String(token || "").trim()) {
-      setAdminToken(token);
+        setAdminToken(token);
+      }
+
+      if (await validateAdminToken()) {
+        return true;
+      }
+
+      window.alert("ACCESS DENIED");
+      clearAdminToken();
     }
+
+    return false;
+  }
+
+  async function validateAdminToken() {
+    try {
+      await fetchJson(`${getAdminBaseUrl()}/auth-check`);
+      return true;
+    } catch (error) {
+      if (isAdminAuthError(error)) return false;
+      throw error;
+    }
+  }
+
+  function isAdminAuthError(error) {
+    return error?.status === 401 || error?.status === 503;
   }
 
   function getAdminToken() {
@@ -1860,13 +1912,12 @@
       : {};
   }
 
-  ensureAdminToken();
   renderActiveNav();
-  loadActiveView();
+  bootPanel();
   window.setInterval(() => {
     if (activeView === "users") {
       if (document.activeElement?.closest?.(".gs-editor")) return;
-      loadActiveView();
+      bootPanel();
     }
   }, 2000);
 })();
