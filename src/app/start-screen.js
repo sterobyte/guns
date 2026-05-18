@@ -2,6 +2,9 @@
   const AUTH_MIN_PASSWORD_LENGTH = 6;
   const SERVICE_NICK_PREFIX = "visitor-";
   const FALLBACK_SERVICE_NICK = "visitor-0000";
+  const USER_BASE_ROOM_ID = "user-cabinet";
+  const USER_BASE_ROOM_KIND = "user-base";
+  const LEGACY_USER_BASE_ROOM_KIND = "user-cabinet";
   const state = {
     visit: null,
     pilot: null,
@@ -11,6 +14,7 @@
     localCallsign: "",
     exchangeScore: 0,
     walletGunsCoin: 0,
+    pilotWeapons: [],
     walletConfirmedByPickup: false
   };
   const teleportConfirm = {
@@ -43,8 +47,59 @@
       return state.walletGunsCoin;
     },
 
+    spendWalletGunsCoin(amount) {
+      const value = Math.max(0, Math.floor(Number(amount) || 0));
+
+      if (value <= 0) return true;
+      if (state.walletGunsCoin < value) return false;
+
+      state.walletGunsCoin -= value;
+      return true;
+    },
+
     notifyWalletIncrease(entity) {
       notifyWalletIncrease(entity);
+    },
+
+    addPilotWeapon(weaponId) {
+      const id = String(weaponId || "").trim();
+
+      if (id && !state.pilotWeapons.includes(id)) {
+        state.pilotWeapons.push(id);
+      }
+    },
+
+    hasPilotWeapon(weaponId) {
+      return state.pilotWeapons.includes(String(weaponId || "").trim());
+    },
+
+    getPilotWeapons() {
+      return [...state.pilotWeapons];
+    },
+
+    async purchasePilotWeapon(weaponId, priceGs) {
+      const id = String(weaponId || "").trim();
+      const price = Math.max(0, Math.floor(Number(priceGs) || 0));
+
+      if (!id || price <= 0 || state.walletGunsCoin < price) {
+        return false;
+      }
+
+      const result = await window.GUNS_NET?.spendGunsCoin?.(
+        this.playerNick || getCallsign(),
+        price,
+        {
+          reason: "market-purchase",
+          itemType: "pilot-weapon",
+          itemId: id
+        }
+      );
+
+      if (!result?.ok) return false;
+
+      syncKnownWallet(result.user);
+      this.addPilotWeapon(id);
+      return true;
     },
 
     bankExchangeScore(score) {
@@ -65,12 +120,12 @@
       return state.exchangeScore;
     },
 
-    handleCabinetExchange() {
-      handleCabinetExchange();
+    handleBaseExchange() {
+      handleBaseExchange();
     },
 
-    showCabinetMessage(message) {
-      showCabinetMessage(message);
+    showBaseMessage(message) {
+      showBaseMessage(message);
     },
 
     confirmServiceTeleport(options = {}) {
@@ -81,16 +136,20 @@
       return Boolean(state.pilot);
     },
 
-    getCabinetPilotActionLabel() {
+    getBasePilotActionLabel() {
       return state.pilot ? "LOGOUT" : "CHANGE CALLSIGN";
     },
 
-    handleCabinetPilotAction() {
+    handleBasePilotAction() {
       if (state.pilot) {
         logoutPilot();
       } else {
         window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal");
       }
+    },
+
+    syncBaseRoomPanel() {
+      syncBaseRoomPanel();
     },
 
     setPlayerNick(nick, options = {}) {
@@ -134,14 +193,16 @@
         nick: cleanNick
       }).catch(() => {});
       document.getElementById("start-screen")?.classList.add("hidden");
+      syncBaseRoomPanel();
     },
 
     stop() {
       this.started = true;
       this.mode = "game";
       window.GUNS_NET?.disconnect?.();
-      window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
+      window.GUNS_LEGACY?.setActiveRoom?.(USER_BASE_ROOM_ID);
       document.getElementById("start-screen")?.classList.add("cabinet-start");
+      syncBaseRoomPanel();
     }
   };
 
@@ -168,10 +229,12 @@
     const cabinetMessageClose = document.getElementById("cabinet-message-close");
     const teleportConfirmYes = document.getElementById("teleport-confirm-yes");
     const teleportConfirmNo = document.getElementById("teleport-confirm-no");
+    const cabinetRoomGo = document.getElementById("cabinet-room-go");
 
     applyRandomStartBackground();
     buildSkinButtons();
     buildRoomSelect();
+    buildBaseRoomSelect();
     window.GUNS_I18N?.apply();
     syncLanguageButtons();
     syncSkinButtons();
@@ -200,7 +263,7 @@
     input.value = "";
     setStatus(t("identity.loading"));
     initializeIdentity().finally(() => {
-      enterCabinetStart();
+      enterBaseStart();
     });
 
     form.addEventListener("submit", event => {
@@ -316,17 +379,22 @@
       teleportConfirm.onNo?.();
     });
 
+    cabinetRoomGo?.addEventListener("click", () => {
+      goToBaseSelectedRoom();
+    });
+
   });
 
-  function enterCabinetStart() {
+  function enterBaseStart() {
     window.GUNS_APP.setPlayerNick(state.pilot?.nick || getCallsign(), {
       persist: Boolean(state.pilot?.nick)
     });
-    window.GUNS_APP.roomId = "user-cabinet";
+    window.GUNS_APP.roomId = USER_BASE_ROOM_ID;
     window.GUNS_APP.started = true;
     window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
-    window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
+    window.GUNS_LEGACY?.setActiveRoom?.(USER_BASE_ROOM_ID);
     document.getElementById("start-screen")?.classList.add("cabinet-start");
+    syncBaseRoomPanel();
   }
 
   let pilotDialogCheckTimer = 0;
@@ -367,7 +435,7 @@
 
   let cabinetMessageOnClose = null;
 
-  function showCabinetMessage(message, options = {}) {
+  function showBaseMessage(message, options = {}) {
     const dialog = document.getElementById("cabinet-message-dialog");
     const text = document.getElementById("cabinet-message-text");
 
@@ -601,7 +669,7 @@
     if (delta <= 0) return;
   }
 
-  async function handleCabinetExchange() {
+  async function handleBaseExchange() {
     window.GUNS_APP.bankExchangeScore(
       window.GUNS_LEGACY?.player?.score || state.exchangeScore
     );
@@ -613,15 +681,15 @@
       return;
     }
 
-    showCabinetMessage(`EXCHANGE ${score} SCORE?`, {
+    showBaseMessage(`EXCHANGE ${score} SCORE?`, {
       buttons: {
         okLabel: "CHANGE",
-        onOk: () => confirmCabinetExchange(score)
+        onOk: () => confirmBaseExchange(score)
       }
     });
   }
 
-  async function confirmCabinetExchange(score) {
+  async function confirmBaseExchange(score) {
     setCabinetMessageButtons();
 
     try {
@@ -643,14 +711,14 @@
       if (state.walletGunsCoin <= previousCoins && result.gunsCoinAdded > 0) {
         state.walletGunsCoin = previousCoins + Math.floor(result.gunsCoinAdded);
       }
-      showCabinetMessage(
+      showBaseMessage(
         `EXCHANGED ${result.exchangedScore} SCORE FOR ${result.gunsCoinAdded} GS`,
         {
           onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
         }
       );
     } catch (error) {
-      showCabinetMessage(String(error?.message || "EXCHANGE FAILED").toUpperCase(), {
+      showBaseMessage(String(error?.message || "EXCHANGE FAILED").toUpperCase(), {
         onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
       });
     }
@@ -893,18 +961,7 @@
 
     if (!select) return;
 
-    select.textContent = "";
-
-    Object.values(rooms)
-      .filter(isSelectableRoom)
-      .forEach(room => {
-        const option = document.createElement("option");
-        option.value = room.id;
-        option.textContent = room.description
-          ? `${room.title || room.id} - ${room.description}`
-          : room.title || room.id;
-        select.appendChild(option);
-      });
+    fillRoomSelect(select, rooms);
 
     const defaultRoomId = getDefaultRoomId(rooms);
     const roomId = isSelectableRoom(rooms[defaultRoomId])
@@ -918,6 +975,49 @@
       const nextRoomId = getSelectedRoomId();
       window.GUNS_APP.roomId = nextRoomId;
     });
+  }
+
+  function buildBaseRoomSelect() {
+    const select = document.getElementById("cabinet-room-select");
+    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
+
+    if (!select) return;
+
+    fillRoomSelect(select, rooms);
+    select.value = getDefaultRoomId(rooms);
+  }
+
+  function fillRoomSelect(select, rooms) {
+    select.textContent = "";
+
+    Object.values(rooms)
+      .filter(isSelectableRoom)
+      .filter(room => !isUserBaseRoom(room))
+      .sort((a, b) => String(a.title || a.id).localeCompare(String(b.title || b.id)))
+      .forEach(room => {
+        const option = document.createElement("option");
+        option.value = room.id;
+        option.textContent = getRoomOptionLabel(room);
+        select.appendChild(option);
+      });
+  }
+
+  function getRoomOptionLabel(room) {
+    const roomId = String(room?.id || "");
+    const titleKey = `room.${roomId}.title`;
+    const descriptionKey = `room.${roomId}.description`;
+    const translatedTitle = window.GUNS_I18N?.t?.(titleKey);
+    const translatedDescription = window.GUNS_I18N?.t?.(descriptionKey);
+    const title =
+      translatedTitle && translatedTitle !== titleKey
+        ? translatedTitle
+        : room?.title || roomId;
+    const description =
+      translatedDescription && translatedDescription !== descriptionKey
+        ? translatedDescription
+        : room?.description || "";
+
+    return description ? `${title} - ${description}` : title;
   }
 
   function getSelectedRoomId() {
@@ -938,6 +1038,39 @@
         ? defaultRoomId
         : Object.values(rooms || {}).find(isSelectableRoom)?.id ||
           defaultRoomId
+    );
+  }
+
+  function goToBaseSelectedRoom() {
+    const roomId = document.getElementById("cabinet-room-select")?.value || getSelectedRoomId();
+    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
+
+    if (!rooms[roomId] || !isSelectableRoom(rooms[roomId])) return;
+
+    window.GUNS_APP.roomId = roomId;
+    window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
+    window.GUNS_LEGACY?.setActiveRoom?.(roomId);
+    window.GUNS_NET?.disconnect?.();
+    window.GUNS_NET?.connect?.({
+      roomId,
+      nick: window.GUNS_APP.playerNick || getCallsign()
+    }).catch(() => {});
+    syncBaseRoomPanel();
+  }
+
+  function syncBaseRoomPanel() {
+    const panel = document.getElementById("cabinet-room-panel");
+    const activeRoom = window.GUNS_LEGACY?.getActiveRoom?.();
+    const isBase = isUserBaseRoom(activeRoom);
+
+    panel?.classList.toggle("hidden", !isBase);
+  }
+
+  function isUserBaseRoom(room) {
+    return (
+      room?.id === USER_BASE_ROOM_ID ||
+      room?.roomKind === USER_BASE_ROOM_KIND ||
+      room?.roomKind === LEGACY_USER_BASE_ROOM_KIND
     );
   }
 

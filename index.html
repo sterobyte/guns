@@ -8,6 +8,10 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<section id="cabinet-room-panel" class="cabinet-room-panel hidden" aria-label="Room selector">
+  <select id="cabinet-room-select" class="room-select" aria-label="ROOM"></select>
+  <button type="button" id="cabinet-room-go" data-i18n="base.roomGo">GO</button>
+</section>
 <section id="start-screen" aria-label="GUNS start screen" data-i18n-aria="start.aria">
   <div class="start-panel">
     <div class="language-switch" aria-label="Language" data-i18n-aria="language.aria">
@@ -101,7 +105,7 @@
     <div id="pilot-dialog-message" class="pilot-dialog-message"></div>
   </div>
 </section>
-<section id="cabinet-message-dialog" class="pilot-dialog hidden" aria-label="Cabinet message" role="dialog" aria-modal="true">
+<section id="cabinet-message-dialog" class="pilot-dialog hidden" aria-label="Base message" role="dialog" aria-modal="true">
   <div class="pilot-dialog-panel">
     <button type="button" id="cabinet-message-close" class="pilot-dialog-close" aria-label="Close">x</button>
     <div id="cabinet-message-text" class="cabinet-message-text"></div>

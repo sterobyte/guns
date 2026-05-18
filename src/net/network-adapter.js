@@ -29,10 +29,9 @@
   }
 
   function getDefaultUrl() {
-    const configured =
-      window.GUNS_CONFIG?.multiplayer?.localWebSocketUrl ||
-      "ws://127.0.0.1:3000/ws";
-    if (!canUseLocalEndpoint(configured)) return "";
+    const configured = getWebSocketBaseUrl();
+
+    if (!configured) return "";
 
     const url = new URL(configured);
 
@@ -51,36 +50,48 @@
   }
 
   function getApiUrl(path) {
-    const base =
-      window.GUNS_CONFIG?.multiplayer?.localHttpUrl ||
-      "http://127.0.0.1:3000";
-    if (!canUseLocalEndpoint(base)) return "";
+    const base = getHttpBaseUrl();
+
+    if (!base) return "";
 
     return `${base}${path}`;
   }
 
-  function canUseLocalEndpoint(rawUrl) {
-    let endpoint = null;
+  function getHttpBaseUrl() {
+    const config = window.GUNS_CONFIG?.multiplayer || {};
 
-    try {
-      endpoint = new URL(rawUrl);
-    } catch {
-      return false;
+    if (isLocalPage()) {
+      return config.localHttpUrl || "http://127.0.0.1:3000";
     }
 
-    const endpointHost = endpoint.hostname;
+    return config.publicHttpUrl || window.location.origin;
+  }
+
+  function getWebSocketBaseUrl() {
+    const config = window.GUNS_CONFIG?.multiplayer || {};
+
+    if (isLocalPage()) {
+      return config.localWebSocketUrl || "ws://127.0.0.1:3000/ws";
+    }
+
+    return config.publicWebSocketUrl || `${getWebSocketOrigin(window.location.origin)}/ws`;
+  }
+
+  function isLocalPage() {
     const pageHost = window.location.hostname;
-    const pageIsLocal =
+
+    return (
       pageHost === "localhost" ||
       pageHost === "127.0.0.1" ||
       pageHost === "::1" ||
-      pageHost === "";
-    const endpointIsLocal =
-      endpointHost === "localhost" ||
-      endpointHost === "127.0.0.1" ||
-      endpointHost === "::1";
+      pageHost === ""
+    );
+  }
 
-    return pageIsLocal || !endpointIsLocal;
+  function getWebSocketOrigin(httpOrigin) {
+    return String(httpOrigin || "")
+      .replace(/^https:/, "wss:")
+      .replace(/^http:/, "ws:");
   }
 
   function send(message) {
@@ -330,6 +341,23 @@
         body: JSON.stringify({
           nick: cleanNick,
           score: Math.max(0, Math.floor(Number(scoreValue) || 0))
+        })
+      })
+        .then((result) => result?.data || null);
+    },
+    spendGunsCoin(nickValue, amountValue, meta = {}) {
+      const cleanNick = String(nickValue || getStoredNick()).trim();
+
+      if (!cleanNick) {
+        return Promise.resolve(null);
+      }
+
+      return apiFetch("/users/spend-gs", {
+        method: "POST",
+        body: JSON.stringify({
+          nick: cleanNick,
+          amount: Math.max(0, Math.floor(Number(amountValue) || 0)),
+          meta
         })
       })
         .then((result) => result?.data || null);

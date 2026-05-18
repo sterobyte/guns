@@ -89,6 +89,35 @@ canvas {
   padding: 0 8px;
 }
 
+.cabinet-room-panel {
+  position: fixed;
+  left: 50%;
+  top: auto;
+  bottom: clamp(28px, 8vh, 72px);
+  z-index: 20;
+  width: 254px;
+  display: grid;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.cabinet-room-panel.hidden {
+  display: none;
+}
+
+.cabinet-room-panel button {
+  height: 34px;
+  border: 2px solid rgba(27, 36, 20, 0.92);
+  border-radius: 4px;
+  background: rgba(49, 90, 11, 0.86);
+  color: #f7f7f0;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 16px;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
 .unsupported-device {
   box-sizing: border-box;
   width: min(360px, calc(100vw - 36px));

@@ -8,12 +8,21 @@ The first Mongo step uses a snapshot document, not final normalized collections 
 
 Env:
 
-- `GUNS_USER_STORE=file`: default local file store.
+- `GUNS_USER_STORE=file`: local file store.
 - `GUNS_USER_STORE=mongo`: use Mongo snapshot store.
 - `GUNS_USER_STORE=mongo-collections`: use normalized Mongo collections.
 - `GUNS_MONGO_URL`: Mongo connection string.
 - `GUNS_MONGO_DATABASE`: default `guns`.
 - `GUNS_MONGO_USER_COLLECTION`: default `user_snapshots`.
+
+If `GUNS_USER_STORE` is not set but `GUNS_MONGO_URL` is set, the backend now starts in `mongo-collections` mode automatically. Without `GUNS_MONGO_URL`, it falls back to `file` mode.
+
+For public multiplayer, the browser uses:
+
+- `https://api.guns.gs` for HTTP API;
+- `wss://api.guns.gs/ws` for WebSocket.
+
+See `docs/public-multiplayer-deploy.md`.
 
 Env files:
 

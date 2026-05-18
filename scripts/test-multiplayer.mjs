@@ -17,6 +17,13 @@ const clients = [
     cannonBreaks: 1
   })
 ];
+const emptyRoomClient = createTestClient("solo", {
+  x: 0,
+  y: 0,
+  score: 0
+}, {
+  roomId: "multiplayer-test"
+});
 
 const timeout = setTimeout(() => fail("timeout"), timeoutMs);
 
@@ -47,9 +54,17 @@ try {
       client.matchEvents.some((event) => event.type === type)
     )
   ), "match event log");
+  await emptyRoomClient.open();
+  emptyRoomClient.sendSnapshot();
+  await waitFor(() => emptyRoomClient.scoreboard.length === 1, "empty room solo scoreboard");
+  assert(
+    emptyRoomClient.scoreboard[0]?.nick === "solo",
+    `solo room scoreboard mismatch: ${JSON.stringify(emptyRoomClient.scoreboard)}`
+  );
 
   clearTimeout(timeout);
   clients.forEach((client) => client.close());
+  emptyRoomClient.close();
   console.log(JSON.stringify({
     ok: true,
     roomId,
@@ -57,13 +72,17 @@ try {
     players: clients.map((client) => client.players.size),
     remoteSnapshots: clients.map((client) => client.remoteSnapshots.size),
     scoreboards: clients.map((client) => client.scoreboard.length),
+    soloScoreboard: emptyRoomClient.scoreboard.length,
     matchEvents: clients.map((client) => client.matchEvents.length)
   }, null, 2));
 } catch (error) {
   fail(error.message);
 }
 
-function createTestClient(nick, snapshot) {
+function createTestClient(nick, snapshot, options = {}) {
+  const clientWsUrl = options.roomId
+    ? `ws://127.0.0.1:3000/ws?room=${encodeURIComponent(options.roomId)}&nick=`
+    : wsUrl;
   const state = {
     nick,
     socket: null,
@@ -75,7 +94,7 @@ function createTestClient(nick, snapshot) {
     matchEvents: [],
     open() {
       return new Promise((resolve, reject) => {
-        const socket = new WebSocket(`${wsUrl}${encodeURIComponent(nick)}`);
+        const socket = new WebSocket(`${clientWsUrl}${encodeURIComponent(nick)}`);
         const onError = () => reject(new Error(`${nick}: websocket error`));
 
         state.socket = socket;
@@ -187,10 +206,11 @@ function assert(condition, message) {
 function fail(message) {
   clearTimeout(timeout);
   clients.forEach((client) => client.close());
+  emptyRoomClient.close();
   console.error(JSON.stringify({
     ok: false,
     error: message,
-    clients: clients.map((client) => ({
+    clients: [...clients, emptyRoomClient].map((client) => ({
       nick: client.nick,
       clientId: client.clientId,
       matchId: client.matchId,

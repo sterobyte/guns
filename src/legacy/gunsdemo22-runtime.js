@@ -4,6 +4,9 @@ const blurCanvas = document.createElement("canvas");
 const blurCtx = blurCanvas.getContext("2d");
 
 const gridSize = 40;
+const USER_BASE_ROOM_ID = "user-cabinet";
+const USER_BASE_ROOM_KIND = "user-base";
+const LEGACY_USER_BASE_ROOM_KIND = "user-cabinet";
 
 const {
   DEFAULT_ROOM_RADIUS,
@@ -171,14 +174,14 @@ function getActiveRoomObjectInstances() {
     ? ACTIVE_ROOM.objects
     : [];
 
-  if (!isUserCabinetRoom()) return objects;
+  if (!isUserBaseRoom()) return objects;
 
   return objects.filter(item =>
     String(item.params?.role || "") !== "language-terminal"
   );
 }
 
-function getCabinetLanguageTerminalInstances() {
+function getBaseLanguageTerminalInstances() {
   return [
     {
       instanceId: "language-ru-terminal",
@@ -250,8 +253,16 @@ function getRoomObjectDefinition(objectId) {
   return window.GUNS_SHARED_CONFIG?.objects?.roomObjects?.[objectId] || null;
 }
 
-function isUserCabinetRoom() {
-  return ACTIVE_ROOM?.roomKind === "user-cabinet";
+function isUserBaseRoom() {
+  return (
+    ACTIVE_ROOM?.id === USER_BASE_ROOM_ID ||
+    ACTIVE_ROOM?.roomKind === USER_BASE_ROOM_KIND ||
+    ACTIVE_ROOM?.roomKind === LEGACY_USER_BASE_ROOM_KIND
+  );
+}
+
+function isMarketRoom() {
+  return ACTIVE_ROOM?.roomKind === "market";
 }
 
 function getPlayerCallsign() {
@@ -306,7 +317,7 @@ function applyActiveRoomToUnits() {
 }
 
 function enterRoom(roomId) {
-  if (roomId === "user-cabinet" && !isUserCabinetRoom()) {
+  if (roomId === USER_BASE_ROOM_ID && !isUserBaseRoom()) {
     window.GUNS_APP?.bankExchangeScore?.(player.score);
   }
 
@@ -321,6 +332,7 @@ function enterRoom(roomId) {
   window.GUNS_MODE_REGISTRY?.onRoomEnter?.(activeModeState, {
     room: ACTIVE_ROOM
   });
+  window.GUNS_APP?.syncBaseRoomPanel?.();
 
   return ACTIVE_ROOM;
 }
@@ -344,7 +356,7 @@ function applyRoomGameplayState() {
   applyActiveRoomToUnits();
   player.score = getPlayerExchangeScoreBalance();
 
-  if (isUserCabinetRoom()) {
+  if (isUserBaseRoom()) {
     player.pilotImmunity = 0;
   }
 
@@ -370,7 +382,11 @@ function resetUnitRuntimeState(unit) {
   unit.pilotFlyState = "ground";
   unit.pilotFlyTime = 0;
   unit.pilotRadius = PILOT_RADIUS;
+  unit.pilotHp = 1;
   unit.pilotImmunity = unit.isPlayer ? PILOT_IMMUNITY_TIME : 0;
+  unit.activePilotWeaponId = "";
+  unit.pilotWeaponCooldown = 0;
+  unit.pilotFireCooldown = 0;
   unit.carriedAmmoValue = 0;
   unit.carriedRepairValue = 0;
   unit.wreckRepair = 0;
@@ -442,6 +458,7 @@ function resetRoomRuntimeState() {
   roomRuntimeState.deathOverlays.length = 0;
   ammoSpawnTimer = 0;
   roomObjectActivationCooldown = 0;
+  pendingTeleportActivation = null;
   clearPlayerDeathPrompt();
 }
 
@@ -568,6 +585,7 @@ const PILOT_EJECT_DISTANCE = 510;
 const PILOT_EJECT_PEAK_RADIUS = 27;
 const PILOT_FLY_PEAK_RADIUS = 17;
 const PILOT_FLY_TRANSITION_TIME = 0.75;
+const PILOT_WEAPON_CONTACT_COOLDOWN = 0.65;
 const GRAVE_NAME_TRIGGER_RADIUS = 32;
 const GRAVE_NAME_SHOW_TIME = 1;
 
@@ -585,6 +603,41 @@ function getCannonDefinitionNumber(type, path, fallback) {
   const number = Number(value);
 
   return Number.isFinite(number) ? number : fallback;
+}
+
+function getPilotWeaponDefinition(type = "basic-pistol") {
+  return window.GUNS_OBJECTS?.pilotWeapons?.get?.(type) || null;
+}
+
+function getPilotWeaponNumber(type, path, fallback) {
+  const definition = getPilotWeaponDefinition(type);
+  const value = window.GUNS_OBJECTS?.byPath?.(
+    definition,
+    path,
+    fallback
+  );
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function getDefaultPilotWeaponId() {
+  return getPilotWeaponDefinition("basic-knife")
+    ? "basic-knife"
+    : "basic-pistol";
+}
+
+function playerHasPilotWeapon(weaponId) {
+  return window.GUNS_APP?.hasPilotWeapon?.(weaponId) === true;
+}
+
+function getOwnedPilotWeaponByType(typeId) {
+  const type = String(typeId || "").trim();
+  const owned = window.GUNS_APP?.getPilotWeapons?.() || [];
+
+  return owned.find(weaponId => {
+    return getPilotWeaponDefinition(weaponId)?.typeId === type;
+  }) || "";
 }
 
 const cannonRenderMetrics = new Map();
@@ -692,6 +745,7 @@ const keys = {
 let paused = false;
 let cameraUserZoom = CAMERA_ZOOM_MIN;
 let roomObjectActivationCooldown = 0;
+let pendingTeleportActivation = null;
 
 const camera = {
   x: 0,
@@ -718,7 +772,7 @@ function isTutorialMode() {
 }
 
 function getCameraBaseScale() {
-  if (isUserCabinetRoom()) {
+  if (isUserBaseRoom()) {
     return Math.min(
       window.innerWidth / Math.max(1, getRoomWidth() + 96),
       window.innerHeight / Math.max(1, getRoomHeight() + 96)
@@ -729,7 +783,7 @@ function getCameraBaseScale() {
 }
 
 function adjustCameraZoom(direction) {
-  if (isUserCabinetRoom()) return;
+  if (isUserBaseRoom()) return;
 
   cameraUserZoom = clamp(
     cameraUserZoom + direction * CAMERA_ZOOM_STEP,
@@ -867,6 +921,9 @@ function makeUnit(
 
     pilotHp: 1,
     pilotImmunity: PILOT_IMMUNITY_TIME,
+    activePilotWeaponId: "",
+    pilotWeaponCooldown: 0,
+    pilotFireCooldown: 0,
 
     pilotKnockback: null,
     pilotEject: null,
@@ -1774,7 +1831,7 @@ function screenToWorld(x, y) {
 }
 
 function clampCamera() {
-  if (isUserCabinetRoom()) {
+  if (isUserBaseRoom()) {
     camera.x = 0;
     camera.y = 0;
     return;
@@ -1998,7 +2055,7 @@ function getPilotFlyAmount(unit) {
 
 function startPlayerFlyToggle() {
   if (isDeathBlurActive()) return;
-  if (isUserCabinetRoom()) return;
+  if (isUserBaseRoom()) return;
   if (player.state !== "pilot") return;
   if (player.pilotEject) return;
 
@@ -2178,6 +2235,30 @@ function fireBullet(owner, angle) {
   }
 }
 
+function firePilotPistol(owner, weaponId, angle) {
+  const weapon = getPilotWeaponDefinition(weaponId);
+  const fireRate = getPilotWeaponNumber(weaponId, "gameplay.fireRate", 0);
+
+  if (owner.state !== "pilot") return false;
+  if (isPilotAirborne(owner)) return false;
+  if (weapon?.typeId !== "pistol") return false;
+  if (fireRate <= 0) return false;
+
+  roomRuntimeState.bullets.push({
+    x: owner.pilotX + Math.cos(angle) * (owner.pilotRadius + 10),
+    y: owner.pilotY + Math.sin(angle) * (owner.pilotRadius + 10),
+    vx: Math.cos(angle) * BULLET_SPEED * 0.72,
+    vy: Math.sin(angle) * BULLET_SPEED * 0.72,
+    radius: 3,
+    life: 1.05,
+    owner,
+    color: owner.color,
+    damage: getPilotWeaponNumber(weaponId, "gameplay.damage", 0)
+  });
+
+  return true;
+}
+
 function getBulletColor(owner) {
   return owner.color;
 }
@@ -2200,7 +2281,7 @@ function getPowerupOptions() {
     getActiveModeRule,
     isUnitHidden,
     isPilotAirborne,
-    isUserCabinetRoom,
+    isUserBaseRoom,
     distance,
     clamp,
     onAmmoPicked(unit) {
@@ -2736,6 +2817,75 @@ function killPilot(victim, killer) {
 
   if (victim.isPlayer) {
     startPlayerDeathPrompt();
+  }
+}
+
+function updatePilotWeaponCollisions() {
+  for (let i = 0; i < units.length; i++) {
+    for (let j = i + 1; j < units.length; j++) {
+      const a = units[i];
+      const b = units[j];
+
+      if (!canPilotWeaponContact(a, b)) continue;
+
+      const dx = b.pilotX - a.pilotX;
+      const dy = b.pilotY - a.pilotY;
+      const d = Math.hypot(dx, dy) || 1;
+
+      if (d > a.pilotRadius + b.pilotRadius) continue;
+
+      applyPilotWeaponContact(a, b);
+      applyPilotWeaponContact(b, a);
+
+      if (!a.pilotKnockback) {
+        startPilotKnockback(a, -dx / d, -dy / d);
+      }
+
+      if (!b.pilotKnockback) {
+        startPilotKnockback(b, dx / d, dy / d);
+      }
+    }
+  }
+}
+
+function canPilotWeaponContact(a, b) {
+  return (
+    a !== b &&
+    !isUnitHidden(a) &&
+    !isUnitHidden(b) &&
+    !a.isCannonOnly &&
+    !b.isCannonOnly &&
+    a.state === "pilot" &&
+    b.state === "pilot" &&
+    !a.pilotEject &&
+    !b.pilotEject &&
+    !isPilotAirborne(a) &&
+    !isPilotAirborne(b)
+  );
+}
+
+function applyPilotWeaponContact(attacker, victim) {
+  if ((attacker.pilotWeaponCooldown || 0) > 0) return;
+  if (attacker.pilotImmunity > 0) return;
+  if (victim.pilotImmunity > 0) return;
+
+  const weaponId = attacker.isPlayer
+    ? getOwnedPilotWeaponByType("knife")
+    : attacker.activePilotWeaponId || "";
+  const weapon = getPilotWeaponDefinition(weaponId);
+
+  if (weapon?.typeId !== "knife") return;
+
+  const damage = getPilotWeaponNumber(weaponId, "gameplay.damage", 0);
+
+  if (damage <= 0) return;
+
+  attacker.pilotWeaponCooldown = PILOT_WEAPON_CONTACT_COOLDOWN;
+  victim.pilotHp = Math.max(0, Number(victim.pilotHp || 1) - damage);
+
+  if (victim.pilotHp <= 0) {
+    dropCarriedPowerups(victim);
+    killPilot(victim, attacker);
   }
 }
 
@@ -4075,7 +4225,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isUserCabinetRoom()) {
+    if (!isUserBaseRoom()) {
       camera.x = player.x;
       camera.y = player.y;
     }
@@ -4147,7 +4297,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isUserCabinetRoom()) {
+    if (!isUserBaseRoom()) {
       camera.x = player.pilotX;
       camera.y = player.pilotY;
     }
@@ -4257,8 +4407,14 @@ function updateBot(bot, dt) {
 }
 
 function updatePlayerShooting(dt) {
-  if (player.state !== "alive") return;
   if (player.exitRequested) return;
+
+  if (player.state === "pilot") {
+    updatePlayerPilotShooting();
+    return;
+  }
+
+  if (player.state !== "alive") return;
 
   player.fireCooldown -= dt;
 
@@ -4274,6 +4430,30 @@ function updatePlayerShooting(dt) {
 
     player.fireCooldown =
       player.fireRate;
+  }
+}
+
+function updatePlayerPilotShooting() {
+  if (isUserBaseRoom() || isMarketRoom()) return;
+  if (isPilotDialogOpen()) return;
+  if (!mouse.down || !mouse.active || player.pilotFireCooldown > 0) return;
+
+  const weaponId = getOwnedPilotWeaponByType("pistol");
+
+  if (!weaponId) return;
+
+  const target = screenToWorld(mouse.x, mouse.y);
+  const angle = Math.atan2(
+    target.y - player.pilotY,
+    target.x - player.pilotX
+  );
+
+  if (firePilotPistol(player, weaponId, angle)) {
+    player.pilotFireCooldown = getPilotWeaponNumber(
+      weaponId,
+      "gameplay.fireRate",
+      0
+    );
   }
 }
 
@@ -4422,25 +4602,42 @@ function updateTutorial(dt) {
 function updateRoomObjects(dt) {
   roomObjectActivationCooldown = Math.max(0, roomObjectActivationCooldown - dt);
 
-  if (isPilotDialogOpen()) return;
-  if (player.state !== "pilot" || isPilotAirborne(player)) return;
+  if (isPilotDialogOpen()) {
+    clearPendingTeleportActivation();
+    return;
+  }
+
+  if (player.state !== "pilot" || isPilotAirborne(player)) {
+    clearPendingTeleportActivation();
+    return;
+  }
 
   const hit = getNearRoomObjectInstance();
 
-  if (!hit) return;
+  if (!hit) {
+    clearPendingTeleportActivation();
+    return;
+  }
 
   const label = String(hit.instance.params?.label || hit.definition?.title || hit.instance.objectId);
   if (
     hit.definition?.kind !== "teleport" &&
-    !(isUserCabinetRoom() && hit.definition?.kind === "menu-terminal")
+    hit.definition?.kind !== "market-item" &&
+    !(isUserBaseRoom() && hit.definition?.kind === "menu-terminal")
   ) {
     addHint(`${label}: ENTER`);
   }
 
   if (hit.definition?.kind === "teleport" && roomObjectActivationCooldown <= 0) {
-    activateTeleport(hit.instance);
+    updateTeleportActivation(hit.instance, hit.definition, dt);
   } else if (hit.definition?.kind === "menu-terminal" && roomObjectActivationCooldown <= 0) {
+    clearPendingTeleportActivation();
     activateMenuTerminal(hit.instance);
+  } else if (hit.definition?.kind === "market-item" && roomObjectActivationCooldown <= 0) {
+    clearPendingTeleportActivation();
+    activateMarketItem(hit.instance);
+  } else if (hit.definition?.kind !== "teleport") {
+    clearPendingTeleportActivation();
   }
 }
 
@@ -4483,6 +4680,78 @@ function isPlayerOverRoomObject(instance, definition) {
 
 function activateTeleport(instance) {
   performTeleport(instance);
+}
+
+function updateTeleportActivation(instance, definition, dt) {
+  const delay = getTeleportTriggerDelaySeconds(instance, definition);
+
+  if (delay <= 0) {
+    clearPendingTeleportActivation();
+    activateTeleport(instance);
+    return;
+  }
+
+  if (pendingTeleportActivation?.instanceId !== instance.instanceId) {
+    pendingTeleportActivation = {
+      instanceId: instance.instanceId,
+      remaining: delay
+    };
+  }
+
+  pendingTeleportActivation.remaining = Math.max(
+    0,
+    pendingTeleportActivation.remaining - dt
+  );
+
+  addHint(`TELEPORT ${Math.ceil(pendingTeleportActivation.remaining)}s`);
+
+  if (pendingTeleportActivation.remaining <= 0) {
+    clearPendingTeleportActivation();
+    activateTeleport(instance);
+  }
+}
+
+function getTeleportTriggerDelaySeconds(instance, definition) {
+  const value =
+    instance.params?.triggerDelaySeconds ??
+    instance.params?.delaySeconds ??
+    definition?.behavior?.triggerDelaySeconds ??
+    0;
+  const delay = Number(value);
+
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
+}
+
+function clearPendingTeleportActivation() {
+  pendingTeleportActivation = null;
+}
+
+function handleTeleportClick(pointerX, pointerY) {
+  if (isPilotDialogOpen()) return false;
+  if (player.state !== "pilot" || isPilotAirborne(player)) return false;
+
+  const worldPoint = screenToWorld(pointerX, pointerY);
+
+  for (const instance of getActiveRoomObjectInstances()) {
+    const definition = getRoomObjectDefinition(instance.objectId);
+
+    if (definition?.kind !== "teleport") continue;
+    if (!isPlayerOverRoomObject(instance, definition)) continue;
+    if (!isWorldPointOverTeleport(worldPoint, instance, definition)) continue;
+
+    clearPendingTeleportActivation();
+    activateTeleport(instance);
+    return true;
+  }
+
+  return false;
+}
+
+function isWorldPointOverTeleport(point, instance, definition) {
+  const position = getRoomObjectPosition(instance);
+  const radius = Number(definition.render?.radius) || 42;
+
+  return Math.hypot(point.x - position.x, point.y - position.y) <= radius;
 }
 
 function performTeleport(instance) {
@@ -4530,13 +4799,13 @@ function activateMenuTerminal(instance) {
 
   if (action === "open-pilot") {
     roomObjectActivationCooldown = 0.6;
-    window.GUNS_APP?.handleCabinetPilotAction?.();
+    window.GUNS_APP?.handleBasePilotAction?.();
     return;
   }
 
   if (action === "exchange-score") {
     roomObjectActivationCooldown = 0.6;
-    window.GUNS_APP?.handleCabinetExchange?.();
+    window.GUNS_APP?.handleBaseExchange?.();
     return;
   }
 
@@ -4549,11 +4818,69 @@ function activateMenuTerminal(instance) {
   }
 }
 
+function getMarketItemStock(instance) {
+  const stock = Number(instance.params?.stock ?? 0);
+
+  return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0;
+}
+
+function setMarketItemStock(instance, stock) {
+  if (!instance.params) {
+    instance.params = {};
+  }
+
+  instance.params.stock = Math.max(0, Math.floor(Number(stock) || 0));
+}
+
+function getMarketItemPrice(instance) {
+  const weapon = getPilotWeaponDefinition(instance.params?.weaponId);
+  const price = Number(weapon?.economy?.priceGs);
+
+  return Number.isFinite(price) ? Math.max(0, Math.floor(price)) : 0;
+}
+
+function activateMarketItem(instance) {
+  const stock = getMarketItemStock(instance);
+  const price = getMarketItemPrice(instance);
+  const weaponId = String(instance.params?.weaponId || "");
+
+  if (
+    stock <= 0 ||
+    !weaponId ||
+    instance.purchasePending ||
+    getPlayerGunsCoinBalance() < price
+  ) {
+    bouncePlayerFromRoomObject(instance);
+    return;
+  }
+
+  instance.purchasePending = true;
+  roomObjectActivationCooldown = 0.8;
+
+  Promise.resolve(window.GUNS_APP?.purchasePilotWeapon?.(weaponId, price))
+    .then((purchased) => {
+      if (!purchased) {
+        bouncePlayerFromRoomObject(instance);
+        return;
+      }
+
+      setMarketItemStock(instance, stock - 1);
+
+      if (getMarketItemStock(instance) <= 0) {
+        bouncePlayerFromRoomObject(instance);
+      }
+    })
+    .catch(() => bouncePlayerFromRoomObject(instance))
+    .finally(() => {
+      instance.purchasePending = false;
+    });
+}
+
 function getMenuTerminalLabel(instance, definition) {
   const action = String(instance.params?.action || "").trim();
 
   if (action === "open-pilot") {
-    return window.GUNS_APP?.getCabinetPilotActionLabel?.() || "CHANGE CALLSIGN";
+    return window.GUNS_APP?.getBasePilotActionLabel?.() || "CHANGE CALLSIGN";
   }
 
   return String(instance.params?.label || definition.title || "MENU");
@@ -4622,10 +4949,22 @@ function update(dt) {
     }
   }
 
+  if (!isActiveModeEnded()) {
+    updatePilotWeaponCollisions();
+  }
+
   for (const unit of units) {
     unit.recoilTime = Math.max(
       0,
       unit.recoilTime - dt
+    );
+    unit.pilotWeaponCooldown = Math.max(
+      0,
+      (unit.pilotWeaponCooldown || 0) - dt
+    );
+    unit.pilotFireCooldown = Math.max(
+      0,
+      (unit.pilotFireCooldown || 0) - dt
     );
 
     updatePostEjectBrake(unit, dt);
@@ -4845,7 +5184,7 @@ function paddingToPixels(inset, scale) {
   return 16 * scale + inset;
 }
 
-function getCabinetBackdropSources() {
+function getBaseBackdropSources() {
   const backgrounds = window.GUNS_CONFIG?.visual?.startBackgrounds || [];
 
   return backgrounds
@@ -4853,7 +5192,7 @@ function getCabinetBackdropSources() {
     .filter(Boolean);
 }
 
-function getCabinetBackdropImage(src) {
+function getBaseBackdropImage(src) {
   let entry = cabinetBackdropImages.find(item => item.src === src);
 
   if (entry) return entry;
@@ -4873,7 +5212,7 @@ function getCabinetBackdropImage(src) {
   return entry;
 }
 
-function drawCabinetBackdropImage(entry, alpha, transform) {
+function drawBaseBackdropImage(entry, alpha, transform) {
   if (!entry?.loaded) return;
 
   const scale =
@@ -4892,8 +5231,8 @@ function drawCabinetBackdropImage(entry, alpha, transform) {
   ctx.restore();
 }
 
-function drawCabinetBackdrop() {
-  const sources = getCabinetBackdropSources();
+function drawBaseBackdrop() {
+  const sources = getBaseBackdropSources();
 
   if (!sources.length) {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -4921,13 +5260,13 @@ function drawCabinetBackdrop() {
   };
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-  drawCabinetBackdropImage(getCabinetBackdropImage(sources[currentIndex]), 1 - fade, transform);
-  drawCabinetBackdropImage(getCabinetBackdropImage(sources[nextIndex]), fade, transform);
+  drawBaseBackdropImage(getBaseBackdropImage(sources[currentIndex]), 1 - fade, transform);
+  drawBaseBackdropImage(getBaseBackdropImage(sources[nextIndex]), fade, transform);
 }
 
 function drawGrid() {
-  if (isUserCabinetRoom()) {
-    drawCabinetBackdrop();
+  if (isUserBaseRoom()) {
+    drawBaseBackdrop();
   } else {
     ctx.fillStyle = SKIN.roomOutside;
     ctx.fillRect(
@@ -4949,15 +5288,15 @@ function drawGrid() {
     z(getRoomHeight() + 32)
   );
 
-  drawUserCabinetFloorCallsign();
+  drawUserBaseFloorCallsign();
   drawArenaFloorTimer();
 
-  if (isUserCabinetRoom()) {
-    drawCabinetVersion();
+  if (isUserBaseRoom()) {
+    drawBaseVersion();
   }
 }
 
-function drawCabinetVersion() {
+function drawBaseVersion() {
   ctx.save();
   ctx.font = "bold 13px monospace";
   ctx.textAlign = "center";
@@ -4971,8 +5310,8 @@ function drawCabinetVersion() {
   ctx.restore();
 }
 
-function drawUserCabinetFloorCallsign() {
-  if (!isUserCabinetRoom()) return;
+function drawUserBaseFloorCallsign() {
+  if (!isUserBaseRoom()) return;
 
   const p = worldToScreen(0, 34);
   const callsign = getPlayerCallsign();
@@ -4999,19 +5338,12 @@ function drawUserCabinetFloorCallsign() {
   ctx.globalAlpha = 0.08;
   ctx.fillText(callsign, p.x, p.y);
 
-  const balance = `${getPlayerGunsCoinBalance()} gs`;
-
-  ctx.globalAlpha = 0.18;
-  ctx.font = `bold ${z(66)}px monospace`;
-  ctx.strokeText(balance, p.x, p.y + z(82));
-  ctx.globalAlpha = 0.10;
-  ctx.fillText(balance, p.x, p.y + z(82));
   ctx.restore();
 }
 
 function shouldDrawArenaFloorTimer() {
   return (
-    !isUserCabinetRoom() &&
+    !isUserBaseRoom() &&
     !!activeModeState &&
     activeModeState.durationMs > 0 &&
     getActiveModeRule("showTimer", 0) > 0
@@ -5056,8 +5388,100 @@ function drawRoomObjects() {
       drawMenuTerminal(instance, definition);
     } else if (definition?.kind === "teleport") {
       drawTeleport(instance, definition);
+    } else if (definition?.kind === "market-item") {
+      drawMarketItem(instance, definition);
     }
   }
+}
+
+function drawMarketItem(instance, definition) {
+  const position = getRoomObjectPosition(instance);
+  const p = worldToScreen(position.x, position.y);
+  const weapon = getPilotWeaponDefinition(instance.params?.weaponId);
+  const icon = String(instance.params?.icon || weapon?.typeId || "").toLowerCase();
+  const title = String(weapon?.title || instance.params?.label || "item");
+  const price = Number(weapon?.economy?.priceGs);
+  const stock = getMarketItemStock(instance);
+  const width = z(Number(definition.render?.width) || 120);
+  const height = z(Number(definition.render?.height) || 120);
+  const iconSize = z(Number(definition.render?.iconSize) || 64);
+  const isNear =
+    player.state === "pilot" &&
+    isPlayerOverRoomObject(instance, definition);
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(Number(instance.rotation || 0));
+
+  ctx.fillStyle = isNear ? LCD_PANEL : "rgba(31, 43, 22, 0.10)";
+  ctx.strokeStyle = isNear ? LCD_INK : LCD_SOFT;
+  ctx.lineWidth = Math.max(1, z(isNear ? 2 : 1.25));
+  ctx.fillRect(-width / 2, -height / 2, width, height);
+  ctx.strokeRect(-width / 2, -height / 2, width, height);
+
+  ctx.save();
+  ctx.translate(0, -height * 0.12);
+  if (icon === "knife") {
+    drawKnifeMarketIcon(iconSize);
+  } else {
+    drawPistolMarketIcon(iconSize);
+  }
+  ctx.restore();
+
+  ctx.fillStyle = LCD_INK;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.font = `${Math.max(11, z(13))}px monospace`;
+  ctx.fillText(title, 0, height * 0.24);
+  if (Number.isFinite(price)) {
+    ctx.font = `${Math.max(10, z(12))}px monospace`;
+    ctx.fillText(`${price} gs`, 0, height * 0.38);
+  }
+  ctx.font = `bold ${Math.max(11, z(14))}px monospace`;
+  ctx.fillText(`x${stock}`, width * 0.32, -height * 0.42);
+
+  ctx.restore();
+}
+
+function drawPistolMarketIcon(size) {
+  const s = size / 64;
+
+  ctx.fillStyle = LCD_INK;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = Math.max(1, z(2));
+
+  ctx.fillRect(-26 * s, -18 * s, 42 * s, 10 * s);
+  ctx.fillRect(10 * s, -14 * s, 20 * s, 6 * s);
+  ctx.fillRect(-18 * s, -8 * s, 20 * s, 13 * s);
+  ctx.save();
+  ctx.translate(-1 * s, 4 * s);
+  ctx.rotate(-0.28);
+  ctx.fillRect(-8 * s, 0, 14 * s, 30 * s);
+  ctx.restore();
+  ctx.fillRect(3 * s, 0, 15 * s, 6 * s);
+}
+
+function drawKnifeMarketIcon(size) {
+  const s = size / 64;
+
+  ctx.fillStyle = LCD_INK;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = Math.max(1, z(2));
+
+  ctx.beginPath();
+  ctx.moveTo(-5 * s, -30 * s);
+  ctx.lineTo(12 * s, -6 * s);
+  ctx.lineTo(2 * s, 11 * s);
+  ctx.lineTo(-14 * s, -11 * s);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillRect(-13 * s, 9 * s, 27 * s, 7 * s);
+  ctx.save();
+  ctx.translate(0, 20 * s);
+  ctx.rotate(0.12);
+  ctx.fillRect(-7 * s, -4 * s, 14 * s, 25 * s);
+  ctx.restore();
 }
 
 function drawMenuTerminal(instance, definition) {
@@ -5098,6 +5522,10 @@ function drawTeleport(instance, definition) {
   const isNear =
     player.state === "pilot" &&
     isPlayerOverRoomObject(instance, definition);
+  const countdown =
+    pendingTeleportActivation?.instanceId === instance.instanceId
+      ? Math.ceil(Math.max(0, pendingTeleportActivation.remaining))
+      : 0;
 
   ctx.save();
   ctx.translate(p.x, p.y);
@@ -5126,6 +5554,10 @@ function drawTeleport(instance, definition) {
   ctx.fillStyle = LCD_INK;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
+  if (countdown > 0) {
+    ctx.font = `bold ${Math.max(12, z(15))}px monospace`;
+    ctx.fillText(`${countdown}s`, 0, -radius - z(30));
+  }
   ctx.font = `${Math.max(12, z(15))}px monospace`;
   ctx.fillText(label, 0, radius + z(12));
   if (description) {
@@ -5798,7 +6230,7 @@ function drawPilot(unit) {
 
   ctx.save();
 
-  if (!isUserCabinetRoom() && unit.pilotImmunity > 0) {
+  if (!isUserBaseRoom() && unit.pilotImmunity > 0) {
     ctx.globalAlpha = 0.22;
   }
 
@@ -5826,7 +6258,7 @@ function drawPilot(unit) {
     const r = z(8);
 
     ctx.globalAlpha =
-      !isUserCabinetRoom() && unit.pilotImmunity > 0 ? 0.22 : 1;
+      !isUserBaseRoom() && unit.pilotImmunity > 0 ? 0.22 : 1;
 
     ctx.beginPath();
     ctx.arc(ax, ay, r, 0, Math.PI * 2);
@@ -5859,9 +6291,17 @@ function drawPilot(unit) {
     unit.pilotRadius / PILOT_RADIUS
   );
 
-  if (unit.isPlayer && isUserCabinetRoom()) {
+  if (unit.isPlayer && isUserBaseRoom()) {
     drawNameLabel(
-      `${getPlayerExchangeScoreBalance()} score`,
+      `${getPlayerGunsCoinBalance()} gs`,
+      p.x,
+      p.y - z(unit.pilotRadius + 32),
+      unit.color,
+      unit.pilotRadius / PILOT_RADIUS
+    );
+  } else if (unit.isPlayer && isMarketRoom()) {
+    drawNameLabel(
+      `${getPlayerGunsCoinBalance()} gs`,
       p.x,
       p.y - z(unit.pilotRadius + 32),
       unit.color,
@@ -6019,7 +6459,7 @@ function drawRemotePilot(snapshot) {
 }
 
 function drawRemotePilots() {
-  if (isUserCabinetRoom()) return;
+  if (isUserBaseRoom()) return;
 
   const snapshots = window.GUNS_NET?.getRemoteSnapshots?.() || [];
   const activeIds = new Set();
@@ -6801,7 +7241,7 @@ function getModeWinnerLabel() {
 }
 
 function drawModeStateOverlay() {
-  if (!activeModeState || isUserCabinetRoom()) return;
+  if (!activeModeState || isUserBaseRoom()) return;
 
   if (
     !activeModeState.ended &&
@@ -7146,13 +7586,13 @@ function drawTutorialOverlay() {
 }
 
 function draw() {
-  const isCabinet = isUserCabinetRoom();
+  const isBase = isUserBaseRoom();
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGrid();
   drawTrails();
 
-  if (!isCabinet) {
+  if (!isBase) {
     drawStains();
 
     drawAmmoPacks();
@@ -7163,7 +7603,7 @@ function draw() {
 
   drawRoomObjects();
 
-  if (!isCabinet) {
+  if (!isBase) {
     drawBullets();
   }
 
@@ -7171,7 +7611,7 @@ function draw() {
     drawUnit(unit);
   }
 
-  if (!isCabinet) {
+  if (!isBase) {
     drawExplosions();
 
     drawPlayerCannonMarker();
@@ -7182,13 +7622,13 @@ function draw() {
 
   drawLCDOverlay();
 
-  if (!isCabinet) {
+  if (!isBase) {
     drawScoreboard();
   }
 
   drawFlyMode();
   drawModeStateOverlay();
-  if (!isCabinet) {
+  if (!isBase) {
     drawDeathPromptButtons();
   }
   drawHints();
@@ -7238,6 +7678,12 @@ window.addEventListener("mousedown", e => {
     const pointer = getCanvasPointerPoint(e);
 
     if (handleDeathPromptClick(pointer.x, pointer.y)) {
+      mouse.down = false;
+      e.preventDefault();
+      return;
+    }
+
+    if (handleTeleportClick(pointer.x, pointer.y)) {
       mouse.down = false;
       e.preventDefault();
       return;
@@ -7297,7 +7743,7 @@ window.addEventListener("keydown", e => {
   }
 
   if (e.code === "KeyP") {
-    if (!keys.p && !isUserCabinetRoom()) {
+    if (!keys.p && !isUserBaseRoom()) {
       paused = !paused;
     }
 

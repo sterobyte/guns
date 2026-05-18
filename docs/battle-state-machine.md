@@ -1,6 +1,6 @@
 # Battle State Machine
 
-This document describes player behavior outside the cabinet. It separates actual player states from events and consequences so new arenas/modes can use the same rules.
+This document describes player behavior outside the base. It separates actual player states from events and consequences so new arenas/modes can use the same rules.
 
 ## Core States
 
@@ -105,7 +105,7 @@ Pilot death state before the player chooses what to do.
 Allowed actions/events:
 
 - continue -> `pilot_flying_falling`
-- exit arena -> cabinet
+- exit arena -> base
 
 Notes:
 
@@ -192,7 +192,7 @@ Allowed actions/events:
 ### Arena Lifecycle Events
 
 - enter arena
-- leave arena to cabinet
+- leave arena to base
 - timer starts
 - timer ticks
 - timer ends

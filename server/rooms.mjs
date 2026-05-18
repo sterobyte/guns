@@ -224,7 +224,7 @@ export class MultiplayerHub {
         roomConfig,
         modeConfig,
         clients: new Map(),
-        arena: new ArenaRoomState(roomId),
+        arena: new ArenaRoomState(roomId, roomConfig),
         match: new MatchState(roomId, roomConfig, modeConfig)
       });
     }

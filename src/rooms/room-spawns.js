@@ -5,7 +5,15 @@
     if (mode === "fixed") return false;
     if (mode === "random") return true;
 
-    return room?.roomKind !== "user-cabinet";
+    return !isUserBaseRoom(room);
+  }
+
+  function isUserBaseRoom(room) {
+    return (
+      room?.id === "user-cabinet" ||
+      room?.roomKind === "user-base" ||
+      room?.roomKind === "user-cabinet"
+    );
   }
 
   function applyRoomSpawns(options) {

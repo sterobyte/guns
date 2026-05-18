@@ -443,6 +443,40 @@ export class UserRegistry {
     };
   }
 
+  spendGunsCoin(rawNick, amount, cookies = {}, meta = {}) {
+    const nick = sanitizeNick(rawNick);
+    const session = this.getSessionByToken(cookies[AUTH_COOKIE]);
+    const sessionPilot = session ? this.getPilotById(session.pilotId) : null;
+    const pilot = sessionPilot || this.pilots.get(normalizeNick(nick));
+    const visit = this.getVisitByDeviceToken(cookies[DEVICE_COOKIE]) || this.getVisitByNick(nick);
+    const entity = pilot || visit;
+    const value = Math.max(0, Math.floor(Number(amount) || 0));
+
+    if (!entity) return error("user_required", "User is required to spend gs.");
+    if (value <= 0) return error("invalid_amount", "Spend amount must be positive.");
+
+    ensureWallet(entity);
+
+    if (entity.wallet.gunsCoin < value) {
+      return error("not_enough_gs", "Not enough gs.");
+    }
+
+    entity.wallet.gunsCoin -= value;
+    entity.lastSeenAt = Date.now();
+    this.persist();
+    this.recordWalletTransaction(entity, -value, String(meta.reason || "gs-spend"), {
+      ...meta,
+      amount: value
+    });
+
+    return {
+      ok: true,
+      user: pilot ? publicPilot(entity) : publicVisit(entity),
+      spentGs: value,
+      balanceGs: normalizeCoinAmount(entity.wallet.gunsCoin)
+    };
+  }
+
   list() {
     const visits = Array.from(this.anonymousVisits.values())
       .map((visit) => this.withPublicIds(publicVisit(visit), {

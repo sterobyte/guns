@@ -33,6 +33,8 @@
   }
 
   function spawnInitialRoomPowerups(options) {
+    if (!arePowerupsEnabled(options)) return;
+
     const countValue = Number(options.room?.powerups?.initialCount ?? 0);
     const count = Number.isFinite(countValue)
       ? Math.max(0, Math.floor(countValue))
@@ -259,7 +261,7 @@
   }
 
   function updatePowerupSpawning(options, dt) {
-    if (options.isUserCabinetRoom()) return options.spawnTimer;
+    if (!arePowerupsEnabled(options)) return options.spawnTimer;
 
     let nextTimer = options.spawnTimer - dt;
 
@@ -269,6 +271,13 @@
     }
 
     return nextTimer;
+  }
+
+  function arePowerupsEnabled(options) {
+    if (options.room?.powerups?.enabled === false) return false;
+    if (options.isUserBaseRoom?.()) return false;
+
+    return true;
   }
 
   window.GUNS_POWERUPS = {

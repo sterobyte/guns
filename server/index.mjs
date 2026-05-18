@@ -16,23 +16,26 @@ loadMongoEnv(root);
 const publishedConfigFile = path.join(root, "shared", "game-config.json");
 const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
-const host = process.env.GUNS_HOST || "127.0.0.1";
+const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.0";
+const version = "0.16.26";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
 let publishedConfig = loadPublishedConfig();
-const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
+const secureCookies =
+  process.env.GUNS_COOKIE_SECURE === "1" ||
+  process.env.NODE_ENV === "production";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16),
   getRoomConfig: (roomId) => publishedConfig.rooms?.[roomId] || null,
   getModeConfig: (modeId) => publishedConfig.modes?.[modeId] || null,
   recordMatchResult: (result) => users.recordMatchResult(result)
 });
+const userStoreMode = resolveUserStoreMode(process.env);
 const usersStore = await createUserStore({
   storageFile: usersStorageFile,
-  mode: process.env.GUNS_USER_STORE || "file",
+  mode: userStoreMode,
   mongoUrl: process.env.GUNS_MONGO_URL || "",
   mongoDatabase: process.env.GUNS_MONGO_DATABASE || "guns",
   mongoCollection: process.env.GUNS_MONGO_USER_COLLECTION || "user_snapshots"
@@ -90,6 +93,9 @@ const server = http.createServer((req, res) => {
       draft: getDraftStatus(),
       counts: {
         cannons: Object.keys(publishedConfig.objects?.cannons || {}).length,
+        guns: Object.keys(publishedConfig.objects?.cannons || {}).length,
+        pilotWeaponTypes: Object.keys(publishedConfig.objects?.pilotWeaponTypes || {}).length,
+        pilotWeapons: Object.keys(publishedConfig.objects?.pilotWeapons || {}).length,
         rooms: Object.keys(publishedConfig.rooms || {}).length,
         modes: Object.keys(publishedConfig.modes || {}).length
       }
@@ -294,6 +300,50 @@ const server = http.createServer((req, res) => {
       ok: true,
       rooms: publishedConfig.rooms
     });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/rooms/") && req.method === "DELETE") {
+    const roomId = decodeURIComponent(url.pathname.slice("/api/rooms/".length)).trim();
+
+    if (isRoomPublished(publishedConfig, roomId)) {
+      sendJson(req, res, 409, {
+        ok: false,
+        error: "room_published",
+        message: "Published rooms cannot be deleted"
+      });
+      return;
+    }
+
+    if (isRoomOccupied(roomId)) {
+      sendJson(req, res, 409, {
+        ok: false,
+        error: "room_not_empty",
+        message: "Room cannot be deleted while players are inside"
+      });
+      return;
+    }
+
+    try {
+      const config = deleteRoom(publishedConfig, roomId);
+
+      validateGameConfig(config);
+      writeConfigSources(config);
+      const builtConfig = buildVersionedGameConfig();
+      writeConfigFile(publishedConfigFile, builtConfig);
+      publishedConfig = builtConfig;
+
+      sendJson(req, res, 200, {
+        ok: true,
+        rooms: publishedConfig.rooms
+      });
+    } catch (error) {
+      sendJson(req, res, 400, {
+        ok: false,
+        error: "invalid_room",
+        message: error.message
+      });
+    }
     return;
   }
 
@@ -649,6 +699,28 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname === "/users/spend-gs" && req.method === "POST") {
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.spendGunsCoin(
+          body?.nick,
+          body?.amount,
+          cookies,
+          body?.meta || {}
+        );
+
+        if (!result.ok) {
+          sendJson(req, res, 400, result);
+          return;
+        }
+
+        sendJson(req, res, 200, result);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+
+    return;
+  }
+
   if (url.pathname === "/admin/users") {
     sendJson(req, res, 200, {
       ...users.snapshot(),
@@ -886,6 +958,14 @@ function writeConfigSources(config) {
     config.objects?.cannons || {}
   );
   writeConfigDirectory(
+    path.join(root, "shared", "objects", "pilot-weapon-types"),
+    config.objects?.pilotWeaponTypes || {}
+  );
+  writeConfigDirectory(
+    path.join(root, "shared", "objects", "pilot-weapons"),
+    config.objects?.pilotWeapons || {}
+  );
+  writeConfigDirectory(
     path.join(root, "shared", "objects", "room-objects"),
     config.objects?.roomObjects || {}
   );
@@ -995,6 +1075,15 @@ function getEconomyConfig(config) {
   };
 }
 
+function resolveUserStoreMode(env) {
+  const requested = String(env.GUNS_USER_STORE || "").trim();
+
+  if (requested) return requested;
+  if (env.GUNS_MONGO_URL) return "mongo-collections";
+
+  return "file";
+}
+
 function normalizePositiveInteger(value, fallback) {
   const number = Number(value);
 
@@ -1026,6 +1115,7 @@ function createDraftRoom(config, sourceRoomId) {
   draft.title = `${source.title || source.id} Draft`;
   draft.enabled = false;
   draft.published = false;
+  delete draft.inherits;
   normalizeDraftPlayerSpawn(draft);
 
   nextConfig.rooms[id] = draft;
@@ -1079,6 +1169,17 @@ function publishRoom(config, roomId) {
   const nextConfig = structuredClone(config);
 
   nextConfig.rooms[roomId].published = true;
+
+  return nextConfig;
+}
+
+function deleteRoom(config, roomId) {
+  if (!config.rooms?.[roomId]) {
+    throw new Error(`Room not found: ${roomId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+  delete nextConfig.rooms[roomId];
 
   return nextConfig;
 }

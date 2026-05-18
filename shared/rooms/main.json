@@ -3,7 +3,7 @@
   "title": "Main Arena",
   "description": "Classic public arena",
   "enabled": true,
-  "published": true,
+  "published": false,
   "modeId": "classic-deathmatch",
   "arena": {
     "shape": "rectangle",

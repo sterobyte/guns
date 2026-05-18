@@ -1,34 +1,12 @@
-const SERVER_BOTS = [
-  { id: "bot1", nick: "Yuriy" },
-  { id: "bot2", nick: "Sidorova" },
-  { id: "bot3", nick: "Kirk" },
-  { id: "bot4", nick: "Lara" },
-  { id: "bot5", nick: "Danila" }
-];
 const PASSIVE_SCORE_INTERVAL_MS = 100;
 
 export class ArenaRoomState {
-  constructor(roomId) {
+  constructor(roomId, roomConfig = {}) {
     this.roomId = roomId;
     this.createdAt = Date.now();
     this.scoreEvents = [];
     this.players = new Map();
-    this.bots = new Map(
-      SERVER_BOTS.map((bot) => [
-        bot.id,
-        {
-          ...bot,
-          score: 0,
-          pilotKills: 0,
-          cannonBreaks: 0,
-          pilotDeaths: 0,
-          online: true,
-          serverControlled: true,
-          createdAt: Date.now(),
-          lastSeenAt: Date.now()
-        }
-      ])
-    );
+    this.bots = createRoomBots(roomConfig);
   }
 
   join(client) {
@@ -230,6 +208,35 @@ function buildScoreboardRows(players, bots) {
       kind: "bot"
     }))
   ].sort((a, b) => b.score - a.score || a.nick.localeCompare(b.nick));
+}
+
+function createRoomBots(roomConfig = {}) {
+  const botSpawns = Array.isArray(roomConfig?.spawns?.bots)
+    ? roomConfig.spawns.bots
+    : [];
+  const now = Date.now();
+
+  return new Map(
+    botSpawns.map((bot, index) => {
+      const id = String(bot.unitId || bot.id || `bot${index + 1}`);
+
+      return [
+        id,
+        {
+          id,
+          nick: String(bot.name || bot.nick || id),
+          score: 0,
+          pilotKills: 0,
+          cannonBreaks: 0,
+          pilotDeaths: 0,
+          online: true,
+          serverControlled: true,
+          createdAt: now,
+          lastSeenAt: now
+        }
+      ];
+    })
+  );
 }
 
 function finiteNumber(value) {

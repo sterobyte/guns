@@ -12,6 +12,7 @@ const files = [
   path.join(root, "src", "net", "network-adapter.js"),
   path.join(root, "src", "config", "runtime-config.js"),
   path.join(root, "src", "config", "config-loader.js"),
+  path.join(root, "src", "rooms", "death-flow.js"),
   path.join(root, "scripts", "config-tools.mjs"),
   path.join(root, "scripts", "backup-users.mjs"),
   path.join(root, "scripts", "build-config.mjs"),

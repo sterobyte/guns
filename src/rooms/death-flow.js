@@ -97,6 +97,7 @@
     victim.pilotImmunity = options.pilotImmunityTime;
     victim.pilotKnockback = null;
     victim.pilotEject = null;
+    victim.pilotWeaponCooldown = 0;
     victim.pilotRadius = options.pilotRadius;
     victim.pilotFlyState = "ground";
     victim.pilotFlyTime = 0;

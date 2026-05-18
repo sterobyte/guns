@@ -273,7 +273,65 @@
         }
       }
     },
+    "pilotWeaponTypes": {
+      "knife": {
+        "id": "knife",
+        "kind": "pilot-weapon-type",
+        "title": "knife"
+      },
+      "pistol": {
+        "id": "pistol",
+        "kind": "pilot-weapon-type",
+        "title": "pistol"
+      }
+    },
+    "pilotWeapons": {
+      "basic-knife": {
+        "id": "basic-knife",
+        "typeId": "knife",
+        "kind": "pilot-weapon",
+        "title": "knife",
+        "description": "close contact blade",
+        "version": 1,
+        "economy": {
+          "priceGs": 10
+        },
+        "gameplay": {
+          "damage": 1
+        }
+      },
+      "basic-pistol": {
+        "id": "basic-pistol",
+        "typeId": "pistol",
+        "kind": "pilot-weapon",
+        "title": "pistol",
+        "description": "starter sidearm",
+        "version": 1,
+        "economy": {
+          "priceGs": 25
+        },
+        "gameplay": {
+          "fireRate": 0.28,
+          "damage": 10,
+          "magazine": 8
+        }
+      }
+    },
     "roomObjects": {
+      "market-item": {
+        "id": "market-item",
+        "kind": "market-item",
+        "title": "Market Item",
+        "version": 1,
+        "render": {
+          "width": 120,
+          "height": 120,
+          "iconSize": 64
+        },
+        "interaction": {
+          "radius": 68
+        }
+      },
       "menu-terminal": {
         "id": "menu-terminal",
         "kind": "menu-terminal",
@@ -292,6 +350,9 @@
         "kind": "teleport",
         "title": "Teleport",
         "version": 1,
+        "behavior": {
+          "triggerDelaySeconds": 0
+        },
         "render": {
           "radius": 42
         },
@@ -302,214 +363,85 @@
     }
   },
   "rooms": {
-    "deathmatch": {
-      "id": "deathmatch",
-      "title": "Deathmatch",
-      "description": "5 mins, 6 players",
-      "enabled": true,
-      "published": false,
-      "modeId": "deathmatch",
-      "arena": {
-        "shape": "circle",
-        "params": {
-          "radius": 1000
-        }
-      },
-      "limits": {
-        "maxPlayers": 16
-      },
-      "allowedCannons": [
-        "autogun",
-        "doublegun",
-        "heavygun",
-        "machinegun"
-      ],
-      "spawns": {
-        "mode": "random",
-        "player": {
-          "state": "pilot",
-          "pilotX": 0,
-          "pilotY": -58
-        },
-        "bots": [
-          {
-            "unitId": "bot1",
-            "name": "Yuriy",
-            "state": "alive",
-            "gunType": "autogun",
-            "cannonEntityId": "autogun1",
-            "x": 950,
-            "y": 620
-          },
-          {
-            "unitId": "bot2",
-            "name": "Sidorova",
-            "state": "alive",
-            "gunType": "autogun",
-            "cannonEntityId": "autogun2",
-            "x": -950,
-            "y": -620
-          },
-          {
-            "unitId": "bot3",
-            "name": "Kirk",
-            "state": "pilot",
-            "pilotX": -760,
-            "pilotY": 520
-          },
-          {
-            "unitId": "bot4",
-            "name": "Lara",
-            "state": "pilot",
-            "pilotX": 760,
-            "pilotY": -520
-          },
-          {
-            "unitId": "bot5",
-            "name": "Danila",
-            "state": "pilot",
-            "pilotX": 0,
-            "pilotY": 620
-          }
-        ],
-        "cannons": [
-          {
-            "unitId": "autogun0",
-            "gunType": "autogun",
-            "x": 0,
-            "y": -420
-          },
-          {
-            "unitId": "autogun1",
-            "gunType": "autogun",
-            "x": 420,
-            "y": 0
-          },
-          {
-            "unitId": "autogun2",
-            "gunType": "autogun",
-            "x": 0,
-            "y": 420
-          },
-          {
-            "unitId": "autogun3",
-            "gunType": "autogun",
-            "x": -420,
-            "y": 0
-          },
-          {
-            "unitId": "heavygun1",
-            "gunType": "heavygun",
-            "x": -560,
-            "y": -560
-          },
-          {
-            "unitId": "heavygun2",
-            "gunType": "heavygun",
-            "x": 560,
-            "y": 560
-          }
-        ]
-      }
-    },
-    "main-draft-1": {
-      "id": "main-draft-1",
-      "title": "Main Arena Draft",
-      "description": "Draft classic arena",
+    "guns-market": {
+      "id": "guns-market",
+      "title": "Guns Market",
+      "description": "Portable weapons shop",
+      "roomKind": "market",
       "enabled": true,
       "published": false,
       "modeId": "classic-deathmatch",
       "arena": {
-        "shape": "circle",
+        "shape": "rectangle",
         "params": {
-          "radius": 1000
+          "width": 750,
+          "height": 750
         }
       },
       "limits": {
-        "maxPlayers": 16
+        "maxPlayers": 1
       },
-      "allowedCannons": [
-        "autogun",
-        "doublegun",
-        "heavygun",
-        "machinegun"
-      ],
+      "powerups": {
+        "enabled": false,
+        "initialCount": 0
+      },
+      "allowedCannons": [],
       "spawns": {
-        "mode": "random",
+        "mode": "fixed",
         "player": {
           "state": "pilot",
           "pilotX": 0,
-          "pilotY": -58
+          "pilotY": 180
         },
-        "bots": [
-          {
-            "unitId": "bot1",
-            "name": "Yuriy",
-            "state": "alive",
-            "gunType": "autogun",
-            "cannonEntityId": "autogun1",
-            "x": 950,
-            "y": 620
-          },
-          {
-            "unitId": "bot2",
-            "name": "Sidorova",
-            "state": "alive",
-            "gunType": "autogun",
-            "cannonEntityId": "autogun2",
-            "x": -950,
-            "y": -620
-          },
-          {
-            "unitId": "bot3",
-            "name": "Kirk",
-            "state": "pilot",
-            "pilotX": -760,
-            "pilotY": 520
-          },
-          {
-            "unitId": "bot4",
-            "name": "Lara",
-            "state": "pilot",
-            "pilotX": 760,
-            "pilotY": -520
-          },
-          {
-            "unitId": "bot5",
-            "name": "Danila",
-            "state": "pilot",
-            "pilotX": 0,
-            "pilotY": 620
+        "bots": [],
+        "cannons": []
+      },
+      "objects": [
+        {
+          "instanceId": "market-basic-pistol",
+          "objectId": "market-item",
+          "x": -120,
+          "y": -70,
+          "rotation": 0,
+          "params": {
+            "weaponId": "basic-pistol",
+            "icon": "pistol",
+            "stock": 1
           }
-        ],
-        "cannons": [
-          {
-            "unitId": "autogun0",
-            "gunType": "autogun",
-            "x": 0,
-            "y": 0
-          },
-          {
-            "unitId": "autogun1",
-            "gunType": "heavygun",
-            "x": -520,
-            "y": 0
-          },
-          {
-            "unitId": "autogun2",
-            "gunType": "machinegun",
-            "x": 520,
-            "y": 0
+        },
+        {
+          "instanceId": "market-basic-knife",
+          "objectId": "market-item",
+          "x": 120,
+          "y": -70,
+          "rotation": 0,
+          "params": {
+            "weaponId": "basic-knife",
+            "icon": "knife",
+            "stock": 1
           }
-        ]
-      }
+        },
+        {
+          "instanceId": "market-base-teleport",
+          "objectId": "teleport",
+          "x": 0,
+          "y": 260,
+          "rotation": 0,
+          "params": {
+            "targetRoomId": "user-cabinet",
+            "label": "BASE",
+            "description": "User Base",
+            "triggerDelaySeconds": 3
+          }
+        }
+      ]
     },
     "main": {
       "id": "main",
       "title": "Main Arena",
       "description": "Classic public arena",
       "enabled": true,
-      "published": true,
+      "published": false,
       "modeId": "classic-deathmatch",
       "arena": {
         "shape": "rectangle",
@@ -597,93 +529,11 @@
         ]
       }
     },
-    "multiplayer-test": {
-      "id": "multiplayer-test",
-      "title": "Multiplayer Test",
-      "description": "2 autoguns, no bots",
-      "enabled": true,
-      "published": false,
-      "modeId": "deathmatch",
-      "arena": {
-        "shape": "circle",
-        "params": {
-          "radius": 720
-        }
-      },
-      "limits": {
-        "maxPlayers": 8
-      },
-      "allowedCannons": [
-        "autogun"
-      ],
-      "spawns": {
-        "mode": "random",
-        "player": {
-          "state": "pilot",
-          "pilotX": 0,
-          "pilotY": -58
-        },
-        "bots": [],
-        "cannons": [
-          {
-            "unitId": "autogun-test-1",
-            "gunType": "autogun",
-            "x": -240,
-            "y": 0
-          },
-          {
-            "unitId": "autogun-test-2",
-            "gunType": "autogun",
-            "x": 240,
-            "y": 0
-          }
-        ]
-      }
-    },
-    "test-range": {
-      "id": "test-range",
-      "title": "Test Range",
-      "description": "Small weapon test room",
-      "enabled": true,
-      "published": true,
-      "inherits": "main",
-      "modeId": "classic-deathmatch",
-      "arena": {
-        "shape": "rectangle",
-        "params": {
-          "width": 720,
-          "height": 720
-        }
-      },
-      "limits": {
-        "maxPlayers": 8
-      },
-      "allowedCannons": [
-        "autogun",
-        "machinegun"
-      ],
-      "spawns": {
-        "player": {
-          "state": "pilot",
-          "pilotX": 0,
-          "pilotY": -58
-        },
-        "bots": [],
-        "cannons": [
-          {
-            "unitId": "autogun2",
-            "gunType": "machinegun",
-            "x": 0,
-            "y": 0
-          }
-        ]
-      }
-    },
     "user-cabinet": {
       "id": "user-cabinet",
-      "title": "User Cabinet",
-      "description": "Private pilot room",
-      "roomKind": "user-cabinet",
+      "title": "User Base",
+      "description": "Private pilot base",
+      "roomKind": "user-base",
       "enabled": true,
       "published": false,
       "modeId": "classic-deathmatch",
@@ -737,36 +587,6 @@
           "params": {
             "label": "EXCHANGER",
             "action": "exchange-score"
-          }
-        },
-        {
-          "instanceId": "deathmatch-teleport",
-          "objectId": "teleport",
-          "x": 0,
-          "y": 0,
-          "rotation": 0,
-          "anchor": {
-            "position": "bottom-center",
-            "marginX": -150,
-            "marginY": 126
-          },
-          "params": {
-            "targetRoomId": "deathmatch"
-          }
-        },
-        {
-          "instanceId": "multiplayer-test-teleport",
-          "objectId": "teleport",
-          "x": 0,
-          "y": 0,
-          "rotation": 0,
-          "anchor": {
-            "position": "bottom-center",
-            "marginX": 150,
-            "marginY": 126
-          },
-          "params": {
-            "targetRoomId": "multiplayer-test"
           }
         }
       ]

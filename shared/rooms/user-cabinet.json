@@ -1,8 +1,8 @@
 {
   "id": "user-cabinet",
-  "title": "User Cabinet",
-  "description": "Private pilot room",
-  "roomKind": "user-cabinet",
+  "title": "User Base",
+  "description": "Private pilot base",
+  "roomKind": "user-base",
   "enabled": true,
   "published": false,
   "modeId": "classic-deathmatch",
@@ -56,36 +56,6 @@
       "params": {
         "label": "EXCHANGER",
         "action": "exchange-score"
-      }
-    },
-    {
-      "instanceId": "deathmatch-teleport",
-      "objectId": "teleport",
-      "x": 0,
-      "y": 0,
-      "rotation": 0,
-      "anchor": {
-        "position": "bottom-center",
-        "marginX": -150,
-        "marginY": 126
-      },
-      "params": {
-        "targetRoomId": "deathmatch"
-      }
-    },
-    {
-      "instanceId": "multiplayer-test-teleport",
-      "objectId": "teleport",
-      "x": 0,
-      "y": 0,
-      "rotation": 0,
-      "anchor": {
-        "position": "bottom-center",
-        "marginX": 150,
-        "marginY": 126
-      },
-      "params": {
-        "targetRoomId": "multiplayer-test"
       }
     }
   ]
