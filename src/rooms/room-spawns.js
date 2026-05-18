@@ -96,6 +96,7 @@
     options.resetUnit?.(unit);
     unit.state = "pilot";
     unit.cannonDestroyed = false;
+    unit.cannonEntityId = spawn.cannonEntityId || spawn.unitId || unit.cannonEntityId;
     unit.x = Number(spawn.x || 0);
     unit.y = Number(spawn.y || 0);
     unit.pilotX = unit.x;
@@ -183,6 +184,7 @@
     unit.cannonDestroyed = false;
     unit.cannonEntityId =
       spawn.cannonEntityId ||
+      spawn.unitId ||
       unit.cannonEntityId ||
       `${unit.id}-${unit.gunType || "autogun"}`;
     unit.hp = Math.max(1, unit.hp || unit.maxHp);
