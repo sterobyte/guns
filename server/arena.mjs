@@ -264,6 +264,15 @@ export class ArenaRoomState {
     const now = Date.now();
     const player = this.join(client);
     const weapon = sanitizeEventText(event.weapon || "gun", 32);
+    const requestedCannonId = sanitizeEventText(event.cannonEntityId, 64);
+
+    if (
+      weapon === "gun" &&
+      (!requestedCannonId || requestedCannonId !== player.occupiedCannonId)
+    ) {
+      return [];
+    }
+
     const combatSpec = this.getWeaponCombatSpec(player, weapon, "shoot");
     const rawBullets = Array.isArray(event.bullets) && event.bullets.length > 0
       ? event.bullets
@@ -341,6 +350,17 @@ export class ArenaRoomState {
   }
 
   createBullet(client, player, event, rawBullet, now, combatSpec = null) {
+    if (combatSpec?.typeId === "gun") {
+      const requestedCannonId = sanitizeEventText(
+        rawBullet.cannonEntityId || event.cannonEntityId,
+        64
+      );
+
+      if (!requestedCannonId || requestedCannonId !== player.occupiedCannonId) {
+        return null;
+      }
+    }
+
     const angle = finiteNumber(rawBullet.angle ?? event.angle ?? player.angle);
     const requestedVx = finiteNumber(rawBullet.vx ?? event.vx);
     const requestedVy = finiteNumber(rawBullet.vy ?? event.vy);
@@ -407,8 +427,12 @@ export class ArenaRoomState {
   getWeaponCombatSpec(player, weaponId, action) {
     if (weaponId === "gun") {
       if (player.state !== "in-cannon") return null;
+      if (!player.occupiedCannonId) return null;
 
-      const gunType = sanitizeEventText(player.gunType || "autogun", 32);
+      const gunType = sanitizeEventText(
+        this.cannons.get(player.occupiedCannonId)?.gunType || player.gunType || "autogun",
+        32
+      );
       const cannon = this.getCannonConfig(gunType) || this.getCannonConfig("autogun") || {};
       const baseDamage = finiteNumber(cannon?.gameplay?.damage) || DEFAULT_CANNON_BULLET_DAMAGE;
       const damageMultiplier = finiteNumber(cannon?.gameplay?.damageMultiplier) || 1;

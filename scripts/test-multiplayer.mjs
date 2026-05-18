@@ -1,4 +1,4 @@
-const roomId = process.env.GUNS_TEST_ROOM || `mp-smoke-${Date.now()}`;
+const roomId = process.env.GUNS_TEST_ROOM || "main";
 const wsUrl = process.env.GUNS_TEST_WS_URL ||
   `ws://127.0.0.1:3000/ws?room=${encodeURIComponent(roomId)}&nick=`;
 const timeoutMs = Number(process.env.GUNS_TEST_TIMEOUT_MS || 5000);
@@ -39,7 +39,10 @@ try {
   await waitFor(() => clients.every((client) => client.remoteSnapshots.size >= 1), "remote snapshots");
   clients[0].sendSnapshot({
     state: "in-cannon",
-    gunType: "autogun"
+    gunType: "autogun",
+    cannonEntityId: "autogun0",
+    x: 0,
+    y: 0
   });
   clients[0].sendShootEvent();
   await waitFor(() => clients.every((client) => client.bullets.length >= 1), "server bullets");
@@ -195,7 +198,9 @@ function createTestClient(nick, snapshot, options = {}) {
         type: "shoot:event",
         event: {
           weapon: "gun",
+          cannonEntityId: "autogun0",
           bullets: [{
+            cannonEntityId: "autogun0",
             x: snapshot.x + 20,
             y: snapshot.y,
             vx: 720,

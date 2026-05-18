@@ -5846,10 +5846,16 @@ function sendNetworkSnapshot(now) {
 function sendNetworkShootEvent(weapon, bullets) {
   if (!window.GUNS_NET?.connected) return;
 
+  const cannonEntityId =
+    weapon === "gun" && player.state === "alive"
+      ? player.cannonEntityId || ""
+      : "";
+
   const list = (Array.isArray(bullets) ? bullets : [bullets])
     .filter(Boolean)
     .map(bullet => ({
       weapon,
+      cannonEntityId,
       x: bullet.x,
       y: bullet.y,
       vx: bullet.vx,
@@ -5863,6 +5869,7 @@ function sendNetworkShootEvent(weapon, bullets) {
 
   window.GUNS_NET.sendShootEvent?.({
     weapon,
+    cannonEntityId,
     bullets: list
   });
 }
