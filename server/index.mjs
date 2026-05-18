@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.50";
+const version = "0.16.51";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -1225,6 +1225,19 @@ function setGlobalSettings(config, settings) {
   nextConfig.settings ||= {};
   if (settings.botNameBrackets !== undefined) {
     nextConfig.settings.botNameBrackets = settings.botNameBrackets === true;
+  }
+  if (settings.camera !== undefined) {
+    nextConfig.settings.camera ||= {};
+
+    if (settings.camera?.height !== undefined) {
+      const height = Number(settings.camera.height);
+
+      if (!Number.isFinite(height) || height <= 0) {
+        throw new Error("settings.camera.height must be a positive number");
+      }
+
+      nextConfig.settings.camera.height = Math.min(3, Math.max(0.5, height));
+    }
   }
 
   return nextConfig;

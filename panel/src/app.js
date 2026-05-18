@@ -32,6 +32,10 @@
       title: "Settings",
       load: loadSettings
     },
+    camera: {
+      title: "Camera",
+      load: loadCamera
+    },
     economy: {
       title: "Economy",
       load: loadEconomy
@@ -537,6 +541,71 @@
     } catch (error) {
       window.alert(error.message || "Settings update rejected");
       await loadSettings();
+    }
+  }
+
+  async function loadCamera() {
+    const data = await fetchJson(api.settingsUrl || `${api.baseUrl}/api/settings`);
+    const camera = data.settings?.camera || {};
+    const height = Number(camera.height);
+    const currentHeight = Number.isFinite(height) && height > 0 ? height : 1;
+
+    setMetricLabels("Height", "Mode", "Scope", "Source");
+    total.textContent = String(currentHeight);
+    online.textContent = "room";
+    connections.textContent = "global";
+    uptime.textContent = "settings";
+
+    setColumns(["Setting", "Value", "Description"]);
+    tableBody.textContent = "";
+
+    const row = document.createElement("tr");
+    row.append(
+      cell("Height over room"),
+      cameraNumberCell("height", currentHeight),
+      cell("Global camera height multiplier. Higher value means the camera is farther from every room.")
+    );
+    tableBody.appendChild(row);
+  }
+
+  function cameraNumberCell(key, value) {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+
+    input.type = "number";
+    input.className = "number-param-input";
+    input.min = "0.5";
+    input.max = "3";
+    input.step = "0.05";
+    input.value = String(value ?? 1);
+    input.addEventListener("change", () => setCameraSetting(key, input.value));
+
+    td.appendChild(input);
+    return td;
+  }
+
+  async function setCameraSetting(key, value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number) || number <= 0) {
+      window.alert("Camera value must be a positive number");
+      await loadCamera();
+      return;
+    }
+
+    try {
+      await fetchJson(api.settingsUrl || `${api.baseUrl}/api/settings`, {
+        method: "POST",
+        body: JSON.stringify({
+          camera: {
+            [key]: number
+          }
+        })
+      });
+      await loadCamera();
+    } catch (error) {
+      window.alert(error.message || "Camera update rejected");
+      await loadCamera();
     }
   }
 

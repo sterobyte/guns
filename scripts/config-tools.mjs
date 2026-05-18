@@ -113,6 +113,12 @@ export function validateGameConfig(config) {
 function validateSettings(settings) {
   requireObject(settings, "settings");
   requireBoolean(settings.botNameBrackets, "settings.botNameBrackets");
+  if (settings.camera !== undefined) {
+    requireObject(settings.camera, "settings.camera");
+    if (settings.camera.height !== undefined) {
+      requirePositiveNumber(settings.camera.height, "settings.camera.height");
+    }
+  }
   requireObject(settings.economy, "settings.economy");
   requireObject(settings.economy.gunsCoin, "settings.economy.gunsCoin");
   requireNonNegativeNumber(

@@ -776,14 +776,28 @@ function isTutorialMode() {
 }
 
 function getCameraBaseScale() {
+  const cameraHeight = getCameraHeight();
+
   if (isFixedCameraRoom()) {
     return Math.min(
       window.innerWidth / Math.max(1, getRoomWidth() + 96),
       window.innerHeight / Math.max(1, getRoomHeight() + 96)
-    );
+    ) / cameraHeight;
   }
 
-  return CAMERA_BASE_SCALE * cameraUserZoom;
+  return CAMERA_BASE_SCALE * cameraUserZoom / cameraHeight;
+}
+
+function getCameraHeight() {
+  const value = Number(
+    window.GUNS_SHARED_CONFIG?.settings?.camera?.height ??
+    window.GUNS_CONFIG?.render?.cameraHeight ??
+    1
+  );
+
+  return Number.isFinite(value) && value > 0
+    ? clamp(value, 0.5, 3)
+    : 1;
 }
 
 function adjustCameraZoom(direction) {
