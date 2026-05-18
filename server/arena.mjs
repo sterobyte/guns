@@ -16,6 +16,13 @@ const SERVER_DAMAGE_AUTHORITY_MS = 1500;
 const MELEE_COOLDOWN_MS = 650;
 const MELEE_EXTRA_RANGE = 12;
 const DEFAULT_ROOM_RADIUS = 1200;
+const DEFAULT_PILOT_MOVE_SPEED = 230;
+const DEFAULT_CANNON_MOVE_SPEED = 260;
+const MOVEMENT_VALIDATION_MIN_DT_MS = 50;
+const MOVEMENT_VALIDATION_MAX_DT_MS = 1000;
+const MOVEMENT_SPEED_TOLERANCE = 1.75;
+const MOVEMENT_POSITION_GRACE = 60;
+const MOVEMENT_STATE_CHANGE_GRACE = 120;
 
 export class ArenaRoomState {
   constructor(roomId, roomConfig = {}, options = {}) {
@@ -58,6 +65,8 @@ export class ArenaRoomState {
         inventory: normalizeInventory(client.inventory),
         connectedAt: Date.now(),
         lastSeenAt: Date.now(),
+        lastSnapshotAt: 0,
+        lastAcceptedState: "on-foot",
         online: true
       });
     }
@@ -116,8 +125,11 @@ export class ArenaRoomState {
       rawY,
       player.state === "in-cannon" ? player.radiusOuter : player.radiusInner
     );
-    player.x = clampedPoint.x;
-    player.y = clampedPoint.y;
+    const validatedPoint = clampPlayerMovement(player, clampedPoint, now, {
+      cannon: this.getCannonConfig(player.gunType)
+    });
+    player.x = validatedPoint.x;
+    player.y = validatedPoint.y;
     player.clientScore = Math.max(0, Math.floor(finiteNumber(snapshot.score)));
     player.clientPilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.clientCannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
@@ -125,6 +137,7 @@ export class ArenaRoomState {
     player.inventory = normalizeInventory(client.inventory || player.inventory);
     player.online = true;
     player.lastSeenAt = now;
+    player.lastSnapshotAt = now;
 
     this.updateBots(snapshot.bots);
 
@@ -162,6 +175,8 @@ export class ArenaRoomState {
     player.serverDamagedAt = 0;
     player.killedAt = 0;
     player.lastSeenAt = now;
+    player.lastSnapshotAt = now;
+    player.lastAcceptedState = player.state;
 
     return {
       id: `${now}-${client.id}-respawn`,
@@ -735,6 +750,52 @@ function clampPointToRoom(bounds, x, y, radius = 0) {
     x: x * ratio,
     y: y * ratio
   };
+}
+
+function clampPlayerMovement(player, targetPoint, now, options = {}) {
+  if (!player.lastSnapshotAt) {
+    player.lastAcceptedState = player.state;
+    return targetPoint;
+  }
+
+  const elapsedMs = clampNumber(
+    now - player.lastSnapshotAt,
+    MOVEMENT_VALIDATION_MIN_DT_MS,
+    MOVEMENT_VALIDATION_MAX_DT_MS
+  );
+  const baseSpeed = getPlayerMovementSpeed(player, options.cannon);
+  const stateChanged = player.lastAcceptedState && player.lastAcceptedState !== player.state;
+  const maxDistance =
+    baseSpeed * MOVEMENT_SPEED_TOLERANCE * (elapsedMs / 1000) +
+    MOVEMENT_POSITION_GRACE +
+    (stateChanged ? MOVEMENT_STATE_CHANGE_GRACE : 0);
+  const dx = targetPoint.x - player.x;
+  const dy = targetPoint.y - player.y;
+  const distance = Math.hypot(dx, dy);
+
+  player.lastAcceptedState = player.state;
+
+  if (distance <= maxDistance || distance <= 0) {
+    return targetPoint;
+  }
+
+  const ratio = maxDistance / distance;
+
+  return {
+    x: player.x + dx * ratio,
+    y: player.y + dy * ratio
+  };
+}
+
+function getPlayerMovementSpeed(player, cannon = null) {
+  if (player.state !== "in-cannon") {
+    return DEFAULT_PILOT_MOVE_SPEED;
+  }
+
+  return Math.max(
+    0,
+    finiteNumber(cannon?.physics?.speed?.player) || DEFAULT_CANNON_MOVE_SPEED
+  );
 }
 
 function createRoomBots(roomConfig = {}) {

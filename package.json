@@ -1,6 +1,6 @@
 {
   "name": "guns-next1",
-  "version": "0.16.52",
+  "version": "0.16.53",
   "private": true,
   "description": "Project wrapper around gunsdemo22.html with legacy behavior preserved.",
   "dependencies": {
