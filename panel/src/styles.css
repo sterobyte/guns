@@ -326,6 +326,20 @@ tr:last-child td {
   width: 104px;
 }
 
+.select-param-input.wide {
+  width: 160px;
+}
+
+.section-row {
+  background: rgba(184, 211, 111, 0.08);
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.market-item-row td {
+  background: rgba(12, 17, 9, 0.34);
+}
+
 .gs-editor {
   align-items: center;
   display: inline-flex;

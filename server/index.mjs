@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.42";
+const version = "0.16.43";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -347,7 +347,8 @@ const server = http.createServer((req, res) => {
   if (url.pathname === "/api/rooms") {
     sendJson(req, res, 200, {
       ok: true,
-      rooms: publishedConfig.rooms
+      rooms: publishedConfig.rooms,
+      objects: publishedConfig.objects
     });
     return;
   }
@@ -548,6 +549,49 @@ const server = http.createServer((req, res) => {
         sendJson(req, res, 400, {
           ok: false,
           error: "invalid_room",
+          message: error.message
+        });
+      });
+    return;
+  }
+
+  if (url.pathname === "/api/rooms/object" && req.method === "PATCH") {
+    readJsonBody(req)
+      .then((body) => {
+        const roomId = String(body?.roomId || "").trim();
+
+        if (isRoomPublished(publishedConfig, roomId)) {
+          sendJson(req, res, 409, {
+            ok: false,
+            error: "room_published",
+            message: "Published rooms are immutable"
+          });
+          return;
+        }
+
+        const config = setRoomObjectInstanceConfig(
+          publishedConfig,
+          roomId,
+          String(body?.instanceId || "").trim(),
+          body?.object || body
+        );
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          room: publishedConfig.rooms[roomId],
+          rooms: publishedConfig.rooms
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_room_object",
           message: error.message
         });
       });
@@ -1302,6 +1346,75 @@ function setRoomArena(config, roomId, shape, params) {
   };
 
   return nextConfig;
+}
+
+function setRoomObjectInstanceConfig(config, roomId, instanceId, patch = {}) {
+  const room = config.rooms?.[roomId];
+
+  if (!room) {
+    throw new Error(`Room not found: ${roomId}`);
+  }
+
+  const objectIndex = (room.objects || [])
+    .findIndex((item) => item.instanceId === instanceId);
+
+  if (objectIndex < 0) {
+    throw new Error(`Room object not found: ${instanceId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+  const instance = nextConfig.rooms[roomId].objects[objectIndex];
+
+  if (patch.x !== undefined) {
+    instance.x = normalizeFiniteNumber(patch.x, "x");
+  }
+
+  if (patch.y !== undefined) {
+    instance.y = normalizeFiniteNumber(patch.y, "y");
+  }
+
+  if (patch.rotation !== undefined) {
+    instance.rotation = normalizeFiniteNumber(patch.rotation, "rotation");
+  }
+
+  if (instance.objectId === "market-item") {
+    instance.params ||= {};
+
+    if (patch.weaponId !== undefined) {
+      const weaponId = String(patch.weaponId || "").trim();
+
+      if (!nextConfig.objects?.pilotWeapons?.[weaponId]) {
+        throw new Error(`Pilot weapon not found: ${weaponId}`);
+      }
+
+      instance.params.weaponId = weaponId;
+      instance.params.icon = nextConfig.objects.pilotWeapons[weaponId].typeId ||
+        instance.params.icon ||
+        "item";
+    }
+
+    if (patch.stock !== undefined) {
+      const stock = Number(patch.stock);
+
+      if (!Number.isFinite(stock) || stock < 0) {
+        throw new Error("stock must be a non-negative number");
+      }
+
+      instance.params.stock = Math.floor(stock);
+    }
+  }
+
+  return nextConfig;
+}
+
+function normalizeFiniteNumber(value, label) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+
+  return number;
 }
 
 function normalizeRoomArenaParams(shape, params) {

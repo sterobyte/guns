@@ -994,14 +994,16 @@
   async function loadRooms() {
     const data = await fetchJson(api.roomsUrl || `${api.baseUrl}/api/rooms`);
     const rooms = Object.values(data.rooms || {});
+    const marketItems = rooms.flatMap((room) => getRoomMarketItems(room));
 
+    window.GUNS_PANEL_LAST_OBJECTS = data.objects || window.GUNS_PANEL_LAST_OBJECTS || {};
     setMetricLabels("Rooms", "Enabled", "Max players", "Source");
     total.textContent = String(rooms.length);
     online.textContent = String(rooms.filter((room) => room.enabled).length);
     connections.textContent = String(
       rooms.reduce((sum, room) => sum + Number(room.limits?.maxPlayers || 0), 0)
     );
-    uptime.textContent = "shared";
+    uptime.textContent = `items ${marketItems.length}`;
 
     setColumns([
       "Enabled",
@@ -1022,6 +1024,7 @@
       "Actions"
     ]);
     renderRoomRows(rooms);
+    renderMarketItemRows(rooms);
   }
 
   function renderRoomRows(rooms) {
@@ -1066,6 +1069,93 @@
       );
       tableBody.appendChild(row);
     }
+  }
+
+  function getRoomMarketItems(room) {
+    return (room.objects || [])
+      .filter((instance) => instance.objectId === "market-item")
+      .map((instance) => ({ room, instance }));
+  }
+
+  function renderMarketItemRows(rooms) {
+    const marketItems = rooms.flatMap((room) => getRoomMarketItems(room));
+
+    if (!marketItems.length) return;
+
+    const titleRow = document.createElement("tr");
+    const titleCell = document.createElement("td");
+
+    titleCell.colSpan = 16;
+    titleCell.className = "section-row";
+    titleCell.textContent = "Market items";
+    titleRow.appendChild(titleCell);
+    tableBody.appendChild(titleRow);
+
+    for (const { room, instance } of marketItems) {
+      const row = document.createElement("tr");
+
+      row.className = "market-item-row";
+      row.append(
+        mutedCell("item"),
+        mutedCell(room.id),
+        idCell(instance.instanceId),
+        marketItemWeaponCell(room, instance),
+        marketItemNumberCell(room, instance, "stock", instance.params?.stock ?? 0, "0", "1"),
+        marketItemNumberCell(room, instance, "x", instance.x ?? 0, "", "1"),
+        marketItemNumberCell(room, instance, "y", instance.y ?? 0, "", "1"),
+        mutedCell(instance.params?.icon || "-"),
+        mutedCell("price from weapon")
+      );
+      tableBody.appendChild(row);
+    }
+  }
+
+  function marketItemWeaponCell(room, instance) {
+    const td = document.createElement("td");
+    const select = document.createElement("select");
+    const weapons = getPilotWeapons();
+
+    select.className = "select-param-input wide";
+    select.disabled = room.published === true;
+
+    for (const weapon of weapons) {
+      const option = document.createElement("option");
+
+      option.value = weapon.id;
+      option.textContent = weapon.title || weapon.id;
+      select.appendChild(option);
+    }
+
+    select.value = instance.params?.weaponId || "";
+    select.addEventListener("change", () => {
+      setRoomObjectField(room.id, instance.instanceId, "weaponId", select.value);
+    });
+
+    td.appendChild(select);
+    return td;
+  }
+
+  function marketItemNumberCell(room, instance, field, value, min = "", step = "1") {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+
+    input.type = "number";
+    input.className = "number-param-input";
+    input.min = min;
+    input.step = step;
+    input.value = String(value ?? "");
+    input.disabled = room.published === true;
+    input.title = field;
+    input.addEventListener("change", () => {
+      setRoomObjectField(room.id, instance.instanceId, field, input.value);
+    });
+
+    td.appendChild(input);
+    return td;
+  }
+
+  function getPilotWeapons() {
+    return Object.values(window.GUNS_PANEL_LAST_OBJECTS?.pilotWeapons || {});
   }
 
   function roomActionsCell(room) {
@@ -1337,6 +1427,38 @@
       await loadRooms();
     } catch (error) {
       window.alert(error.message || "Room arena update rejected");
+      await loadRooms();
+    }
+  }
+
+  async function setRoomObjectField(roomId, instanceId, field, rawValue) {
+    const numericFields = new Set(["stock", "x", "y", "rotation"]);
+    const value = numericFields.has(field)
+      ? Number(rawValue)
+      : String(rawValue || "").trim();
+
+    if (numericFields.has(field) && !Number.isFinite(value)) {
+      await loadRooms();
+      return;
+    }
+
+    if (!numericFields.has(field) && !value) {
+      await loadRooms();
+      return;
+    }
+
+    try {
+      await fetchJson(api.roomObjectUrl || `${api.baseUrl}/api/rooms/object`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          roomId,
+          instanceId,
+          [field]: value
+        })
+      });
+      await loadRooms();
+    } catch (error) {
+      window.alert(error.message || "Room object update rejected");
       await loadRooms();
     }
   }

@@ -9,7 +9,7 @@ const GUNS_PANEL_API_BASE_URL = (
 window.GUNS_PANEL_CONFIG = {
   project: {
     name: "guns-panel",
-    version: "0.2.13",
+    version: "0.2.14",
     brand: "GUNS Panel"
   },
   api: {
@@ -29,6 +29,7 @@ window.GUNS_PANEL_CONFIG = {
     roomPublishUrl: `${GUNS_PANEL_API_BASE_URL}/api/rooms/publish`,
     roomDeleteUrl: `${GUNS_PANEL_API_BASE_URL}/api/rooms`,
     roomArenaUrl: `${GUNS_PANEL_API_BASE_URL}/api/rooms/arena`,
+    roomObjectUrl: `${GUNS_PANEL_API_BASE_URL}/api/rooms/object`,
     modesUrl: `${GUNS_PANEL_API_BASE_URL}/api/modes`,
     configStatusUrl: `${GUNS_PANEL_API_BASE_URL}/api/config/status`,
     configDraftUrl: `${GUNS_PANEL_API_BASE_URL}/api/config/draft`,
