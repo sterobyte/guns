@@ -1287,15 +1287,39 @@ function syncDomainEntities() {
         broken: unit.wreckRepair > 0,
         destroyed: !!unit.cannonDestroyed,
         occupantPilotId:
-          occupantByCannonId.get(unit.cannonEntityId) || null,
+          getServerCannonOccupant(unit) ||
+          occupantByCannonId.get(unit.cannonEntityId) ||
+          null,
         free:
           unit.state === "pilot" &&
           !unit.cannonDestroyed &&
           unit.wreckRepair <= 0 &&
-          unit.hp > 0
+          unit.hp > 0 &&
+          !isCannonOccupiedByRemote(unit)
       });
     }
   }
+}
+
+function getServerCannonState(unit) {
+  if (!unit?.cannonEntityId) return null;
+
+  const serverCannons = window.GUNS_NET?.getServerCannons?.() || [];
+
+  return serverCannons.find(cannon => cannon.id === unit.cannonEntityId) || null;
+}
+
+function getServerCannonOccupant(unit) {
+  const serverCannon = getServerCannonState(unit);
+
+  return serverCannon?.occupiedBy || "";
+}
+
+function isCannonOccupiedByRemote(unit) {
+  const occupiedBy = getServerCannonOccupant(unit);
+  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
+
+  return Boolean(occupiedBy && occupiedBy !== ownClientId);
 }
 
 function getPilotEntityById(id) {
@@ -3272,6 +3296,7 @@ function tryEnterRepairedCannon(unit) {
     if (cannon.cannonDestroyed) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
 
@@ -3993,6 +4018,7 @@ function getNearestFreeCannonForPilot(unit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
     if (!canEnterCannon(unit, cannon)) continue;
@@ -7234,6 +7260,7 @@ function getNearestPilotlessCannon(fromUnit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isCannonOccupiedByRemote(cannon)) continue;
 
     const d = Math.hypot(
       fromUnit.pilotX - cannon.x,
