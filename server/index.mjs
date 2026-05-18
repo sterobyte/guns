@@ -1,7 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
@@ -18,13 +18,17 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.26";
+const version = "0.16.38";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
 let publishedConfig = loadPublishedConfig();
 const secureCookies =
   process.env.GUNS_COOKIE_SECURE === "1" ||
+  process.env.NODE_ENV === "production";
+const adminToken = String(process.env.GUNS_ADMIN_TOKEN || "").trim();
+const adminAuthRequired =
+  adminToken.length > 0 ||
   process.env.NODE_ENV === "production";
 const hub = new MultiplayerHub({
   maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16),
@@ -53,6 +57,16 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "OPTIONS") {
     sendEmpty(req, res, 204);
+    return;
+  }
+
+  const adminAuth = getAdminAuthResult(req, url);
+  if (!adminAuth.ok) {
+    sendJson(req, res, adminAuth.status, {
+      ok: false,
+      error: adminAuth.error,
+      message: adminAuth.message
+    });
     return;
   }
 
@@ -848,6 +862,36 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (url.pathname.startsWith("/admin/users/") && req.method === "PATCH") {
+    const suffix = url.pathname.slice("/admin/users/".length);
+
+    if (!suffix.endsWith("/wallet")) {
+      sendJson(req, res, 404, {
+        ok: false,
+        error: "unknown_admin_user_action"
+      });
+      return;
+    }
+
+    const userId = decodeURIComponent(suffix.slice(0, -"/wallet".length));
+
+    readJsonBody(req)
+      .then((body) => {
+        const result = users.setUserGunsCoin(userId, body?.gunsCoin, {
+          source: "admin-panel"
+        });
+
+        if (!result.ok) {
+          sendJson(req, res, 404, result);
+          return;
+        }
+
+        sendJson(req, res, 200, result);
+      })
+      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
+    return;
+  }
+
   if (url.pathname.startsWith("/admin/users/") && req.method === "DELETE") {
     const userId = decodeURIComponent(url.pathname.slice("/admin/users/".length));
     const result = users.deleteUser(userId);
@@ -1434,14 +1478,85 @@ function sendEmpty(req, res, status) {
   res.end();
 }
 
+function getAdminAuthResult(req, url) {
+  if (!isAdminProtectedPath(url.pathname)) {
+    return { ok: true };
+  }
+
+  if (!adminAuthRequired) {
+    return { ok: true };
+  }
+
+  if (!adminToken) {
+    return {
+      ok: false,
+      status: 503,
+      error: "admin_auth_not_configured",
+      message: "Admin API token is not configured."
+    };
+  }
+
+  if (isAdminTokenValid(getAdminRequestToken(req))) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    status: 401,
+    error: "admin_auth_required",
+    message: "Admin API token is required."
+  };
+}
+
+function isAdminProtectedPath(pathname) {
+  return (
+    pathname === "/admin/users" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/api/objects" ||
+    pathname.startsWith("/api/objects/") ||
+    pathname === "/api/settings" ||
+    pathname === "/api/economy" ||
+    pathname === "/api/rooms" ||
+    pathname.startsWith("/api/rooms/") ||
+    pathname === "/api/modes" ||
+    pathname === "/api/config/status" ||
+    pathname === "/api/config/draft" ||
+    pathname === "/api/config/publish" ||
+    pathname === "/api/config/discard"
+  );
+}
+
+function getAdminRequestToken(req) {
+  const headerToken = String(req.headers["x-guns-admin-token"] || "").trim();
+  const authorization = String(req.headers.authorization || "").trim();
+
+  if (headerToken) return headerToken;
+  if (authorization.toLowerCase().startsWith("bearer ")) {
+    return authorization.slice(7).trim();
+  }
+
+  return "";
+}
+
+function isAdminTokenValid(candidate) {
+  const expected = Buffer.from(adminToken);
+  const actual = Buffer.from(String(candidate || ""));
+
+  if (expected.length <= 0 || actual.length !== expected.length) {
+    return false;
+  }
+
+  return timingSafeEqual(actual, expected);
+}
+
 function corsHeaders(req) {
   const origin = req.headers.origin;
 
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-GUNS-ADMIN-TOKEN",
     "Vary": "Origin"
   };
 }

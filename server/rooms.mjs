@@ -31,7 +31,9 @@ export class MultiplayerHub {
     this.getModeConfig = options.getModeConfig || (() => null);
     this.recordMatchResult = options.recordMatchResult || (() => {});
     this.matchTick = setInterval(() => this.broadcastMatchStates(), 1000);
+    this.combatTick = setInterval(() => this.broadcastCombatStates(), 50);
     this.matchTick.unref?.();
+    this.combatTick.unref?.();
   }
 
   join(client, requestedRoomId, requestedNick) {
@@ -193,6 +195,70 @@ export class MultiplayerHub {
       return;
     }
 
+    if (message.type === "shoot:event") {
+      const room = this.rooms.get(client.roomId);
+      if (!room) return;
+
+      const bullets = room.arena.recordShootEvent(client, {
+        ...(message.event || {}),
+        clientTime: message.clientTime
+      });
+
+      if (!bullets.length) return;
+
+      this.broadcast(
+        client.roomId,
+        {
+          type: "shoot:event",
+          from: client.id,
+          bullets,
+          serverTime: Date.now()
+        }
+      );
+      this.broadcastArenaState(client.roomId);
+      return;
+    }
+
+    if (message.type === "melee:event") {
+      const room = this.rooms.get(client.roomId);
+      if (!room) return;
+
+      const hit = room.arena.recordMeleeEvent(client, {
+        ...(message.event || {}),
+        clientTime: message.clientTime
+      });
+
+      if (!hit) return;
+
+      this.broadcast(
+        client.roomId,
+        {
+          type: "melee:event",
+          from: client.id,
+          hit,
+          serverTime: Date.now()
+        }
+      );
+      this.processCombatHits(room, [hit]);
+      this.broadcastArenaState(client.roomId);
+      return;
+    }
+
+    if (message.type === "respawn:event") {
+      const room = this.rooms.get(client.roomId);
+      if (!room) return;
+
+      const respawn = room.arena.respawnPlayer(client, message.event || {});
+
+      this.broadcast(client.roomId, {
+        type: "respawn:event",
+        respawn,
+        serverTime: Date.now()
+      });
+      this.broadcastArenaState(client.roomId);
+      return;
+    }
+
     if (message.type === "client:snapshot") {
       const room = this.rooms.get(client.roomId);
       if (!room) return;
@@ -262,6 +328,150 @@ export class MultiplayerHub {
       room.match.update(Date.now(), room.arena.scoreboardRows());
       this.broadcastArenaState(room.id);
     }
+  }
+
+  broadcastCombatStates() {
+    const now = Date.now();
+
+    for (const room of this.rooms.values()) {
+      if (room.clients.size <= 0) continue;
+      const hits = room.arena.updateCombat(now);
+      const hasBullets = room.arena.hasActiveBullets(now);
+
+      if (hits.length) {
+        this.processCombatHits(room, hits);
+      }
+
+      if (hits.length || hasBullets) {
+        this.broadcastArenaState(room.id);
+      }
+    }
+  }
+
+  processCombatHits(room, hits) {
+    for (const hit of hits) {
+      const shooter = room.clients.get(hit.ownerId);
+
+      if (shooter) {
+        const event = room.arena.recordCombatEvent(shooter, {
+          reason: "bullet-hit",
+          targetId: hit.targetId,
+          targetKind: hit.targetKind,
+          clientTime: hit.serverTime
+        }, room.modeConfig?.rules || {});
+
+        if (event) {
+          room.match.recordEvent(event.reason, {
+            scoreEventId: event.id,
+            source: event.source,
+            clientId: event.clientId,
+            nick: event.nick,
+            targetId: event.targetId,
+            targetKind: event.targetKind,
+            value: event.value,
+            score: event.score,
+            clientTotal: event.clientTotal
+          }, event.serverTime);
+        }
+      }
+
+      this.broadcast(room.id, {
+        type: "hit:event",
+        hit,
+        serverTime: Date.now()
+      });
+
+      this.broadcast(room.id, {
+        type: "damage:event",
+        damage: {
+          id: hit.id,
+          sourceId: hit.ownerId,
+          sourceNick: hit.ownerNick,
+          targetId: hit.targetId,
+          targetNick: hit.targetNick,
+          targetKind: hit.targetKind,
+          weapon: hit.weapon,
+          damage: hit.damage,
+          beforeHp: hit.beforeHp,
+          afterHp: hit.afterHp,
+          maxHp: hit.maxHp,
+          serverTime: hit.serverTime
+        },
+        serverTime: Date.now()
+      });
+
+      if (hit.killed) {
+        this.processCombatDeath(room, hit);
+      }
+    }
+  }
+
+  processCombatDeath(room, hit) {
+    const shooter = room.clients.get(hit.ownerId);
+    const victim = room.clients.get(hit.targetId);
+    const killReason = hit.targetKind === "cannon" ? "cannon-break" : "pilot-kill";
+
+    if (shooter) {
+      const killEvent = room.arena.recordCombatEvent(shooter, {
+        reason: killReason,
+        targetId: hit.targetId,
+        targetKind: hit.targetKind,
+        clientTime: hit.serverTime
+      }, room.modeConfig?.rules || {});
+
+      if (killEvent) {
+        room.match.recordEvent(killEvent.reason, {
+          scoreEventId: killEvent.id,
+          source: killEvent.source,
+          clientId: killEvent.clientId,
+          nick: killEvent.nick,
+          targetId: killEvent.targetId,
+          targetKind: killEvent.targetKind,
+          value: killEvent.value,
+          score: killEvent.score,
+          clientTotal: killEvent.clientTotal
+        }, killEvent.serverTime);
+      }
+    }
+
+    if (victim && hit.targetKind === "pilot") {
+      const deathEvent = room.arena.recordCombatEvent(victim, {
+        reason: "pilot-death",
+        targetId: hit.targetId,
+        targetKind: hit.targetKind,
+        clientTime: hit.serverTime
+      }, room.modeConfig?.rules || {});
+
+      if (deathEvent) {
+        room.match.recordEvent(deathEvent.reason, {
+          scoreEventId: deathEvent.id,
+          source: deathEvent.source,
+          clientId: deathEvent.clientId,
+          nick: deathEvent.nick,
+          targetId: deathEvent.targetId,
+          targetKind: deathEvent.targetKind,
+          value: deathEvent.value,
+          score: deathEvent.score,
+          clientTotal: deathEvent.clientTotal
+        }, deathEvent.serverTime);
+      }
+    }
+
+    this.broadcast(room.id, {
+      type: "death:event",
+      death: {
+        id: `${hit.id}-death`,
+        sourceId: hit.ownerId,
+        sourceNick: hit.ownerNick,
+        targetId: hit.targetId,
+        targetNick: hit.targetNick,
+        targetKind: hit.targetKind,
+        reason: killReason,
+        weapon: hit.weapon,
+        serverTime: hit.serverTime
+      },
+      serverTime: Date.now()
+    });
   }
 
   broadcast(roomId, message, exceptClientId = null) {

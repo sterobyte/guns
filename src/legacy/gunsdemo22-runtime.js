@@ -1440,6 +1440,7 @@ let ammoSpawnTimer = 0;
 let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
+let networkCombatEventsInitialized = false;
 let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
@@ -1448,6 +1449,8 @@ let arenaGraphicsPrewarmed = false;
 const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
+
+setupNetworkCombatEvents();
 
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
@@ -1945,6 +1948,10 @@ function addScore(unit, value, reason = "", context = {}) {
   if (unit.isCannonOnly) return;
   const scoreValue = Number(value) || 0;
 
+  if (unit.isPlayer && isServerCombatAuthoritative() && isCombatScoreReason(reason)) {
+    return;
+  }
+
   unit.score += scoreValue;
   if (unit.isPlayer) {
     window.GUNS_APP?.addExchangeScore?.(scoreValue);
@@ -1964,6 +1971,10 @@ function addScore(unit, value, reason = "", context = {}) {
     value: scoreValue,
     reason
   });
+}
+
+function isServerCombatAuthoritative() {
+  return window.GUNS_NET?.connected === true;
 }
 
 function isCombatScoreReason(reason) {
@@ -2103,6 +2114,7 @@ function continuePlayerAfterDeath() {
     mouse,
     pilotImmunityTime: PILOT_IMMUNITY_TIME
   });
+  sendNetworkRespawnEvent();
 }
 
 function exitPlayerAfterDeath() {
@@ -2184,15 +2196,16 @@ function getNearestEnemy(unit) {
 }
 
 function fireBullet(owner, angle) {
-  if (owner.state !== "alive") return;
-  if (owner.ammo <= 0) return;
+  if (owner.state !== "alive") return [];
+  if (owner.ammo <= 0) return [];
 
   const perpX = Math.cos(angle + Math.PI / 2);
   const perpY = Math.sin(angle + Math.PI / 2);
   const bulletColor = getBulletColor(owner);
+  const bullets = [];
 
   const makeBullet = (offset) => {
-    roomRuntimeState.bullets.push({
+    const bullet = {
       x:
         owner.x +
         Math.cos(angle) * 85 +
@@ -2214,7 +2227,10 @@ function fireBullet(owner, angle) {
 
       damage:
         owner.bulletDamage * owner.damageMultiplier
-    });
+    };
+
+    roomRuntimeState.bullets.push(bullet);
+    bullets.push(bullet);
   };
 
   const definition = getCannonDefinition(owner.gunType);
@@ -2233,6 +2249,8 @@ function fireBullet(owner, angle) {
   if (isTutorialMode() && owner === player) {
     tutorial.shotCount++;
   }
+
+  return bullets;
 }
 
 function firePilotPistol(owner, weaponId, angle) {
@@ -2244,7 +2262,7 @@ function firePilotPistol(owner, weaponId, angle) {
   if (weapon?.typeId !== "pistol") return false;
   if (fireRate <= 0) return false;
 
-  roomRuntimeState.bullets.push({
+  const bullet = {
     x: owner.pilotX + Math.cos(angle) * (owner.pilotRadius + 10),
     y: owner.pilotY + Math.sin(angle) * (owner.pilotRadius + 10),
     vx: Math.cos(angle) * BULLET_SPEED * 0.72,
@@ -2254,9 +2272,11 @@ function firePilotPistol(owner, weaponId, angle) {
     owner,
     color: owner.color,
     damage: getPilotWeaponNumber(weaponId, "gameplay.damage", 0)
-  });
+  };
 
-  return true;
+  roomRuntimeState.bullets.push(bullet);
+
+  return bullet;
 }
 
 function getBulletColor(owner) {
@@ -2789,7 +2809,7 @@ function killPilot(victim, killer) {
 
   victim.pilotDeaths++;
 
-  if (victim.isPlayer) {
+  if (victim.isPlayer && !isServerCombatAuthoritative()) {
     window.GUNS_NET?.sendCombatEvent?.({
       value: 0,
       reason: "pilot-death",
@@ -2845,6 +2865,51 @@ function updatePilotWeaponCollisions() {
         startPilotKnockback(b, dx / d, dy / d);
       }
     }
+  }
+
+  updateNetworkPilotWeaponCollisions();
+}
+
+function updateNetworkPilotWeaponCollisions() {
+  if (!window.GUNS_NET?.connected) return;
+  if (player.state !== "pilot") return;
+  if ((player.pilotWeaponCooldown || 0) > 0) return;
+  if (player.pilotImmunity > 0) return;
+  if (player.pilotEject) return;
+  if (isPilotAirborne(player)) return;
+
+  const weaponId = getOwnedPilotWeaponByType("knife");
+  const weapon = getPilotWeaponDefinition(weaponId);
+
+  if (weapon?.typeId !== "knife") return;
+
+  const damage = getPilotWeaponNumber(weaponId, "gameplay.damage", 0);
+
+  if (damage <= 0) return;
+
+  const snapshots = window.GUNS_NET.getRemoteSnapshots?.() || [];
+
+  for (const snapshot of snapshots) {
+    if (!snapshot || snapshot.alive === false) continue;
+    if (snapshot.state !== "on-foot") continue;
+    if (snapshot.flying) continue;
+
+    const targetId = snapshot.clientId || snapshot.id || "";
+    const targetRadius = Number(snapshot.radiusInner) || PILOT_RADIUS;
+    const d = Math.hypot(
+      Number(snapshot.x) - player.pilotX,
+      Number(snapshot.y) - player.pilotY
+    );
+
+    if (!targetId || d > player.pilotRadius + targetRadius) continue;
+
+    player.pilotWeaponCooldown = PILOT_WEAPON_CONTACT_COOLDOWN;
+    window.GUNS_NET.sendMeleeEvent?.({
+      targetId,
+      weapon: weaponId,
+      damage
+    });
+    break;
   }
 }
 
@@ -4423,10 +4488,12 @@ function updatePlayerShooting(dt) {
     mouse.active &&
     player.fireCooldown <= 0
   ) {
-    fireBullet(
+    const bullets = fireBullet(
       player,
       player.turretAngle
     );
+
+    sendNetworkShootEvent("gun", bullets);
 
     player.fireCooldown =
       player.fireRate;
@@ -4434,7 +4501,7 @@ function updatePlayerShooting(dt) {
 }
 
 function updatePlayerPilotShooting() {
-  if (isUserBaseRoom() || isMarketRoom()) return;
+  if (isUserBaseRoom()) return;
   if (isPilotDialogOpen()) return;
   if (!mouse.down || !mouse.active || player.pilotFireCooldown > 0) return;
 
@@ -4448,7 +4515,10 @@ function updatePlayerPilotShooting() {
     target.x - player.pilotX
   );
 
-  if (firePilotPistol(player, weaponId, angle)) {
+  const bullet = firePilotPistol(player, weaponId, angle);
+
+  if (bullet) {
+    sendNetworkShootEvent(weaponId, bullet);
     player.pilotFireCooldown = getPilotWeaponNumber(
       weaponId,
       "gameplay.fireRate",
@@ -5658,8 +5728,8 @@ function getLocalNetworkSnapshot() {
     state: inCannon ? "in-cannon" : "on-foot",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,
-    hp: inCannon ? player.hp : 0,
-    maxHp: inCannon ? player.maxHp : 100,
+    hp: inCannon ? player.hp : player.pilotHp,
+    maxHp: inCannon ? player.maxHp : 1,
     ammo: inCannon ? player.ammo : 0,
     maxAmmo: inCannon ? getMaxAmmo(player) : 0,
     radiusOuter: player.radiusOuter,
@@ -5694,6 +5764,125 @@ function sendNetworkSnapshot(now) {
 
   lastNetworkSnapshotAt = now;
   window.GUNS_NET.sendSnapshot?.(getLocalNetworkSnapshot());
+}
+
+function sendNetworkShootEvent(weapon, bullets) {
+  if (!window.GUNS_NET?.connected) return;
+
+  const list = (Array.isArray(bullets) ? bullets : [bullets])
+    .filter(Boolean)
+    .map(bullet => ({
+      weapon,
+      x: bullet.x,
+      y: bullet.y,
+      vx: bullet.vx,
+      vy: bullet.vy,
+      radius: bullet.radius,
+      damage: bullet.damage,
+      lifeMs: Math.max(100, Math.round((bullet.life || 1.4) * 1000))
+    }));
+
+  if (!list.length) return;
+
+  window.GUNS_NET.sendShootEvent?.({
+    weapon,
+    bullets: list
+  });
+}
+
+function sendNetworkRespawnEvent() {
+  if (!window.GUNS_NET?.connected) return;
+
+  window.GUNS_NET.sendRespawnEvent?.({
+    x: player.pilotX,
+    y: player.pilotY,
+    state: "on-foot",
+    flying: isPilotAirborne(player),
+    maxHp: 1
+  });
+}
+
+function setupNetworkCombatEvents() {
+  if (networkCombatEventsInitialized) return;
+  if (!window.GUNS_NET?.on) return;
+
+  networkCombatEventsInitialized = true;
+  window.GUNS_NET.on("damage:event", message => {
+    applyNetworkDamageEvent(message.damage);
+  });
+  window.GUNS_NET.on("death:event", message => {
+    applyNetworkDeathEvent(message.death);
+  });
+  window.GUNS_NET.on("respawn:event", message => {
+    applyNetworkRespawnEvent(message.respawn);
+  });
+}
+
+function isNetworkEventForPlayer(event) {
+  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
+
+  return !!ownClientId && event?.targetId === ownClientId;
+}
+
+function applyNetworkDamageEvent(event) {
+  if (!isNetworkEventForPlayer(event)) return;
+
+  const afterHp = Math.max(0, Number(event.afterHp) || 0);
+
+  if (event.targetKind === "cannon" && player.state === "alive") {
+    player.hp = afterHp;
+    return;
+  }
+
+  if (event.targetKind === "pilot" && player.state === "pilot") {
+    player.pilotHp = afterHp;
+  }
+}
+
+function applyNetworkDeathEvent(event) {
+  if (!isNetworkEventForPlayer(event)) return;
+
+  if (event.targetKind === "cannon" && player.state === "alive") {
+    destroyCannon(player);
+    return;
+  }
+
+  if (event.targetKind !== "pilot") return;
+  if (isPilotDialogOpen()) return;
+
+  addStain(
+    player.pilotX,
+    player.pilotY,
+    player.color,
+    getUnitDisplayName(player)
+  );
+  dropCarriedPowerups(player);
+  window.GUNS_DEATH_FLOW.applyPilotDeathState({
+    victim: player,
+    pilotRadius: PILOT_RADIUS,
+    pilotImmunityTime: PILOT_IMMUNITY_TIME,
+    clampPilotToRoom
+  });
+  startPlayerDeathPrompt();
+}
+
+function applyNetworkRespawnEvent(event) {
+  if (!isNetworkEventForPlayer({
+    targetId: event?.clientId
+  })) {
+    return;
+  }
+
+  player.pilotX = Number(event.x) || player.pilotX;
+  player.pilotY = Number(event.y) || player.pilotY;
+  player.pilotHp = Math.max(1, Number(event.hp) || 1);
+  player.pilotImmunity = PILOT_IMMUNITY_TIME;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotWeaponCooldown = 0;
+  player.pilotFlyState = event.flying ? player.pilotFlyState : "falling";
+  player.pilotFlyTime = 0;
+  player.state = "pilot";
 }
 
 function drawNameLabel(text, x, y, color = LCD_INK, scale = 1) {
@@ -5919,6 +6108,38 @@ function drawBullets() {
 
     ctx.fill();
   }
+}
+
+function drawServerBullets() {
+  const bullets = window.GUNS_NET?.getServerBullets?.() || [];
+  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
+
+  if (!bullets.length) return;
+
+  ctx.save();
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = LCD_INK;
+
+  for (const bullet of bullets) {
+    if (bullet.ownerId === ownClientId) continue;
+
+    const p = worldToScreen(
+      bullet.x,
+      bullet.y
+    );
+
+    ctx.beginPath();
+    ctx.arc(
+      p.x,
+      p.y,
+      z(bullet.radius || 4),
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
+
+  ctx.restore();
 }
 
 function drawTrails() {
@@ -7605,6 +7826,7 @@ function draw() {
 
   if (!isBase) {
     drawBullets();
+    drawServerBullets();
   }
 
   for (const unit of units) {

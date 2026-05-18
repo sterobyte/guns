@@ -730,6 +730,63 @@ export class UserRegistry {
     return error("user_not_found", "User row was not found.");
   }
 
+  setUserGunsCoin(userId, gunsCoin, meta = {}) {
+    const id = String(userId || "");
+    const nextBalance = normalizeCoinAmount(gunsCoin);
+    const visit = this.anonymousVisits.get(id);
+
+    if (visit) {
+      return this.setEntityGunsCoin(visit, "visit", id, nextBalance, meta);
+    }
+
+    for (const pilot of this.pilots.values()) {
+      if (pilot.id !== id) continue;
+
+      return this.setEntityGunsCoin(pilot, "pilot", id, nextBalance, meta);
+    }
+
+    return error("user_not_found", "User row was not found.");
+  }
+
+  setEntityGunsCoin(entity, entityType, entityId, nextBalance, meta = {}) {
+    ensureWallet(entity);
+
+    const before = entityType === "pilot"
+      ? publicPilot(entity)
+      : publicVisit(entity);
+    const previousBalance = normalizeCoinAmount(entity.wallet.gunsCoin);
+    const delta = nextBalance - previousBalance;
+
+    entity.wallet.gunsCoin = nextBalance;
+    this.persist();
+
+    if (delta !== 0) {
+      this.recordWalletTransaction(entity, delta, "admin-gs-set", {
+        previousBalance,
+        nextBalance,
+        ...(meta || {})
+      });
+    }
+
+    const after = entityType === "pilot"
+      ? publicPilot(entity)
+      : publicVisit(entity);
+
+    this.recordAdminAudit("set-gs-balance", entityType, entityId, {
+      before,
+      after,
+      delta
+    });
+
+    return {
+      ok: true,
+      user: this.list().find((item) => item.id === entityId) || after,
+      previousBalance,
+      balanceGs: nextBalance,
+      delta
+    };
+  }
+
   unlinkDevice(deviceId) {
     const id = String(deviceId || "");
     const device = this.devices.get(id);

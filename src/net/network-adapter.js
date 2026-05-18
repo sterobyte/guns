@@ -400,6 +400,27 @@
         clientTime: Date.now()
       });
     },
+    sendShootEvent(event) {
+      return send({
+        type: "shoot:event",
+        event,
+        clientTime: Date.now()
+      });
+    },
+    sendMeleeEvent(event) {
+      return send({
+        type: "melee:event",
+        event,
+        clientTime: Date.now()
+      });
+    },
+    sendRespawnEvent(event) {
+      return send({
+        type: "respawn:event",
+        event,
+        clientTime: Date.now()
+      });
+    },
     getRemoteSnapshots(maxAge = 2000) {
       const now = Date.now();
 
@@ -410,6 +431,11 @@
       if (!serverArena) return null;
       if (Date.now() - (serverArena.serverTime || 0) > maxAge) return null;
       return serverArena;
+    },
+    getServerBullets(maxAge = 1000) {
+      const arena = this.getArenaState(maxAge);
+
+      return Array.isArray(arena?.bullets) ? arena.bullets : [];
     },
     getScoreboardRows() {
       return serverArena?.scoreboard || null;

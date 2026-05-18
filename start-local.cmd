@@ -13,7 +13,7 @@ if errorlevel 1 (
 
 netstat -ano | findstr /R /C:"127\.0\.0\.1:5179 .*LISTENING" >nul
 if errorlevel 1 (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\Program Files\nodejs\node.exe' -ArgumentList @('scripts\serve.mjs') -WorkingDirectory '%~dp0..\guns-panel' -WindowStyle Hidden"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\Program Files\nodejs\node.exe' -ArgumentList @('scripts\serve.mjs') -WorkingDirectory '%~dp0panel' -WindowStyle Hidden"
 )
 
 echo GUNS local stack requested.

@@ -1,0 +1,10 @@
+{
+  "name": "guns-panel",
+  "version": "0.2.10",
+  "private": true,
+  "description": "Separate web admin panel for guns.gs.",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "check": "node --check src/config.js && node --check src/app.js"
+  }
+}
