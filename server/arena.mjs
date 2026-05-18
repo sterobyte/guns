@@ -105,6 +105,17 @@ export class ArenaRoomState {
       snapshot.cannonEntityId || snapshot.occupiedCannonId || "",
       64
     );
+    const rawExitedCannonX = snapshot.exitedCannonX ?? snapshot.cannonX;
+    const rawExitedCannonY = snapshot.exitedCannonY ?? snapshot.cannonY;
+    const exitedCannon = {
+      id: sanitizeEventText(snapshot.exitedCannonId || (
+        requestedState === "on-foot" ? requestedCannonId : ""
+      ), 64),
+      hasPosition: Number.isFinite(Number(rawExitedCannonX)) &&
+        Number.isFinite(Number(rawExitedCannonY)),
+      x: finiteNumber(snapshot.exitedCannonX ?? snapshot.cannonX),
+      y: finiteNumber(snapshot.exitedCannonY ?? snapshot.cannonY)
+    };
     const acceptedCannon = requestedState === "in-cannon"
       ? this.getAcceptedPlayerCannon(player, requestedCannonId, rawX, rawY)
       : null;
@@ -145,7 +156,7 @@ export class ArenaRoomState {
     });
     player.x = validatedPoint.x;
     player.y = validatedPoint.y;
-    this.updatePlayerCannonOccupation(player, previousState);
+    this.updatePlayerCannonOccupation(player, previousState, exitedCannon);
     player.clientScore = Math.max(0, Math.floor(finiteNumber(snapshot.score)));
     player.clientPilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.clientCannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
@@ -189,14 +200,21 @@ export class ArenaRoomState {
     return null;
   }
 
-  updatePlayerCannonOccupation(player, previousState) {
+  updatePlayerCannonOccupation(player, previousState, exitedCannon = {}) {
     if (previousState === "in-cannon" && player.state !== "in-cannon") {
       for (const cannon of this.cannons.values()) {
         if (cannon.occupiedBy !== player.id) continue;
+        if (exitedCannon.id && cannon.id !== exitedCannon.id) continue;
 
         cannon.occupiedBy = "";
-        cannon.x = player.x;
-        cannon.y = player.y;
+        const releasedPoint = clampPointToRoom(
+          this.roomBounds,
+          exitedCannon.hasPosition ? exitedCannon.x : player.x,
+          exitedCannon.hasPosition ? exitedCannon.y : player.y,
+          player.radiusOuter
+        );
+        cannon.x = releasedPoint.x;
+        cannon.y = releasedPoint.y;
       }
     }
 

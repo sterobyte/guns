@@ -1490,6 +1490,7 @@ let ammoSpawnTimer = 0;
 let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
+let lastExitedCannonSnapshot = null;
 let networkCombatEventsInitialized = false;
 let networkRoomConfigEventsInitialized = false;
 let networkInventoryEventsInitialized = false;
@@ -4209,6 +4210,11 @@ function startPlayerExitEject() {
 
 function finishPlayerExitEject() {
   if (player.state !== "alive") return;
+  lastExitedCannonSnapshot = {
+    id: player.cannonEntityId || "",
+    x: player.x,
+    y: player.y
+  };
 
   const moveSpeed =
     Math.hypot(player.lastMoveVx || 0, player.lastMoveVy || 0);
@@ -5791,6 +5797,7 @@ function getServerScoreboardRowColor(row) {
 
 function getLocalNetworkSnapshot() {
   const inCannon = player.state === "alive";
+  const exitedCannon = inCannon ? null : lastExitedCannonSnapshot;
 
   return {
     nick: getUnitDisplayName(player),
@@ -5798,7 +5805,10 @@ function getLocalNetworkSnapshot() {
     y: inCannon ? player.y : player.pilotY,
     angle: inCannon ? player.turretAngle : player.pilotAngle,
     state: inCannon ? "in-cannon" : "on-foot",
-    cannonEntityId: inCannon ? player.cannonEntityId : "",
+    cannonEntityId: inCannon ? player.cannonEntityId : exitedCannon?.id || "",
+    exitedCannonId: inCannon ? "" : exitedCannon?.id || "",
+    exitedCannonX: inCannon ? 0 : exitedCannon?.x || 0,
+    exitedCannonY: inCannon ? 0 : exitedCannon?.y || 0,
     gunType: inCannon ? player.gunType : "",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,
