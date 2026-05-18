@@ -17,7 +17,10 @@ services:
         sync: false
       - key: GUNS_ADMIN_TOKEN
         sync: false
-staticSites:
-  - name: guns-panel
+  - type: web
+    name: guns-panel
+    runtime: static
     buildCommand: ""
-    publishPath: panel
+    staticPublishPath: panel
+    domains:
+      - panel.guns.gs
