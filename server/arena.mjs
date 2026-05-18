@@ -3,6 +3,8 @@ const MAX_SERVER_BULLETS_PER_ROOM = 256;
 const MAX_BULLETS_PER_SHOT_EVENT = 6;
 const DEFAULT_BULLET_SPEED = 720;
 const DEFAULT_BULLET_LIFE_MS = 1400;
+const DEFAULT_CANNON_BULLET_DAMAGE = 20;
+const DEFAULT_CANNON_BULLET_RADIUS = 4;
 const DEFAULT_PISTOL_BULLET_SPEED = 520;
 const DEFAULT_PISTOL_BULLET_LIFE_MS = 1050;
 const DEFAULT_PISTOL_BULLET_RADIUS = 3;
@@ -23,6 +25,7 @@ export class ArenaRoomState {
     this.bots = createRoomBots(roomConfig);
     this.bullets = new Map();
     this.nextBulletSeq = 1;
+    this.getCannonConfig = options.getCannonConfig || (() => null);
     this.getPilotWeaponConfig = options.getPilotWeaponConfig || (() => null);
   }
 
@@ -34,6 +37,7 @@ export class ArenaRoomState {
         x: 0,
         y: 0,
         angle: 0,
+        gunType: "autogun",
         state: "on-foot",
         flying: false,
         alive: true,
@@ -84,6 +88,7 @@ export class ArenaRoomState {
     player.x = finiteNumber(snapshot.x);
     player.y = finiteNumber(snapshot.y);
     player.angle = finiteNumber(snapshot.angle);
+    player.gunType = sanitizeEventText(snapshot.gunType || player.gunType || "autogun", 32);
     player.state = snapshot.state === "in-cannon" ? "in-cannon" : "on-foot";
     player.flying = Boolean(snapshot.flying);
     const now = Date.now();
@@ -177,7 +182,9 @@ export class ArenaRoomState {
 
     this.updateBullets(now);
 
-    const maxBullets = combatSpec.typeId === "pistol" ? 1 : MAX_BULLETS_PER_SHOT_EVENT;
+    const maxBullets = combatSpec.maxBullets || (
+      combatSpec.typeId === "pistol" ? 1 : MAX_BULLETS_PER_SHOT_EVENT
+    );
 
     for (const rawBullet of rawBullets.slice(0, maxBullets)) {
       const bullet = this.createBullet(client, player, event, rawBullet || {}, now, combatSpec);
@@ -258,7 +265,9 @@ export class ArenaRoomState {
 
     const serverSpeed = combatSpec?.typeId === "pistol"
       ? DEFAULT_PISTOL_BULLET_SPEED
-      : Math.min(speed, MAX_BULLET_SPEED);
+      : combatSpec?.typeId === "gun"
+        ? DEFAULT_BULLET_SPEED
+        : Math.min(speed, MAX_BULLET_SPEED);
 
     if (speed !== serverSpeed) {
       const ratio = serverSpeed / speed;
@@ -269,11 +278,13 @@ export class ArenaRoomState {
     const origin = this.getBulletOrigin(player, rawBullet, event);
     const lifeMs = combatSpec?.typeId === "pistol"
       ? DEFAULT_PISTOL_BULLET_LIFE_MS
-      : Math.floor(clampNumber(
-        finiteNumber(rawBullet.lifeMs ?? event.lifeMs) || DEFAULT_BULLET_LIFE_MS,
-        100,
-        MAX_BULLET_LIFE_MS
-      ));
+      : combatSpec?.typeId === "gun"
+        ? DEFAULT_BULLET_LIFE_MS
+        : Math.floor(clampNumber(
+          finiteNumber(rawBullet.lifeMs ?? event.lifeMs) || DEFAULT_BULLET_LIFE_MS,
+          100,
+          MAX_BULLET_LIFE_MS
+        ));
 
     return {
       id: `${now}-${client.id}-${this.nextBulletSeq++}`,
@@ -287,7 +298,9 @@ export class ArenaRoomState {
       angle,
       radius: combatSpec?.typeId === "pistol"
         ? DEFAULT_PISTOL_BULLET_RADIUS
-        : clampNumber(finiteNumber(rawBullet.radius ?? event.radius) || 4, 1, 8),
+        : combatSpec?.typeId === "gun"
+          ? DEFAULT_CANNON_BULLET_RADIUS
+          : clampNumber(finiteNumber(rawBullet.radius ?? event.radius) || 4, 1, 8),
       damage: combatSpec?.damage !== null && combatSpec?.damage !== undefined
         ? combatSpec.damage
         : clampNumber(finiteNumber(rawBullet.damage ?? event.damage), 0, 100),
@@ -300,11 +313,23 @@ export class ArenaRoomState {
 
   getWeaponCombatSpec(player, weaponId, action) {
     if (weaponId === "gun") {
+      if (player.state !== "in-cannon") return null;
+
+      const gunType = sanitizeEventText(player.gunType || "autogun", 32);
+      const cannon = this.getCannonConfig(gunType) || this.getCannonConfig("autogun") || {};
+      const baseDamage = finiteNumber(cannon?.gameplay?.damage) || DEFAULT_CANNON_BULLET_DAMAGE;
+      const damageMultiplier = finiteNumber(cannon?.gameplay?.damageMultiplier) || 1;
+      const fireRate = Math.max(0, finiteNumber(cannon?.gameplay?.fireRate?.player));
+      const barrels = Array.isArray(cannon?.weapon?.barrels) && cannon.weapon.barrels.length > 0
+        ? cannon.weapon.barrels
+        : [0];
+
       return {
         weaponId,
         typeId: "gun",
-        damage: null,
-        fireRateMs: 0
+        damage: clampNumber(baseDamage * damageMultiplier, 0, 100),
+        fireRateMs: Math.floor(fireRate * 1000),
+        maxBullets: Math.min(MAX_BULLETS_PER_SHOT_EVENT, barrels.length || 1)
       };
     }
 
@@ -331,7 +356,7 @@ export class ArenaRoomState {
   }
 
   canUseWeaponNow(player, weaponId, combatSpec, now) {
-    if (combatSpec.typeId !== "pistol") return true;
+    if (!["pistol", "gun"].includes(combatSpec.typeId)) return true;
 
     const lastUsedAt = player.weaponUsedAt?.[weaponId] || 0;
 
@@ -339,7 +364,7 @@ export class ArenaRoomState {
   }
 
   markWeaponUsed(player, weaponId, combatSpec, now) {
-    if (combatSpec.typeId !== "pistol") return;
+    if (!["pistol", "gun"].includes(combatSpec.typeId)) return;
 
     player.weaponUsedAt ||= {};
     player.weaponUsedAt[weaponId] = now;

@@ -265,6 +265,10 @@ function isMarketRoom() {
   return ACTIVE_ROOM?.roomKind === "market";
 }
 
+function isFixedCameraRoom() {
+  return isUserBaseRoom() || isMarketRoom();
+}
+
 function getPlayerCallsign() {
   return (
     window.GUNS_APP?.playerNick ||
@@ -772,7 +776,7 @@ function isTutorialMode() {
 }
 
 function getCameraBaseScale() {
-  if (isUserBaseRoom()) {
+  if (isFixedCameraRoom()) {
     return Math.min(
       window.innerWidth / Math.max(1, getRoomWidth() + 96),
       window.innerHeight / Math.max(1, getRoomHeight() + 96)
@@ -783,7 +787,7 @@ function getCameraBaseScale() {
 }
 
 function adjustCameraZoom(direction) {
-  if (isUserBaseRoom()) return;
+  if (isFixedCameraRoom()) return;
 
   cameraUserZoom = clamp(
     cameraUserZoom + direction * CAMERA_ZOOM_STEP,
@@ -1838,7 +1842,7 @@ function screenToWorld(x, y) {
 }
 
 function clampCamera() {
-  if (isUserBaseRoom()) {
+  if (isFixedCameraRoom()) {
     camera.x = 0;
     camera.y = 0;
     return;
@@ -4294,7 +4298,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isUserBaseRoom()) {
+    if (!isFixedCameraRoom()) {
       camera.x = player.x;
       camera.y = player.y;
     }
@@ -4366,7 +4370,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isUserBaseRoom()) {
+    if (!isFixedCameraRoom()) {
       camera.x = player.pilotX;
       camera.y = player.pilotY;
     }
@@ -5742,6 +5746,7 @@ function getLocalNetworkSnapshot() {
     y: inCannon ? player.y : player.pilotY,
     angle: inCannon ? player.turretAngle : player.pilotAngle,
     state: inCannon ? "in-cannon" : "on-foot",
+    gunType: inCannon ? player.gunType : "",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,
     hp: inCannon ? player.hp : player.pilotHp,

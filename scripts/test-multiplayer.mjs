@@ -37,6 +37,10 @@ try {
   );
   await waitFor(() => clients.every((client) => client.players.size === 2), "players=2");
   await waitFor(() => clients.every((client) => client.remoteSnapshots.size >= 1), "remote snapshots");
+  clients[0].sendSnapshot({
+    state: "in-cannon",
+    gunType: "autogun"
+  });
   clients[0].sendShootEvent();
   await waitFor(() => clients.every((client) => client.bullets.length >= 1), "server bullets");
   await waitFor(() => clients.every((client) => client.hits.length >= 1), "server bullet hit");
@@ -188,7 +192,7 @@ function createTestClient(nick, snapshot, options = {}) {
       state.socket?.send(JSON.stringify({
         type: "shoot:event",
         event: {
-          weapon: "test-gun",
+          weapon: "gun",
           bullets: [{
             x: snapshot.x + 20,
             y: snapshot.y,

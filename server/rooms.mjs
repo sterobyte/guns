@@ -29,6 +29,7 @@ export class MultiplayerHub {
     this.maxClientsPerRoom = options.maxClientsPerRoom || 16;
     this.getRoomConfig = options.getRoomConfig || (() => null);
     this.getModeConfig = options.getModeConfig || (() => null);
+    this.getCannonConfig = options.getCannonConfig || (() => null);
     this.getPilotWeaponConfig = options.getPilotWeaponConfig || (() => null);
     this.recordMatchResult = options.recordMatchResult || (() => {});
     this.matchTick = setInterval(() => this.broadcastMatchStates(), 1000);
@@ -294,6 +295,7 @@ export class MultiplayerHub {
         modeConfig,
         clients: new Map(),
         arena: new ArenaRoomState(roomId, roomConfig, {
+          getCannonConfig: this.getCannonConfig,
           getPilotWeaponConfig: this.getPilotWeaponConfig
         }),
         match: new MatchState(roomId, roomConfig, modeConfig)
