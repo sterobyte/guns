@@ -1295,6 +1295,7 @@ function syncDomainEntities() {
           !unit.cannonDestroyed &&
           unit.wreckRepair <= 0 &&
           unit.hp > 0 &&
+          !isServerCannonUnavailable(unit) &&
           !isCannonOccupiedByRemote(unit)
       });
     }
@@ -1320,6 +1321,15 @@ function isCannonOccupiedByRemote(unit) {
   const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
 
   return Boolean(occupiedBy && occupiedBy !== ownClientId);
+}
+
+function isServerCannonUnavailable(unit) {
+  const serverCannon = getServerCannonState(unit);
+
+  if (!serverCannon) return false;
+
+  return Boolean(serverCannon.broken || serverCannon.destroyed) ||
+    Number(serverCannon.hp) <= 0;
 }
 
 function getPilotEntityById(id) {
@@ -3297,6 +3307,7 @@ function tryEnterRepairedCannon(unit) {
     if (cannon.cannonDestroyed) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isServerCannonUnavailable(cannon)) continue;
     if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
@@ -4019,6 +4030,7 @@ function getNearestFreeCannonForPilot(unit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isServerCannonUnavailable(cannon)) continue;
     if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
@@ -7277,6 +7289,7 @@ function getNearestPilotlessCannon(fromUnit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
+    if (isServerCannonUnavailable(cannon)) continue;
     if (isCannonOccupiedByRemote(cannon)) continue;
 
     const d = Math.hypot(

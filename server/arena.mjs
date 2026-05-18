@@ -33,11 +33,11 @@ export class ArenaRoomState {
     this.scoreEvents = [];
     this.players = new Map();
     this.bots = createRoomBots(roomConfig);
-    this.cannons = createRoomCannons(roomConfig);
-    this.bullets = new Map();
-    this.nextBulletSeq = 1;
     this.getCannonConfig = options.getCannonConfig || (() => null);
     this.getPilotWeaponConfig = options.getPilotWeaponConfig || (() => null);
+    this.cannons = createRoomCannons(roomConfig, this.getCannonConfig);
+    this.bullets = new Map();
+    this.nextBulletSeq = 1;
   }
 
   join(client) {
@@ -141,6 +141,7 @@ export class ArenaRoomState {
       ? player.hp
       : snapshotHp;
     player.maxHp = Math.max(1, finiteNumber(snapshot.maxHp) || 100);
+    this.syncPlayerFromAcceptedCannon(player, acceptedCannon);
     player.ammo = Math.max(0, Math.floor(finiteNumber(snapshot.ammo)));
     player.maxAmmo = Math.max(0, Math.floor(finiteNumber(snapshot.maxAmmo)));
     player.radiusOuter = Math.max(1, finiteNumber(snapshot.radiusOuter) || 34);
@@ -177,6 +178,7 @@ export class ArenaRoomState {
       : null;
 
     if (currentCannon && currentCannon.occupiedBy === player.id) {
+      if (isServerCannonBroken(currentCannon)) return null;
       return currentCannon;
     }
 
@@ -185,6 +187,7 @@ export class ArenaRoomState {
       : this.findNearbyFreeCannon(player, rawX, rawY);
 
     if (!cannon) return null;
+    if (isServerCannonBroken(cannon)) return null;
     if (cannon.occupiedBy && cannon.occupiedBy !== player.id) return null;
     if (!isPlayerNearCannon(player, cannon, rawX, rawY)) return null;
 
@@ -193,6 +196,7 @@ export class ArenaRoomState {
 
   findNearbyFreeCannon(player, rawX, rawY) {
     for (const cannon of this.cannons.values()) {
+      if (isServerCannonBroken(cannon)) continue;
       if (cannon.occupiedBy && cannon.occupiedBy !== player.id) continue;
       if (isPlayerNearCannon(player, cannon, rawX, rawY)) return cannon;
     }
@@ -228,6 +232,17 @@ export class ArenaRoomState {
     cannon.x = player.x;
     cannon.y = player.y;
     cannon.gunType = player.gunType || cannon.gunType;
+    this.syncPlayerFromAcceptedCannon(player, cannon);
+  }
+
+  syncPlayerFromAcceptedCannon(player, cannon) {
+    if (!cannon || isServerCannonBroken(cannon)) return;
+
+    const maxHp = Math.max(1, finiteNumber(cannon.maxHp) || 1);
+    const hp = Math.max(0, Math.min(maxHp, finiteNumber(cannon.hp)));
+
+    player.maxHp = maxHp;
+    player.hp = hp;
   }
 
   recordScoreEvent(client, event = {}, rules = {}) {
@@ -690,11 +705,25 @@ export class ArenaRoomState {
 
   applyHitDamage(hit, now) {
     const target = this.players.get(hit.targetId);
-    const beforeHp = Math.max(0, finiteNumber(target?.hp));
-    const maxHp = Math.max(1, finiteNumber(target?.maxHp) || 1);
+    const targetCannon = hit.targetKind === "cannon" && target?.occupiedCannonId
+      ? this.cannons.get(target.occupiedCannonId)
+      : null;
+    const beforeHp = Math.max(0, finiteNumber(targetCannon?.hp ?? target?.hp));
+    const maxHp = Math.max(1, finiteNumber(targetCannon?.maxHp ?? target?.maxHp) || 1);
     const damage = Math.max(0, finiteNumber(hit.damage));
     const afterHp = Math.max(0, beforeHp - damage);
     const killed = beforeHp > 0 && afterHp <= 0;
+
+    if (targetCannon) {
+      targetCannon.hp = afterHp;
+      targetCannon.maxHp = maxHp;
+      targetCannon.broken = afterHp <= 0;
+      targetCannon.destroyed = afterHp <= 0;
+
+      if (killed) {
+        targetCannon.occupiedBy = "";
+      }
+    }
 
     if (target) {
       target.hp = afterHp;
@@ -704,6 +733,11 @@ export class ArenaRoomState {
       if (killed) {
         target.alive = false;
         target.killedAt = now;
+
+        if (hit.targetKind === "cannon") {
+          target.state = "on-foot";
+          target.occupiedCannonId = "";
+        }
       }
 
       target.serverDamagedAt = now;
@@ -911,7 +945,7 @@ function getPlayerMovementSpeed(player, cannon = null) {
   );
 }
 
-function createRoomCannons(roomConfig = {}) {
+function createRoomCannons(roomConfig = {}, getCannonConfig = () => null) {
   const cannonSpawns = Array.isArray(roomConfig?.spawns?.cannons)
     ? roomConfig.spawns.cannons
     : [];
@@ -923,6 +957,16 @@ function createRoomCannons(roomConfig = {}) {
         64
       );
       const gunType = sanitizeEventText(spawn.gunType || spawn.type || "autogun", 32);
+      const config = getCannonConfig(gunType) || {};
+      const maxHp = Math.max(
+        1,
+        finiteNumber(spawn.maxHp ?? config?.gameplay?.maxHp) || 100
+      );
+      const hp = Math.max(
+        0,
+        Math.min(maxHp, finiteNumber(spawn.hp ?? maxHp))
+      );
+      const broken = Boolean(spawn.broken || spawn.destroyed) || hp <= 0;
 
       return [
         id,
@@ -931,11 +975,22 @@ function createRoomCannons(roomConfig = {}) {
           gunType,
           x: finiteNumber(spawn.x),
           y: finiteNumber(spawn.y),
-          occupiedBy: ""
+          hp,
+          maxHp,
+          occupiedBy: "",
+          broken,
+          destroyed: Boolean(spawn.destroyed) || broken
         }
       ];
     }).filter(([id]) => Boolean(id))
   );
+}
+
+function isServerCannonBroken(cannon) {
+  if (!cannon) return true;
+
+  return Boolean(cannon.broken || cannon.destroyed) ||
+    Math.max(0, finiteNumber(cannon.hp)) <= 0;
 }
 
 function isPlayerNearCannon(player, cannon, rawX, rawY) {
