@@ -3,6 +3,9 @@ const MAX_SERVER_BULLETS_PER_ROOM = 256;
 const MAX_BULLETS_PER_SHOT_EVENT = 6;
 const DEFAULT_BULLET_SPEED = 720;
 const DEFAULT_BULLET_LIFE_MS = 1400;
+const DEFAULT_PISTOL_BULLET_SPEED = 520;
+const DEFAULT_PISTOL_BULLET_LIFE_MS = 1050;
+const DEFAULT_PISTOL_BULLET_RADIUS = 3;
 const MAX_BULLET_SPEED = 1300;
 const MAX_BULLET_LIFE_MS = 2500;
 const MAX_BULLET_ORIGIN_DRIFT = 240;
@@ -12,7 +15,7 @@ const MELEE_COOLDOWN_MS = 650;
 const MELEE_EXTRA_RANGE = 12;
 
 export class ArenaRoomState {
-  constructor(roomId, roomConfig = {}) {
+  constructor(roomId, roomConfig = {}, options = {}) {
     this.roomId = roomId;
     this.createdAt = Date.now();
     this.scoreEvents = [];
@@ -20,6 +23,7 @@ export class ArenaRoomState {
     this.bots = createRoomBots(roomConfig);
     this.bullets = new Map();
     this.nextBulletSeq = 1;
+    this.getPilotWeaponConfig = options.getPilotWeaponConfig || (() => null);
   }
 
   join(client) {
@@ -162,17 +166,21 @@ export class ArenaRoomState {
     const now = Date.now();
     const player = this.join(client);
     const weapon = sanitizeEventText(event.weapon || "gun", 32);
+    const combatSpec = this.getWeaponCombatSpec(player, weapon, "shoot");
     const rawBullets = Array.isArray(event.bullets) && event.bullets.length > 0
       ? event.bullets
       : [event];
     const bullets = [];
 
-    if (!playerCanUseWeapon(player, weapon, "shoot")) return [];
+    if (!combatSpec) return [];
+    if (!this.canUseWeaponNow(player, weapon, combatSpec, now)) return [];
 
     this.updateBullets(now);
 
-    for (const rawBullet of rawBullets.slice(0, MAX_BULLETS_PER_SHOT_EVENT)) {
-      const bullet = this.createBullet(client, player, event, rawBullet || {}, now);
+    const maxBullets = combatSpec.typeId === "pistol" ? 1 : MAX_BULLETS_PER_SHOT_EVENT;
+
+    for (const rawBullet of rawBullets.slice(0, maxBullets)) {
+      const bullet = this.createBullet(client, player, event, rawBullet || {}, now, combatSpec);
 
       if (!bullet) continue;
 
@@ -185,6 +193,7 @@ export class ArenaRoomState {
       this.bullets.delete(oldestId);
     }
 
+    this.markWeaponUsed(player, weapon, combatSpec, now);
     return bullets;
   }
 
@@ -193,9 +202,10 @@ export class ArenaRoomState {
     const attacker = this.join(client);
     const targetId = sanitizeEventText(event.targetId, 64);
     const weapon = sanitizeEventText(event.weapon || "melee", 32);
+    const combatSpec = this.getWeaponCombatSpec(attacker, weapon, "melee");
     const target = this.players.get(targetId);
 
-    if (!playerCanUseWeapon(attacker, weapon, "melee")) return null;
+    if (!combatSpec) return null;
     if (!target) return null;
     if (target.id === attacker.id) return null;
     if (attacker.online === false || target.online === false) return null;
@@ -222,15 +232,15 @@ export class ArenaRoomState {
       targetId: target.id,
       targetNick: target.nick,
       targetKind: "pilot",
-      damage: clampNumber(finiteNumber(event.damage), 0, 100),
-      weapon: sanitizeEventText(event.weapon || "melee", 32),
+      damage: combatSpec.damage,
+      weapon,
       x: target.x,
       y: target.y,
       serverTime: now
     }, now);
   }
 
-  createBullet(client, player, event, rawBullet, now) {
+  createBullet(client, player, event, rawBullet, now, combatSpec = null) {
     const angle = finiteNumber(rawBullet.angle ?? event.angle ?? player.angle);
     const requestedVx = finiteNumber(rawBullet.vx ?? event.vx);
     const requestedVy = finiteNumber(rawBullet.vy ?? event.vy);
@@ -246,36 +256,93 @@ export class ArenaRoomState {
 
     if (speed <= 0) return null;
 
-    if (speed > MAX_BULLET_SPEED) {
-      const ratio = MAX_BULLET_SPEED / speed;
+    const serverSpeed = combatSpec?.typeId === "pistol"
+      ? DEFAULT_PISTOL_BULLET_SPEED
+      : Math.min(speed, MAX_BULLET_SPEED);
+
+    if (speed !== serverSpeed) {
+      const ratio = serverSpeed / speed;
       vx *= ratio;
       vy *= ratio;
     }
 
     const origin = this.getBulletOrigin(player, rawBullet, event);
-    const lifeMs = Math.floor(clampNumber(
-      finiteNumber(rawBullet.lifeMs ?? event.lifeMs) || DEFAULT_BULLET_LIFE_MS,
-      100,
-      MAX_BULLET_LIFE_MS
-    ));
+    const lifeMs = combatSpec?.typeId === "pistol"
+      ? DEFAULT_PISTOL_BULLET_LIFE_MS
+      : Math.floor(clampNumber(
+        finiteNumber(rawBullet.lifeMs ?? event.lifeMs) || DEFAULT_BULLET_LIFE_MS,
+        100,
+        MAX_BULLET_LIFE_MS
+      ));
 
     return {
       id: `${now}-${client.id}-${this.nextBulletSeq++}`,
       ownerId: client.id,
       ownerNick: client.nick || player.nick,
-      weapon: sanitizeEventText(rawBullet.weapon || event.weapon || "gun", 32),
+      weapon: combatSpec?.weaponId || sanitizeEventText(rawBullet.weapon || event.weapon || "gun", 32),
       x: origin.x,
       y: origin.y,
       vx,
       vy,
       angle,
-      radius: clampNumber(finiteNumber(rawBullet.radius ?? event.radius) || 4, 1, 8),
-      damage: clampNumber(finiteNumber(rawBullet.damage ?? event.damage), 0, 100),
+      radius: combatSpec?.typeId === "pistol"
+        ? DEFAULT_PISTOL_BULLET_RADIUS
+        : clampNumber(finiteNumber(rawBullet.radius ?? event.radius) || 4, 1, 8),
+      damage: combatSpec?.damage !== null && combatSpec?.damage !== undefined
+        ? combatSpec.damage
+        : clampNumber(finiteNumber(rawBullet.damage ?? event.damage), 0, 100),
       createdAt: now,
       lastCheckedAt: now,
       expiresAt: now + lifeMs,
       lifeMs
     };
+  }
+
+  getWeaponCombatSpec(player, weaponId, action) {
+    if (weaponId === "gun") {
+      return {
+        weaponId,
+        typeId: "gun",
+        damage: null,
+        fireRateMs: 0
+      };
+    }
+
+    if (!playerOwnsPilotWeapon(player, weaponId)) return null;
+
+    const weapon = this.getPilotWeaponConfig(weaponId);
+    const typeId = sanitizeEventText(weapon?.typeId, 32);
+
+    if (action === "shoot" && typeId !== "pistol") return null;
+    if (action === "melee" && typeId !== "knife") return null;
+
+    const damage = clampNumber(finiteNumber(weapon?.gameplay?.damage), 0, 100);
+    const fireRate = Math.max(0, finiteNumber(weapon?.gameplay?.fireRate));
+
+    if (damage <= 0) return null;
+    if (typeId === "pistol" && fireRate <= 0) return null;
+
+    return {
+      weaponId,
+      typeId,
+      damage,
+      fireRateMs: Math.floor(fireRate * 1000)
+    };
+  }
+
+  canUseWeaponNow(player, weaponId, combatSpec, now) {
+    if (combatSpec.typeId !== "pistol") return true;
+
+    const lastUsedAt = player.weaponUsedAt?.[weaponId] || 0;
+
+    return now - lastUsedAt >= combatSpec.fireRateMs;
+  }
+
+  markWeaponUsed(player, weaponId, combatSpec, now) {
+    if (combatSpec.typeId !== "pistol") return;
+
+    player.weaponUsedAt ||= {};
+    player.weaponUsedAt[weaponId] = now;
   }
 
   getBulletOrigin(player, rawBullet, event) {
@@ -571,17 +638,10 @@ function normalizeInventory(inventory = {}) {
   };
 }
 
-function playerCanUseWeapon(player, weapon, action) {
-  if (weapon === "gun") return true;
-
+function playerOwnsPilotWeapon(player, weapon) {
   const pilotWeapons = normalizeInventory(player.inventory).pilotWeapons;
 
-  if (!pilotWeapons.includes(weapon)) return false;
-
-  if (action === "shoot") return true;
-  if (action === "melee") return true;
-
-  return false;
+  return pilotWeapons.includes(weapon);
 }
 
 function createRoomBots(roomConfig = {}) {
