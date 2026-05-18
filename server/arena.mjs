@@ -117,6 +117,10 @@ export class ArenaRoomState {
       x: finiteNumber(snapshot.exitedCannonX ?? snapshot.cannonX),
       y: finiteNumber(snapshot.exitedCannonY ?? snapshot.cannonY)
     };
+    const now = Date.now();
+
+    this.updateCannonRepairs(now);
+
     const acceptedCannon = requestedState === "in-cannon"
       ? this.getAcceptedPlayerCannon(player, requestedCannonId, rawX, rawY)
       : null;
@@ -129,7 +133,6 @@ export class ArenaRoomState {
       ? acceptedCannon.gunType
       : sanitizeEventText(snapshot.gunType || player.gunType || "autogun", 32);
     player.flying = Boolean(snapshot.flying);
-    const now = Date.now();
     const serverDamageActive =
       player.serverDamagedAt &&
       now - player.serverDamagedAt < SERVER_DAMAGE_AUTHORITY_MS;
@@ -307,6 +310,8 @@ export class ArenaRoomState {
       return [];
     }
 
+    this.updateCannonRepairs(now);
+
     const combatSpec = this.getWeaponCombatSpec(player, weapon, "shoot");
     const rawBullets = Array.isArray(event.bullets) && event.bullets.length > 0
       ? event.bullets
@@ -463,8 +468,12 @@ export class ArenaRoomState {
       if (player.state !== "in-cannon") return null;
       if (!player.occupiedCannonId) return null;
 
+      const serverCannon = this.cannons.get(player.occupiedCannonId);
+
+      if (isServerCannonBroken(serverCannon)) return null;
+
       const gunType = sanitizeEventText(
-        this.cannons.get(player.occupiedCannonId)?.gunType || player.gunType || "autogun",
+        serverCannon?.gunType || player.gunType || "autogun",
         32
       );
       const cannon = this.getCannonConfig(gunType) || this.getCannonConfig("autogun") || {};
