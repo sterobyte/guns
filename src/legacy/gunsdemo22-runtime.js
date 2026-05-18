@@ -3511,7 +3511,10 @@ function tryEnterRepairedCannon(unit) {
         unit.ammo + unit.carriedAmmoValue
       );
 
-      addScore(unit, getActiveModeRule("ammoLoadScore", 40), "ammo-load");
+      addScore(unit, getActiveModeRule("ammoLoadScore", 40), "ammo-load", {
+        cannonEntityId: unit.cannonEntityId,
+        ammoValue: unit.carriedAmmoValue
+      });
     }
 
     unit.carriedAmmoValue = 0;

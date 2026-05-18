@@ -24,6 +24,7 @@ const MOVEMENT_SPEED_TOLERANCE = 1.75;
 const MOVEMENT_POSITION_GRACE = 60;
 const MOVEMENT_STATE_CHANGE_GRACE = 120;
 const DEFAULT_CANNON_ENTRY_RANGE = 140;
+const DEFAULT_AMMO_PACK_VALUE = 30;
 const CANNON_REPAIR_MS = 16000;
 
 export class ArenaRoomState {
@@ -593,6 +594,12 @@ export class ArenaRoomState {
       return null;
     }
 
+    const serverContext = reason === "ammo-load"
+      ? this.applyServerAmmoLoad(player, event)
+      : {};
+
+    if (reason === "ammo-load" && !serverContext) return null;
+
     const scoreEvent = {
       id: `${now}-${client.id}-${this.scoreEvents.length}`,
       clientId: client.id,
@@ -604,7 +611,8 @@ export class ArenaRoomState {
       targetKind: sanitizeEventText(event.targetKind, 32),
       clientTotal: Math.max(0, Math.floor(finiteNumber(event.total))),
       clientTime: Math.max(0, Math.floor(finiteNumber(event.clientTime))),
-      serverTime: now
+      serverTime: now,
+      ...serverContext
     };
 
     if (reason === "passive") {
@@ -625,6 +633,46 @@ export class ArenaRoomState {
     }
 
     return scoreEvent;
+  }
+
+  applyServerAmmoLoad(player, event = {}) {
+    const requestedCannonId = sanitizeEventText(
+      event.cannonEntityId || event.occupiedCannonId || "",
+      64
+    );
+    const cannonId = requestedCannonId || player.occupiedCannonId;
+
+    if (!cannonId || cannonId !== player.occupiedCannonId) return null;
+
+    const cannon = this.cannons.get(cannonId);
+
+    if (!cannon || isServerCannonBroken(cannon)) return null;
+
+    const maxAmmo = Math.max(0, Math.floor(finiteNumber(cannon.maxAmmo)));
+    const beforeAmmo = Math.max(
+      0,
+      Math.min(maxAmmo, Math.floor(finiteNumber(cannon.ammo)))
+    );
+    const requestedAmount = Math.max(
+      0,
+      Math.floor(finiteNumber(event.ammoValue))
+    );
+    const amount = requestedAmount > 0 ? requestedAmount : DEFAULT_AMMO_PACK_VALUE;
+    const afterAmmo = Math.min(maxAmmo, beforeAmmo + amount);
+
+    if (maxAmmo <= 0 || afterAmmo <= beforeAmmo) return null;
+
+    cannon.ammo = afterAmmo;
+    player.ammo = afterAmmo;
+    player.maxAmmo = maxAmmo;
+
+    return {
+      cannonEntityId: cannon.id,
+      ammoValue: amount,
+      ammoBefore: beforeAmmo,
+      ammoAfter: afterAmmo,
+      maxAmmo
+    };
   }
 
   updateBots(rawBots) {
