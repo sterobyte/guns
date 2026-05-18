@@ -457,6 +457,11 @@
 
       return Array.isArray(arena?.bullets) ? arena.bullets : [];
     },
+    getServerCannons(maxAge = 2000) {
+      const arena = this.getArenaState(maxAge);
+
+      return Array.isArray(arena?.cannons) ? arena.cannons : [];
+    },
     getScoreboardRows() {
       return serverArena?.scoreboard || null;
     },
@@ -479,6 +484,7 @@
         matchId: serverMatch?.id || "",
         matchState: serverMatch?.state || "",
         matchRemainingMs: serverMatch?.remainingMs ?? null,
+        serverCannons: this.getServerCannons().length,
         remoteSnapshotCount
       };
     },
@@ -500,6 +506,7 @@
         peerCount: peers.size,
         peers: Array.from(peers.values()),
         remoteSnapshots: this.getRemoteSnapshots(),
+        serverCannons: this.getServerCannons(),
         arena: this.getArenaState(),
         readyForServerAdapter: true
       };

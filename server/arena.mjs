@@ -692,6 +692,8 @@ export class ArenaRoomState {
       .map((player) => ({ ...player }));
     const bots = Array.from(this.bots.values())
       .map((bot) => ({ ...bot }));
+    const cannons = Array.from(this.cannons.values())
+      .map((cannon) => ({ ...cannon }));
     const bullets = Array.from(this.bullets.values())
       .map((bullet) => this.snapshotBullet(bullet, now));
 
@@ -702,6 +704,7 @@ export class ArenaRoomState {
       match,
       players,
       bots,
+      cannons,
       bullets,
       scoreboard: buildScoreboardRows(players, bots)
     };
