@@ -111,6 +111,7 @@ try {
     damageEvents: clients.map((client) => client.damageEvents.length),
     deaths: clients.map((client) => client.deaths.length),
     respawns: clients.map((client) => client.respawns.length),
+    acceptedSnapshots: clients.map((client) => client.acceptedSnapshots.length),
     meleeEvents: clients.map((client) => client.meleeEvents.length),
     soloScoreboard: emptyRoomClient.scoreboard.length,
     matchEvents: clients.map((client) => client.matchEvents.length)
@@ -136,6 +137,7 @@ function createTestClient(nick, snapshot, options = {}) {
     damageEvents: [],
     deaths: [],
     respawns: [],
+    acceptedSnapshots: [],
     meleeEvents: [],
     matchEvents: [],
     open() {
@@ -280,6 +282,10 @@ function handleMessage(client, event) {
     client.respawns.push(message.respawn);
   }
 
+  if (message.type === "server:snapshot" && message.snapshot) {
+    client.acceptedSnapshots.push(message.snapshot);
+  }
+
   if (message.type === "melee:event" && message.hit) {
     client.meleeEvents.push(message.hit);
   }
@@ -326,6 +332,7 @@ function fail(message) {
       matchId: client.matchId,
       players: client.players.size,
       remoteSnapshots: client.remoteSnapshots.size,
+      acceptedSnapshots: client.acceptedSnapshots.length,
       matchEvents: client.matchEvents,
       scoreboard: client.scoreboard
     }))

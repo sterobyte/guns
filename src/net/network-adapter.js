@@ -6,6 +6,7 @@
   let seq = 0;
   let serverArena = null;
   let serverMatch = null;
+  let ownServerSnapshot = null;
   let roomClientCount = 0;
   const peers = new Map();
   const remoteSnapshots = new Map();
@@ -14,6 +15,7 @@
   function clearSessionState() {
     serverArena = null;
     serverMatch = null;
+    ownServerSnapshot = null;
     roomClientCount = 0;
     peers.clear();
     remoteSnapshots.clear();
@@ -152,6 +154,7 @@
       if (message.room.arena) {
         serverArena = message.room.arena;
         serverMatch = message.room.match || message.room.arena.match || serverMatch;
+        syncOwnArenaSnapshot();
         syncArenaSnapshots();
       }
     }
@@ -176,9 +179,19 @@
       });
     }
 
+    if (message.type === "server:snapshot" && message.snapshot) {
+      ownServerSnapshot = {
+        ...message.snapshot,
+        clientId,
+        receivedAt: Date.now(),
+        serverTime: message.serverTime || 0
+      };
+    }
+
     if ((message.type === "arena:state" || message.type === "arena") && message.arena) {
       serverArena = message.arena;
       serverMatch = message.arena.match || serverMatch;
+      syncOwnArenaSnapshot();
       syncArenaSnapshots();
     }
 
@@ -199,6 +212,20 @@
         serverTime: serverArena.serverTime || 0
       });
     }
+  }
+
+  function syncOwnArenaSnapshot() {
+    if (!serverArena?.players || !clientId) return;
+
+    const player = serverArena.players.find((row) => row.id === clientId);
+    if (!player) return;
+
+    ownServerSnapshot = {
+      ...player,
+      clientId,
+      receivedAt: Date.now(),
+      serverTime: serverArena.serverTime || 0
+    };
   }
 
   window.GUNS_NET = {
@@ -447,6 +474,12 @@
       return Array.from(remoteSnapshots.values())
         .filter((snapshot) => now - snapshot.receivedAt <= maxAge);
     },
+    getOwnServerSnapshot(maxAge = 2000) {
+      if (!ownServerSnapshot) return null;
+      if (Date.now() - ownServerSnapshot.receivedAt > maxAge) return null;
+
+      return ownServerSnapshot;
+    },
     getArenaState(maxAge = 2000) {
       if (!serverArena) return null;
       if (Date.now() - (serverArena.serverTime || 0) > maxAge) return null;
@@ -484,6 +517,7 @@
         matchId: serverMatch?.id || "",
         matchState: serverMatch?.state || "",
         matchRemainingMs: serverMatch?.remainingMs ?? null,
+        ownServerState: ownServerSnapshot?.state || "",
         serverCannons: this.getServerCannons().length,
         remoteSnapshotCount
       };
@@ -506,6 +540,7 @@
         peerCount: peers.size,
         peers: Array.from(peers.values()),
         remoteSnapshots: this.getRemoteSnapshots(),
+        ownServerSnapshot: this.getOwnServerSnapshot(),
         serverCannons: this.getServerCannons(),
         arena: this.getArenaState(),
         readyForServerAdapter: true

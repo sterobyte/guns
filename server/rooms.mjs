@@ -266,15 +266,22 @@ export class MultiplayerHub {
       if (!room) return;
 
       const player = room.arena.updatePlayer(client, message.snapshot || {});
+      const acceptedSnapshot = player
+        ? { ...player, clientId: player.id }
+        : message.snapshot || null;
+
+      client.send({
+        type: "server:snapshot",
+        snapshot: acceptedSnapshot,
+        serverTime: Date.now()
+      });
 
       this.broadcast(
         client.roomId,
         {
           type: "peer:snapshot",
           from: client.id,
-          snapshot: player
-            ? { ...player, clientId: player.id }
-            : message.snapshot || null,
+          snapshot: acceptedSnapshot,
           serverTime: Date.now()
         },
         client.id
