@@ -23,6 +23,7 @@ const MOVEMENT_VALIDATION_MAX_DT_MS = 1000;
 const MOVEMENT_SPEED_TOLERANCE = 1.75;
 const MOVEMENT_POSITION_GRACE = 60;
 const MOVEMENT_STATE_CHANGE_GRACE = 120;
+const DEFAULT_CANNON_ENTRY_RANGE = 140;
 
 export class ArenaRoomState {
   constructor(roomId, roomConfig = {}, options = {}) {
@@ -32,6 +33,7 @@ export class ArenaRoomState {
     this.scoreEvents = [];
     this.players = new Map();
     this.bots = createRoomBots(roomConfig);
+    this.cannons = createRoomCannons(roomConfig);
     this.bullets = new Map();
     this.nextBulletSeq = 1;
     this.getCannonConfig = options.getCannonConfig || (() => null);
@@ -62,6 +64,7 @@ export class ArenaRoomState {
         pilotKills: 0,
         cannonBreaks: 0,
         pilotDeaths: 0,
+        occupiedCannonId: "",
         inventory: normalizeInventory(client.inventory),
         connectedAt: Date.now(),
         lastSeenAt: Date.now(),
@@ -96,11 +99,23 @@ export class ArenaRoomState {
     const player = this.join(client);
     const rawX = finiteNumber(snapshot.x);
     const rawY = finiteNumber(snapshot.y);
+    const previousState = player.state;
+    const requestedState = snapshot.state === "in-cannon" ? "in-cannon" : "on-foot";
+    const requestedCannonId = sanitizeEventText(
+      snapshot.cannonEntityId || snapshot.occupiedCannonId || "",
+      64
+    );
+    const acceptedCannon = requestedState === "in-cannon"
+      ? this.getAcceptedPlayerCannon(player, requestedCannonId, rawX, rawY)
+      : null;
 
     player.nick = snapshot.nick || client.nick || player.nick;
     player.angle = finiteNumber(snapshot.angle);
-    player.gunType = sanitizeEventText(snapshot.gunType || player.gunType || "autogun", 32);
-    player.state = snapshot.state === "in-cannon" ? "in-cannon" : "on-foot";
+    player.state = acceptedCannon ? "in-cannon" : "on-foot";
+    player.occupiedCannonId = acceptedCannon?.id || "";
+    player.gunType = acceptedCannon
+      ? acceptedCannon.gunType
+      : sanitizeEventText(snapshot.gunType || player.gunType || "autogun", 32);
     player.flying = Boolean(snapshot.flying);
     const now = Date.now();
     const serverDamageActive =
@@ -130,6 +145,7 @@ export class ArenaRoomState {
     });
     player.x = validatedPoint.x;
     player.y = validatedPoint.y;
+    this.updatePlayerCannonOccupation(player, previousState);
     player.clientScore = Math.max(0, Math.floor(finiteNumber(snapshot.score)));
     player.clientPilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.clientCannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
@@ -142,6 +158,58 @@ export class ArenaRoomState {
     this.updateBots(snapshot.bots);
 
     return player;
+  }
+
+  getAcceptedPlayerCannon(player, requestedCannonId, rawX, rawY) {
+    const currentCannon = player.occupiedCannonId
+      ? this.cannons.get(player.occupiedCannonId)
+      : null;
+
+    if (currentCannon && currentCannon.occupiedBy === player.id) {
+      return currentCannon;
+    }
+
+    const cannon = requestedCannonId
+      ? this.cannons.get(requestedCannonId)
+      : this.findNearbyFreeCannon(player, rawX, rawY);
+
+    if (!cannon) return null;
+    if (cannon.occupiedBy && cannon.occupiedBy !== player.id) return null;
+    if (!isPlayerNearCannon(player, cannon, rawX, rawY)) return null;
+
+    return cannon;
+  }
+
+  findNearbyFreeCannon(player, rawX, rawY) {
+    for (const cannon of this.cannons.values()) {
+      if (cannon.occupiedBy && cannon.occupiedBy !== player.id) continue;
+      if (isPlayerNearCannon(player, cannon, rawX, rawY)) return cannon;
+    }
+
+    return null;
+  }
+
+  updatePlayerCannonOccupation(player, previousState) {
+    if (previousState === "in-cannon" && player.state !== "in-cannon") {
+      for (const cannon of this.cannons.values()) {
+        if (cannon.occupiedBy !== player.id) continue;
+
+        cannon.occupiedBy = "";
+        cannon.x = player.x;
+        cannon.y = player.y;
+      }
+    }
+
+    if (player.state !== "in-cannon") return;
+
+    const cannon = this.cannons.get(player.occupiedCannonId);
+
+    if (!cannon) return;
+
+    cannon.occupiedBy = player.id;
+    cannon.x = player.x;
+    cannon.y = player.y;
+    cannon.gunType = player.gunType || cannon.gunType;
   }
 
   recordScoreEvent(client, event = {}, rules = {}) {
@@ -795,6 +863,47 @@ function getPlayerMovementSpeed(player, cannon = null) {
   return Math.max(
     0,
     finiteNumber(cannon?.physics?.speed?.player) || DEFAULT_CANNON_MOVE_SPEED
+  );
+}
+
+function createRoomCannons(roomConfig = {}) {
+  const cannonSpawns = Array.isArray(roomConfig?.spawns?.cannons)
+    ? roomConfig.spawns.cannons
+    : [];
+
+  return new Map(
+    cannonSpawns.map((spawn, index) => {
+      const id = sanitizeEventText(
+        spawn.unitId || spawn.id || `cannon${index + 1}`,
+        64
+      );
+      const gunType = sanitizeEventText(spawn.gunType || spawn.type || "autogun", 32);
+
+      return [
+        id,
+        {
+          id,
+          gunType,
+          x: finiteNumber(spawn.x),
+          y: finiteNumber(spawn.y),
+          occupiedBy: ""
+        }
+      ];
+    }).filter(([id]) => Boolean(id))
+  );
+}
+
+function isPlayerNearCannon(player, cannon, rawX, rawY) {
+  const entryRange =
+    Math.max(1, finiteNumber(player.radiusOuter) || 34) +
+    Math.max(1, finiteNumber(player.radiusInner) || 13) +
+    DEFAULT_CANNON_ENTRY_RANGE;
+  const currentDistance = Math.hypot(player.x - cannon.x, player.y - cannon.y);
+  const requestedDistance = Math.hypot(rawX - cannon.x, rawY - cannon.y);
+
+  return (
+    requestedDistance <= entryRange ||
+    (player.lastSnapshotAt && currentDistance <= entryRange)
   );
 }
 

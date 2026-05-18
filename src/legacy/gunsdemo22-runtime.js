@@ -5766,6 +5766,7 @@ function getLocalNetworkSnapshot() {
     y: inCannon ? player.y : player.pilotY,
     angle: inCannon ? player.turretAngle : player.pilotAngle,
     state: inCannon ? "in-cannon" : "on-foot",
+    cannonEntityId: inCannon ? player.cannonEntityId : "",
     gunType: inCannon ? player.gunType : "",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,

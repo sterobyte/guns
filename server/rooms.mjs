@@ -273,7 +273,7 @@ export class MultiplayerHub {
           type: "peer:snapshot",
           from: client.id,
           snapshot: player
-            ? { ...(message.snapshot || {}), inventory: player.inventory }
+            ? { ...player, clientId: player.id }
             : message.snapshot || null,
           serverTime: Date.now()
         },
