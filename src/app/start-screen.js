@@ -77,6 +77,14 @@
       return [...state.pilotWeapons];
     },
 
+    syncInventory(entityOrInventory) {
+      syncKnownInventory(
+        entityOrInventory?.inventory
+          ? entityOrInventory
+          : { inventory: entityOrInventory }
+      );
+    },
+
     async purchasePilotWeapon(weaponId, priceGs, context = {}) {
       const id = String(weaponId || "").trim();
       const price = Math.max(0, Math.floor(Number(priceGs) || 0));

@@ -45,6 +45,7 @@ export class ArenaRoomState {
         pilotKills: 0,
         cannonBreaks: 0,
         pilotDeaths: 0,
+        inventory: normalizeInventory(client.inventory),
         connectedAt: Date.now(),
         lastSeenAt: Date.now(),
         online: true
@@ -52,6 +53,15 @@ export class ArenaRoomState {
     }
 
     return this.players.get(client.id);
+  }
+
+  setPlayerInventory(clientId, inventory = {}) {
+    const player = this.players.get(clientId);
+
+    if (!player) return null;
+
+    player.inventory = normalizeInventory(inventory);
+    return player.inventory;
   }
 
   leave(clientId) {
@@ -93,6 +103,7 @@ export class ArenaRoomState {
     player.clientPilotKills = Math.max(0, Math.floor(finiteNumber(snapshot.pilotKills)));
     player.clientCannonBreaks = Math.max(0, Math.floor(finiteNumber(snapshot.cannonBreaks)));
     player.clientPilotDeaths = Math.max(0, Math.floor(finiteNumber(snapshot.pilotDeaths)));
+    player.inventory = normalizeInventory(client.inventory || player.inventory);
     player.online = true;
     player.lastSeenAt = now;
 
@@ -150,10 +161,13 @@ export class ArenaRoomState {
   recordShootEvent(client, event = {}) {
     const now = Date.now();
     const player = this.join(client);
+    const weapon = sanitizeEventText(event.weapon || "gun", 32);
     const rawBullets = Array.isArray(event.bullets) && event.bullets.length > 0
       ? event.bullets
       : [event];
     const bullets = [];
+
+    if (!playerCanUseWeapon(player, weapon, "shoot")) return [];
 
     this.updateBullets(now);
 
@@ -178,8 +192,10 @@ export class ArenaRoomState {
     const now = Date.now();
     const attacker = this.join(client);
     const targetId = sanitizeEventText(event.targetId, 64);
+    const weapon = sanitizeEventText(event.weapon || "melee", 32);
     const target = this.players.get(targetId);
 
+    if (!playerCanUseWeapon(attacker, weapon, "melee")) return null;
     if (!target) return null;
     if (target.id === attacker.id) return null;
     if (attacker.online === false || target.online === false) return null;
@@ -541,6 +557,31 @@ function buildScoreboardRows(players, bots) {
       kind: "bot"
     }))
   ].sort((a, b) => b.score - a.score || a.nick.localeCompare(b.nick));
+}
+
+function normalizeInventory(inventory = {}) {
+  const pilotWeapons = Array.isArray(inventory?.pilotWeapons)
+    ? inventory.pilotWeapons
+    : [];
+
+  return {
+    pilotWeapons: Array.from(
+      new Set(pilotWeapons.map((id) => sanitizeEventText(id, 32)).filter(Boolean))
+    )
+  };
+}
+
+function playerCanUseWeapon(player, weapon, action) {
+  if (weapon === "gun") return true;
+
+  const pilotWeapons = normalizeInventory(player.inventory).pilotWeapons;
+
+  if (!pilotWeapons.includes(weapon)) return false;
+
+  if (action === "shoot") return true;
+  if (action === "melee") return true;
+
+  return false;
 }
 
 function createRoomBots(roomConfig = {}) {

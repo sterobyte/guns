@@ -1442,6 +1442,7 @@ let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
 let networkCombatEventsInitialized = false;
 let networkRoomConfigEventsInitialized = false;
+let networkInventoryEventsInitialized = false;
 let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
@@ -1453,6 +1454,7 @@ const collisionLocks = new Set();
 
 setupNetworkCombatEvents();
 setupNetworkRoomConfigEvents();
+setupNetworkInventoryEvents();
 
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
@@ -5752,6 +5754,9 @@ function getLocalNetworkSnapshot() {
     pilotKills: player.pilotKills || 0,
     cannonBreaks: player.cannonBreaks || 0,
     pilotDeaths: player.pilotDeaths || 0,
+    inventory: {
+      pilotWeapons: window.GUNS_APP?.getPilotWeapons?.() || []
+    },
     bots: getLocalBotNetworkSnapshots()
   };
 }
@@ -5839,6 +5844,16 @@ function setupNetworkRoomConfigEvents() {
   networkRoomConfigEventsInitialized = true;
   window.GUNS_NET.on("room:config", message => {
     applyNetworkRoomConfig(message.room);
+  });
+}
+
+function setupNetworkInventoryEvents() {
+  if (networkInventoryEventsInitialized) return;
+  if (!window.GUNS_NET?.on) return;
+
+  networkInventoryEventsInitialized = true;
+  window.GUNS_NET.on("inventory:sync", message => {
+    window.GUNS_APP?.syncInventory?.(message.user || message.inventory);
   });
 }
 

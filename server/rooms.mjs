@@ -263,14 +263,16 @@ export class MultiplayerHub {
       const room = this.rooms.get(client.roomId);
       if (!room) return;
 
-      room.arena.updatePlayer(client, message.snapshot || {});
+      const player = room.arena.updatePlayer(client, message.snapshot || {});
 
       this.broadcast(
         client.roomId,
         {
           type: "peer:snapshot",
           from: client.id,
-          snapshot: message.snapshot || null,
+          snapshot: player
+            ? { ...(message.snapshot || {}), inventory: player.inventory }
+            : message.snapshot || null,
           serverTime: Date.now()
         },
         client.id
@@ -490,6 +492,7 @@ export class MultiplayerHub {
     return {
       id: client.id,
       nick: client.nick,
+      inventory: client.inventory || { pilotWeapons: [] },
       connectedAt: client.connectedAt,
       lastSeenAt: client.lastSeenAt
     };

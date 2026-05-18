@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.46";
+const version = "0.16.48";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -862,6 +862,7 @@ const server = http.createServer((req, res) => {
         const builtConfig = buildVersionedGameConfig();
         writeConfigFile(publishedConfigFile, builtConfig);
         publishedConfig = builtConfig;
+        syncLiveUserInventory(result.user, cookies, body?.nick);
         syncLiveRoomConfig(purchase.roomId);
 
         sendJson(req, res, 200, {
@@ -1484,6 +1485,36 @@ function syncLiveRoomConfig(roomId) {
   });
 }
 
+function syncLiveUserInventory(user, cookies = {}, rawNick = "") {
+  const inventory = user?.inventory || { pilotWeapons: [] };
+  const deviceToken = cookies[DEVICE_COOKIE] || "";
+  const nick = sanitizeNick(user?.nick || rawNick);
+  const touchedRooms = new Set();
+
+  for (const room of hub.rooms.values()) {
+    for (const client of room.clients.values()) {
+      const sameDevice = deviceToken && client.deviceToken === deviceToken;
+      const sameNick = nick && sanitizeNick(client.nick) === nick;
+
+      if (!sameDevice && !sameNick) continue;
+
+      client.inventory = inventory;
+      room.arena.setPlayerInventory(client.id, inventory);
+      client.send({
+        type: "inventory:sync",
+        inventory,
+        user,
+        serverTime: Date.now()
+      });
+      touchedRooms.add(room.id);
+    }
+  }
+
+  for (const roomId of touchedRooms) {
+    hub.broadcastRoomState(roomId);
+  }
+}
+
 function resolveMarketItemPurchase(config, roomIdValue, instanceIdValue, weaponIdValue) {
   const roomId = String(roomIdValue || "").trim();
   const instanceId = String(instanceIdValue || "").trim();
@@ -1755,14 +1786,26 @@ server.on("upgrade", (req, socket) => {
   const deviceToken = cookies[DEVICE_COOKIE] || "";
 
   client.deviceToken = deviceToken;
-  hub.join(client, roomId, nick);
-  users.register(nick, {
+  const room = hub.join(client, roomId, nick);
+
+  if (!room) return;
+
+  const user = users.register(nick, {
     source: "websocket",
     deviceToken,
     connectionId: client.id,
     online: true,
     roomId
   });
+  client.inventory = user?.inventory || { pilotWeapons: [] };
+  room.arena.setPlayerInventory(client.id, client.inventory);
+  client.send({
+    type: "inventory:sync",
+    inventory: client.inventory,
+    user,
+    serverTime: Date.now()
+  });
+  hub.broadcastRoomState(roomId);
 
   socket.on("data", (chunk) => {
     client.lastSeenAt = Date.now();
