@@ -1270,6 +1270,7 @@ function syncDomainEntities() {
     }
 
     if (unit.cannonEntityId) {
+      applyServerCannonStateToUnit(unit);
       cannonUnitById.set(unit.cannonEntityId, unit);
 
       cannons.push({
@@ -1330,6 +1331,38 @@ function isServerCannonUnavailable(unit) {
 
   return Boolean(serverCannon.broken || serverCannon.destroyed) ||
     Number(serverCannon.hp) <= 0;
+}
+
+function applyServerCannonStateToUnit(unit) {
+  const serverCannon = getServerCannonState(unit);
+
+  if (!serverCannon) return;
+
+  const maxHp = Number(serverCannon.maxHp);
+  const hp = Number(serverCannon.hp);
+
+  if (Number.isFinite(maxHp) && maxHp > 0) {
+    unit.maxHp = maxHp;
+  }
+
+  if (Number.isFinite(hp)) {
+    unit.hp = clamp(hp, 0, Math.max(1, unit.maxHp || maxHp || 1));
+  }
+
+  if (serverCannon.destroyed) {
+    unit.cannonDestroyed = true;
+    unit.wreckRepair = 0;
+    unit.wreckHp = 0;
+    unit.hp = 0;
+    return;
+  }
+
+  if (serverCannon.broken || unit.hp <= 0) {
+    unit.cannonDestroyed = false;
+    unit.wreckRepair = Math.max(unit.wreckRepair || 0, WRECK_REPAIR_TIME);
+    unit.wreckHp = Math.max(unit.wreckHp || 0, WRECK_HP);
+    unit.hp = 0;
+  }
 }
 
 function getPilotEntityById(id) {

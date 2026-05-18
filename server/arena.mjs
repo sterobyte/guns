@@ -718,7 +718,6 @@ export class ArenaRoomState {
       targetCannon.hp = afterHp;
       targetCannon.maxHp = maxHp;
       targetCannon.broken = afterHp <= 0;
-      targetCannon.destroyed = afterHp <= 0;
 
       if (killed) {
         targetCannon.occupiedBy = "";
