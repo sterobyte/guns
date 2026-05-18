@@ -84,6 +84,11 @@
   const uptimeLabel = document.getElementById("metric-uptime-label");
   const panelVersion = document.getElementById("panel-version");
   const viewTitle = document.getElementById("view-title");
+  const shell = document.querySelector(".shell");
+  const authGate = document.getElementById("auth-gate");
+  const authInput = document.getElementById("admin-token-input");
+  const authSubmit = document.getElementById("admin-token-submit");
+  const authMessage = document.getElementById("admin-token-message");
 
   if (panelVersion) {
     panelVersion.textContent = `v${version}`;
@@ -98,6 +103,16 @@
       bootPanel();
     });
   }
+
+  authSubmit?.addEventListener("click", async () => {
+    await submitAdminToken();
+  });
+
+  authInput?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    await submitAdminToken();
+  });
 
   async function loadActiveView() {
     viewTitle.textContent = views[activeView].title;
@@ -124,11 +139,11 @@
     }
 
     if (!adminAccessReady) {
-      setServerState(false, "Admin locked");
-      renderEmpty("ADMIN TOKEN REQUIRED");
+      lockPanel("ACCESS REQUIRED");
       return;
     }
 
+    unlockPanel();
     await loadActiveView();
   }
 
@@ -1841,26 +1856,54 @@
   }
 
   async function ensureAdminAccess() {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (!getAdminToken()) {
-        const token = window.prompt("ADMIN TOKEN");
-
-        if (!String(token || "").trim()) {
-          return false;
-        }
-
-        setAdminToken(token);
-      }
-
-      if (await validateAdminToken()) {
-        return true;
-      }
-
-      window.alert("ACCESS DENIED");
-      clearAdminToken();
+    if (getAdminToken() && await validateAdminToken()) {
+      return true;
     }
 
+    clearAdminToken();
+    lockPanel("ACCESS REQUIRED");
     return false;
+  }
+
+  async function submitAdminToken() {
+    const token = String(authInput?.value || "").trim();
+
+    if (!token) {
+      lockPanel("TOKEN REQUIRED", true);
+      return;
+    }
+
+    setAdminToken(token);
+    setAuthMessage("CHECKING...", false);
+
+    if (await validateAdminToken()) {
+      adminAccessReady = true;
+      await bootPanel();
+      return;
+    }
+
+    adminAccessReady = false;
+    clearAdminToken();
+    if (authInput) authInput.value = "";
+    lockPanel("ACCESS DENIED", true);
+  }
+
+  function lockPanel(message, isError = false) {
+    shell?.classList.add("auth-locked");
+    authGate?.classList.remove("hidden");
+    setAuthMessage(message, isError);
+    window.setTimeout(() => authInput?.focus(), 0);
+  }
+
+  function unlockPanel() {
+    shell?.classList.remove("auth-locked");
+    authGate?.classList.add("hidden");
+  }
+
+  function setAuthMessage(message, isError) {
+    if (!authMessage) return;
+    authMessage.textContent = message || "";
+    authMessage.classList.toggle("error", Boolean(isError));
   }
 
   async function validateAdminToken() {

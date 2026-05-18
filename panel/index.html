@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="./src/styles.css" />
 </head>
 <body>
-<main class="shell">
+<main class="shell auth-locked">
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark"></span>
@@ -86,6 +86,22 @@
     </section>
   </section>
 </main>
+
+<section class="auth-gate" id="auth-gate">
+  <div class="auth-box">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <strong>GUNS</strong>
+        <span>PANEL</span>
+      </div>
+    </div>
+    <label for="admin-token-input">ADMIN TOKEN</label>
+    <input id="admin-token-input" type="password" autocomplete="current-password" />
+    <button id="admin-token-submit" type="button">ENTER</button>
+    <p id="admin-token-message">ACCESS REQUIRED</p>
+  </div>
+</section>
 
 <script src="./src/config.js"></script>
 <script src="./src/app.js"></script>

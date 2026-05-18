@@ -9,7 +9,7 @@ const GUNS_PANEL_API_BASE_URL = (
 window.GUNS_PANEL_CONFIG = {
   project: {
     name: "guns-panel",
-    version: "0.2.11",
+    version: "0.2.12",
     brand: "GUNS Panel"
   },
   api: {

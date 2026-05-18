@@ -32,6 +32,75 @@ body {
   min-height: 100vh;
 }
 
+.shell.auth-locked {
+  visibility: hidden;
+}
+
+.auth-gate {
+  align-items: center;
+  background:
+    linear-gradient(rgba(184, 211, 111, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184, 211, 111, 0.035) 1px, transparent 1px),
+    var(--bg);
+  background-size: 24px 24px;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 10;
+}
+
+.auth-gate.hidden {
+  display: none;
+}
+
+.auth-box {
+  background: rgba(26, 37, 18, 0.94);
+  border: 1px solid var(--line);
+  max-width: 420px;
+  padding: 24px;
+  width: 100%;
+}
+
+.auth-box label {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.auth-box input {
+  background: #0f170b;
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  margin-bottom: 12px;
+  padding: 12px;
+  width: 100%;
+}
+
+.auth-box button {
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 12px 16px;
+  width: 100%;
+}
+
+.auth-box p {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 12px 0 0;
+  min-height: 16px;
+}
+
+.auth-box p.error {
+  color: var(--danger);
+}
+
 .sidebar {
   border-right: 1px solid var(--line);
   background: rgba(12, 17, 9, 0.82);
