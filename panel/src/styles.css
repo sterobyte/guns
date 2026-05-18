@@ -307,6 +307,7 @@ tr:last-child td {
 }
 
 .number-param-input,
+.text-param-input,
 .select-param-input {
   width: 76px;
   border: 1px solid var(--line);
@@ -314,6 +315,11 @@ tr:last-child td {
   color: var(--text);
   font: inherit;
   padding: 6px 8px;
+}
+
+.text-param-input {
+  min-width: 148px;
+  width: 100%;
 }
 
 .select-param-input {

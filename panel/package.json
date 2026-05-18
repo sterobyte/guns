@@ -1,6 +1,6 @@
 {
   "name": "guns-panel",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "private": true,
   "description": "Separate web admin panel for guns.gs.",
   "scripts": {

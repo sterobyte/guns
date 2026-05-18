@@ -401,15 +401,33 @@
         cell(library),
         idCell(item.id),
         cell(item.typeId || item.kind),
-        cell(item.title),
-        mutedCell(item.description || "-"),
-        cell(item.economy?.priceGs ?? "-"),
+        library === "pilot weapon"
+          ? pilotWeaponTextCell(item, "title")
+          : cell(item.title),
+        library === "pilot weapon"
+          ? pilotWeaponTextCell(item, "description")
+          : mutedCell(item.description || "-"),
+        library === "pilot weapon"
+          ? pilotWeaponNumberCell(item, "priceGs", item.economy?.priceGs ?? 0)
+          : cell(item.economy?.priceGs ?? "-"),
         cell(item.version),
-        cell(item.gameplay?.damage ?? item.gameplay?.maxHp),
-        cell(item.gameplay?.magazine ?? item.gameplay?.maxAmmo),
+        library === "pilot weapon"
+          ? pilotWeaponNumberCell(item, "damage", item.gameplay?.damage ?? 0)
+          : cell(item.gameplay?.maxHp),
+        library === "pilot weapon"
+          ? (
+              item.typeId === "pistol"
+                ? pilotWeaponNumberCell(item, "magazine", item.gameplay?.magazine ?? 1, "1")
+                : mutedCell("-")
+            )
+          : cell(item.gameplay?.maxAmmo),
         library === "gun"
           ? fireRateCell(item, "player")
-          : cell(item.gameplay?.fireRate),
+          : (
+              item.typeId === "pistol"
+                ? pilotWeaponNumberCell(item, "fireRate", item.gameplay?.fireRate ?? 0, "0.01")
+                : mutedCell("-")
+            ),
         library === "gun"
           ? fireRateCell(item, "bot")
           : mutedCell("-"),
@@ -431,6 +449,40 @@
     input.title = `fireRate.${controller}`;
     input.addEventListener("change", () => {
       setCannonFireRate(cannon.id, controller, input.value);
+    });
+
+    td.appendChild(input);
+    return td;
+  }
+
+  function pilotWeaponTextCell(weapon, field) {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+
+    input.type = "text";
+    input.className = "text-param-input";
+    input.value = String(weapon[field] || "");
+    input.title = field;
+    input.addEventListener("change", () => {
+      setPilotWeaponField(weapon.id, field, input.value);
+    });
+
+    td.appendChild(input);
+    return td;
+  }
+
+  function pilotWeaponNumberCell(weapon, field, value, step = "1") {
+    const td = document.createElement("td");
+    const input = document.createElement("input");
+
+    input.type = "number";
+    input.className = "number-param-input";
+    input.min = field === "damage" || field === "magazine" ? "0.001" : "0";
+    input.step = step;
+    input.value = String(value ?? "");
+    input.title = field;
+    input.addEventListener("change", () => {
+      setPilotWeaponField(weapon.id, field, input.value);
     });
 
     td.appendChild(input);
@@ -902,6 +954,39 @@
       );
       await loadObjects();
     } catch {
+      await loadObjects();
+    }
+  }
+
+  async function setPilotWeaponField(weaponId, field, rawValue) {
+    const numericFields = new Set(["priceGs", "damage", "fireRate", "magazine"]);
+    const value = numericFields.has(field)
+      ? Number(rawValue)
+      : String(rawValue || "").trim();
+
+    if (numericFields.has(field) && !Number.isFinite(value)) {
+      await loadObjects();
+      return;
+    }
+
+    if (!numericFields.has(field) && !value) {
+      await loadObjects();
+      return;
+    }
+
+    try {
+      await fetchJson(
+        `${api.pilotWeaponsUrl || `${api.baseUrl}/api/objects/pilot-weapons`}/${encodeURIComponent(weaponId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            [field]: value
+          })
+        }
+      );
+      await loadObjects();
+    } catch (error) {
+      window.alert(error.message || "Pilot weapon update rejected");
       await loadObjects();
     }
   }

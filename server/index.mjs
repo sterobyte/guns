@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.41";
+const version = "0.16.42";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -303,6 +303,41 @@ const server = http.createServer((req, res) => {
         sendJson(req, res, 400, {
           ok: false,
           error: "invalid_object",
+          message: error.message
+        });
+      });
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/objects/pilot-weapons/") && req.method === "PATCH") {
+    const weaponId = decodeURIComponent(
+      url.pathname.slice("/api/objects/pilot-weapons/".length)
+    ).trim();
+
+    readJsonBody(req)
+      .then((body) => {
+        const config = setPilotWeaponConfig(
+          publishedConfig,
+          weaponId,
+          body?.weapon || body
+        );
+
+        validateGameConfig(config);
+        writeConfigSources(config);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ok: true,
+          weapon: publishedConfig.objects.pilotWeapons[weaponId],
+          objects: publishedConfig.objects
+        });
+      })
+      .catch((error) => {
+        sendJson(req, res, 400, {
+          ok: false,
+          error: "invalid_pilot_weapon",
           message: error.message
         });
       });
@@ -1349,6 +1384,72 @@ function setCannonFireRate(config, cannonId, controller, value) {
   cannon.gameplay.fireRate[controller] = value;
 
   return nextConfig;
+}
+
+function setPilotWeaponConfig(config, weaponId, patch = {}) {
+  if (!config.objects?.pilotWeapons?.[weaponId]) {
+    throw new Error(`Pilot weapon not found: ${weaponId}`);
+  }
+
+  const nextConfig = structuredClone(config);
+  const weapon = nextConfig.objects.pilotWeapons[weaponId];
+
+  if (patch.title !== undefined) {
+    const title = String(patch.title || "").trim();
+    if (!title) throw new Error("Weapon title is required");
+    weapon.title = title;
+  }
+
+  if (patch.description !== undefined) {
+    const description = String(patch.description || "").trim();
+    if (!description) throw new Error("Weapon description is required");
+    weapon.description = description;
+  }
+
+  if (patch.priceGs !== undefined) {
+    weapon.economy ||= {};
+    weapon.economy.priceGs = normalizeNonNegativeNumber(
+      patch.priceGs,
+      "priceGs"
+    );
+  }
+
+  weapon.gameplay ||= {};
+
+  if (patch.damage !== undefined) {
+    const damage = Number(patch.damage);
+    if (!Number.isFinite(damage) || damage <= 0) {
+      throw new Error("damage must be a positive number");
+    }
+    weapon.gameplay.damage = damage;
+  }
+
+  if (patch.fireRate !== undefined && weapon.typeId === "pistol") {
+    weapon.gameplay.fireRate = normalizeNonNegativeNumber(
+      patch.fireRate,
+      "fireRate"
+    );
+  }
+
+  if (patch.magazine !== undefined && weapon.typeId === "pistol") {
+    const magazine = Number(patch.magazine);
+    if (!Number.isFinite(magazine) || magazine <= 0) {
+      throw new Error("magazine must be a positive number");
+    }
+    weapon.gameplay.magazine = Math.floor(magazine);
+  }
+
+  return nextConfig;
+}
+
+function normalizeNonNegativeNumber(value, label) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+
+  return number;
 }
 
 globalThis.GUNS_MULTIPLAYER_SERVER = server;
