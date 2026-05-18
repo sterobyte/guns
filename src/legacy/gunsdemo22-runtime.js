@@ -3557,9 +3557,11 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
   if (pilotUnit.carriedRepairValue <= 0) return false;
   if (cannonUnit.hp >= cannonUnit.maxHp) return false;
 
+  const repairValue = pilotUnit.carriedRepairValue;
+
   cannonUnit.hp = Math.min(
     cannonUnit.maxHp,
-    cannonUnit.hp + cannonUnit.maxHp * pilotUnit.carriedRepairValue
+    cannonUnit.hp + cannonUnit.maxHp * repairValue
   );
 
   if (cannonUnit.wreckRepair > 0) {
@@ -3568,6 +3570,13 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
         ? 0
         : WRECK_REPAIR_TIME *
           (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
+  }
+
+  if (pilotUnit.isPlayer) {
+    addScore(pilotUnit, 0, "repair-load", {
+      cannonEntityId: cannonUnit.cannonEntityId,
+      repairValue
+    });
   }
 
   pilotUnit.carriedRepairValue = 0;

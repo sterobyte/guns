@@ -588,17 +588,22 @@ export class ArenaRoomState {
     const now = Date.now();
 
     if (!reason) return null;
-    if (value <= 0 && reason !== "pilot-death") return null;
+    if (value <= 0 && reason !== "pilot-death" && reason !== "repair-load") return null;
 
     if (reason === "passive" && now - player.lastPassiveScoreAt < PASSIVE_SCORE_INTERVAL_MS) {
       return null;
     }
 
-    const serverContext = reason === "ammo-load"
-      ? this.applyServerAmmoLoad(player, event)
-      : {};
+    const serverContext =
+      reason === "ammo-load"
+        ? this.applyServerAmmoLoad(player, event)
+        : reason === "repair-load"
+          ? this.applyServerRepairLoad(player, event, now)
+          : {};
 
-    if (reason === "ammo-load" && !serverContext) return null;
+    if ((reason === "ammo-load" || reason === "repair-load") && !serverContext) {
+      return null;
+    }
 
     const scoreEvent = {
       id: `${now}-${client.id}-${this.scoreEvents.length}`,
@@ -672,6 +677,63 @@ export class ArenaRoomState {
       ammoBefore: beforeAmmo,
       ammoAfter: afterAmmo,
       maxAmmo
+    };
+  }
+
+  applyServerRepairLoad(player, event = {}, now = Date.now()) {
+    this.updateCannonRepairs(now);
+
+    const requestedCannonId = sanitizeEventText(
+      event.cannonEntityId || event.targetCannonId || event.targetId || "",
+      64
+    );
+
+    if (!requestedCannonId) return null;
+
+    const cannon = this.cannons.get(requestedCannonId);
+
+    if (!cannon || cannon.destroyed) return null;
+
+    const maxHp = Math.max(1, finiteNumber(cannon.maxHp) || 100);
+    const beforeHp = Math.max(
+      0,
+      Math.min(maxHp, finiteNumber(cannon.hp))
+    );
+    const repairRatio = clampNumber(
+      finiteNumber(event.repairValue ?? event.repairRatio),
+      0,
+      1
+    );
+    const repairValue = repairRatio > 0
+      ? Math.max(1, Math.floor(maxHp * repairRatio))
+      : Math.max(0, Math.floor(finiteNumber(event.repairHp)));
+    const afterHp = Math.min(maxHp, beforeHp + repairValue);
+
+    if (repairValue <= 0 || afterHp <= beforeHp) return null;
+    if (!isPlayerNearCannon(player, cannon, player.x, player.y)) return null;
+
+    cannon.hp = afterHp;
+
+    if (afterHp >= maxHp) {
+      cannon.broken = false;
+      cannon.brokenAt = 0;
+      cannon.repairEndAt = 0;
+      cannon.repairRemainingMs = 0;
+    } else if (cannon.broken) {
+      const remainingRatio = 1 - clampNumber(afterHp / maxHp, 0, 1);
+
+      cannon.repairEndAt = now + Math.floor(CANNON_REPAIR_MS * remainingRatio);
+      cannon.repairRemainingMs = Math.max(0, cannon.repairEndAt - now);
+    }
+
+    return {
+      cannonEntityId: cannon.id,
+      repairValue,
+      repairRatio,
+      hpBefore: beforeHp,
+      hpAfter: afterHp,
+      maxHp,
+      repairRemainingMs: cannon.repairRemainingMs || 0
     };
   }
 
@@ -1219,6 +1281,7 @@ const SCORE_REASON_TO_RULE = {
   passive: "passiveScorePerTick",
   "bullet-hit": "bulletHitScore",
   "ammo-load": "ammoLoadScore",
+  "repair-load": "repairLoadScore",
   "pilot-kill": "pilotKillScore",
   "cannon-break": "cannonBreakScore",
   "pilot-death": "pilotDeathScore"
@@ -1235,6 +1298,7 @@ const DEFAULT_SCORE_VALUES = {
   passive: 1,
   "bullet-hit": 30,
   "ammo-load": 40,
+  "repair-load": 0,
   "pilot-kill": 100,
   "cannon-break": 50,
   "pilot-death": 0
