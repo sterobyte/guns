@@ -24,6 +24,7 @@ const MOVEMENT_SPEED_TOLERANCE = 1.75;
 const MOVEMENT_POSITION_GRACE = 60;
 const MOVEMENT_STATE_CHANGE_GRACE = 120;
 const DEFAULT_CANNON_ENTRY_RANGE = 140;
+const CANNON_REPAIR_MS = 16000;
 
 export class ArenaRoomState {
   constructor(roomId, roomConfig = {}, options = {}) {
@@ -721,6 +722,8 @@ export class ArenaRoomState {
 
       if (killed) {
         targetCannon.occupiedBy = "";
+        targetCannon.brokenAt = now;
+        targetCannon.repairEndAt = now + CANNON_REPAIR_MS;
       }
     }
 
@@ -761,6 +764,7 @@ export class ArenaRoomState {
     const now = Date.now();
 
     this.updateBullets(now);
+    this.updateCannonRepairs(now);
 
     const players = Array.from(this.players.values())
       .filter((player) => player.online !== false)
@@ -783,6 +787,27 @@ export class ArenaRoomState {
       bullets,
       scoreboard: buildScoreboardRows(players, bots)
     };
+  }
+
+  updateCannonRepairs(now) {
+    for (const cannon of this.cannons.values()) {
+      if (!cannon.broken || cannon.destroyed) continue;
+
+      if (!cannon.repairEndAt) {
+        cannon.brokenAt = now;
+        cannon.repairEndAt = now + CANNON_REPAIR_MS;
+      }
+
+      cannon.repairRemainingMs = Math.max(0, cannon.repairEndAt - now);
+
+      if (cannon.repairRemainingMs > 0) continue;
+
+      cannon.hp = Math.max(1, finiteNumber(cannon.maxHp) || 100);
+      cannon.broken = false;
+      cannon.brokenAt = 0;
+      cannon.repairEndAt = 0;
+      cannon.repairRemainingMs = 0;
+    }
   }
 
   snapshotBullet(bullet, now) {
@@ -966,6 +991,7 @@ function createRoomCannons(roomConfig = {}, getCannonConfig = () => null) {
         Math.min(maxHp, finiteNumber(spawn.hp ?? maxHp))
       );
       const broken = Boolean(spawn.broken || spawn.destroyed) || hp <= 0;
+      const now = Date.now();
 
       return [
         id,
@@ -978,7 +1004,10 @@ function createRoomCannons(roomConfig = {}, getCannonConfig = () => null) {
           maxHp,
           occupiedBy: "",
           broken,
-          destroyed: Boolean(spawn.destroyed) || broken
+          destroyed: Boolean(spawn.destroyed),
+          brokenAt: broken ? now : 0,
+          repairEndAt: broken && !spawn.destroyed ? now + CANNON_REPAIR_MS : 0,
+          repairRemainingMs: broken && !spawn.destroyed ? CANNON_REPAIR_MS : 0
         }
       ];
     }).filter(([id]) => Boolean(id))

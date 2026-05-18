@@ -1359,9 +1359,21 @@ function applyServerCannonStateToUnit(unit) {
 
   if (serverCannon.broken || unit.hp <= 0) {
     unit.cannonDestroyed = false;
-    unit.wreckRepair = Math.max(unit.wreckRepair || 0, WRECK_REPAIR_TIME);
+    unit.wreckRepair = clamp(
+      Number(serverCannon.repairRemainingMs) / 1000,
+      0,
+      WRECK_REPAIR_TIME
+    ) || WRECK_REPAIR_TIME;
     unit.wreckHp = Math.max(unit.wreckHp || 0, WRECK_HP);
     unit.hp = 0;
+    return;
+  }
+
+  unit.cannonDestroyed = false;
+
+  if (unit.wreckRepair > 0) {
+    unit.wreckRepair = 0;
+    unit.wreckHp = 0;
   }
 }
 
