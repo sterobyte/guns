@@ -375,6 +375,8 @@
         body: JSON.stringify({
           nick: cleanNick,
           weaponId: id,
+          roomId: meta.roomId,
+          instanceId: meta.instanceId,
           meta
         })
       })

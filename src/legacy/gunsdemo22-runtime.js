@@ -4909,6 +4909,14 @@ function getMarketItemPrice(instance) {
   return Number.isFinite(price) ? Math.max(0, Math.floor(price)) : 0;
 }
 
+function getPurchasedMarketItemStock(instance, result) {
+  const serverInstance = result?.room?.objects
+    ?.find(item => item.instanceId === instance.instanceId);
+  const stock = Number(serverInstance?.params?.stock ?? result?.stock);
+
+  return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : null;
+}
+
 function activateMarketItem(instance) {
   const stock = getMarketItemStock(instance);
   const price = getMarketItemPrice(instance);
@@ -4927,14 +4935,18 @@ function activateMarketItem(instance) {
   instance.purchasePending = true;
   roomObjectActivationCooldown = 0.8;
 
-  Promise.resolve(window.GUNS_APP?.purchasePilotWeapon?.(weaponId, price))
+  Promise.resolve(window.GUNS_APP?.purchasePilotWeapon?.(weaponId, price, {
+    roomId: activeRoomId,
+    instanceId: instance.instanceId
+  }))
     .then((purchased) => {
       if (!purchased) {
         bouncePlayerFromRoomObject(instance);
         return;
       }
 
-      setMarketItemStock(instance, stock - 1);
+      const serverStock = getPurchasedMarketItemStock(instance, purchased);
+      setMarketItemStock(instance, serverStock ?? stock - 1);
 
       if (getMarketItemStock(instance) <= 0) {
         bouncePlayerFromRoomObject(instance);

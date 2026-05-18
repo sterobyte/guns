@@ -77,7 +77,7 @@
       return [...state.pilotWeapons];
     },
 
-    async purchasePilotWeapon(weaponId, priceGs) {
+    async purchasePilotWeapon(weaponId, priceGs, context = {}) {
       const id = String(weaponId || "").trim();
       const price = Math.max(0, Math.floor(Number(priceGs) || 0));
 
@@ -91,7 +91,9 @@
         {
           reason: "market-purchase",
           itemType: "pilot-weapon",
-          itemId: id
+          itemId: id,
+          roomId: context.roomId,
+          instanceId: context.instanceId
         }
       );
 
@@ -99,7 +101,7 @@
 
       syncKnownWallet(result.user);
       syncKnownInventory(result.user);
-      return true;
+      return result;
     },
 
     bankExchangeScore(score) {

@@ -18,7 +18,7 @@ const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
 const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.44";
+const version = "0.16.45";
 const serverStartedAt = Date.now();
 const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
   path.join(root, "server", "data", "mongo-backups");
@@ -818,22 +818,39 @@ const server = http.createServer((req, res) => {
     readJsonBody(req)
       .then((body) => {
         const weaponId = String(body?.weaponId || "").trim();
-        const weapon = publishedConfig.objects?.pilotWeapons?.[weaponId] || null;
+        const purchase = resolveMarketItemPurchase(
+          publishedConfig,
+          body?.roomId,
+          body?.instanceId,
+          weaponId
+        );
 
-        if (!weapon) {
-          sendJson(req, res, 404, {
+        if (!purchase.ok) {
+          sendJson(req, res, purchase.status || 400, {
             ok: false,
-            error: "weapon_not_found",
-            message: "Pilot weapon was not found."
+            error: purchase.error,
+            message: purchase.message
           });
           return;
         }
 
+        const nextConfig = setRoomObjectInstanceConfig(
+          publishedConfig,
+          purchase.roomId,
+          purchase.instanceId,
+          { stock: purchase.stock - 1 }
+        );
+        validateGameConfig(nextConfig);
+
         const result = users.purchasePilotWeapon(
           body?.nick,
-          weapon,
+          purchase.weapon,
           cookies,
-          body?.meta || {}
+          {
+            ...(body?.meta || {}),
+            roomId: purchase.roomId,
+            instanceId: purchase.instanceId
+          }
         );
 
         if (!result.ok) {
@@ -841,7 +858,16 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        sendJson(req, res, 200, result);
+        writeConfigSources(nextConfig);
+        const builtConfig = buildVersionedGameConfig();
+        writeConfigFile(publishedConfigFile, builtConfig);
+        publishedConfig = builtConfig;
+
+        sendJson(req, res, 200, {
+          ...result,
+          room: publishedConfig.rooms[purchase.roomId],
+          stock: purchase.stock - 1
+        });
       })
       .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
 
@@ -1439,6 +1465,84 @@ function setRoomObjectInstanceConfig(config, roomId, instanceId, patch = {}) {
   }
 
   return nextConfig;
+}
+
+function resolveMarketItemPurchase(config, roomIdValue, instanceIdValue, weaponIdValue) {
+  const roomId = String(roomIdValue || "").trim();
+  const instanceId = String(instanceIdValue || "").trim();
+  const requestedWeaponId = String(weaponIdValue || "").trim();
+  const room = config.rooms?.[roomId];
+
+  if (!roomId || !instanceId) {
+    return {
+      ok: false,
+      status: 400,
+      error: "market_context_required",
+      message: "Market purchase requires roomId and instanceId."
+    };
+  }
+
+  if (!room) {
+    return {
+      ok: false,
+      status: 404,
+      error: "room_not_found",
+      message: "Room was not found."
+    };
+  }
+
+  const instance = (room.objects || [])
+    .find(item => item.instanceId === instanceId);
+
+  if (!instance || instance.objectId !== "market-item") {
+    return {
+      ok: false,
+      status: 404,
+      error: "market_item_not_found",
+      message: "Market item was not found."
+    };
+  }
+
+  const weaponId = String(instance.params?.weaponId || "").trim();
+
+  if (!weaponId || (requestedWeaponId && requestedWeaponId !== weaponId)) {
+    return {
+      ok: false,
+      status: 409,
+      error: "market_item_mismatch",
+      message: "Market item does not match requested weapon."
+    };
+  }
+
+  const weapon = config.objects?.pilotWeapons?.[weaponId] || null;
+
+  if (!weapon) {
+    return {
+      ok: false,
+      status: 404,
+      error: "weapon_not_found",
+      message: "Pilot weapon was not found."
+    };
+  }
+
+  const stock = Math.max(0, Math.floor(Number(instance.params?.stock) || 0));
+
+  if (stock <= 0) {
+    return {
+      ok: false,
+      status: 409,
+      error: "market_item_sold_out",
+      message: "Market item is sold out."
+    };
+  }
+
+  return {
+    ok: true,
+    roomId,
+    instanceId,
+    weapon,
+    stock
+  };
 }
 
 function normalizeFiniteNumber(value, label) {
