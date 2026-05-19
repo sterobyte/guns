@@ -42,6 +42,11 @@ try {
   await waitFor(() => clients.every((client) => client.players.size === 2), "players=2");
   await waitFor(() => clients.every((client) => client.remoteSnapshots.size >= 1), "remote snapshots");
   clients[0].sendSnapshot({
+    state: "in-cannon",
+    gunType: "autogun",
+    cannonEntityId: "autogun0",
+    x: -120,
+    y: 0,
     bots: [{
       id: "bot3",
       nick: "Kirk",
@@ -231,6 +236,46 @@ try {
     event.weapon === "basic-pistol" &&
     event.targetId === clients[1].clientId
   )), "server pistol death");
+  clients[0].sendSnapshot({
+    state: "on-foot",
+    x: -80,
+    y: 0,
+    hp: 100,
+    maxHp: 100,
+    bots: [{
+      id: "bot3",
+      nick: "Kirk",
+      state: "on-foot",
+      x: 60,
+      y: 0,
+      hp: 1,
+      maxHp: 1,
+      score: 5,
+      pilotKills: 1
+    }]
+  });
+  await waitFor(() => clients.every((client) => {
+    const bot = client.bots.find((item) => item.id === "bot3");
+    return bot && bot.x === 60 && bot.y === 0 && bot.hp === 1;
+  }), "server bot target position sync");
+  clients[0].sendBotPistolEvent();
+  await waitFor(() => clients.every((client) => client.damageEvents.some((event) =>
+    event.weapon === "basic-pistol" &&
+    event.targetId === "bot3" &&
+    event.targetKind === "pilot" &&
+    event.afterHp === 0
+  )), "server bot pilot damage");
+  await waitFor(() => clients.every((client) => client.deaths.some((event) =>
+    event.weapon === "basic-pistol" &&
+    event.targetId === "bot3" &&
+    event.reason === "pilot-kill"
+  )), "server bot pilot death");
+  await waitFor(() => clients.every((client) => client.scoreboard.some((row) =>
+    row.nick === clients[0].nick &&
+    row.score === 570 &&
+    row.pilotKills === 4 &&
+    row.cannonBreaks === 1
+  )), "server bot pilot scoring");
   await emptyRoomClient.open();
   emptyRoomClient.sendSnapshot();
   await waitFor(() => emptyRoomClient.scoreboard.length === 1, "empty room solo scoreboard");
@@ -374,6 +419,25 @@ function createTestClient(nick, snapshot, options = {}) {
             radius: 4,
             damage: 120,
             lifeMs: 1000
+          }]
+        },
+        clientTime: Date.now()
+      }));
+    },
+    sendBotPistolEvent() {
+      state.socket?.send(JSON.stringify({
+        type: "shoot:event",
+        event: {
+          weapon: "basic-pistol",
+          bullets: [{
+            weapon: "basic-pistol",
+            x: -80,
+            y: 0,
+            vx: 520,
+            vy: 0,
+            radius: 3,
+            damage: 10,
+            lifeMs: 1050
           }]
         },
         clientTime: Date.now()

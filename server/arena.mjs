@@ -760,6 +760,7 @@ export class ArenaRoomState {
     if (!Array.isArray(rawBots)) return;
     if (!client?.id) return;
 
+    const now = Date.now();
     const currentController = this.players.get(this.botControllerClientId);
 
     if (!this.botControllerClientId || currentController?.online === false) {
@@ -785,8 +786,17 @@ export class ArenaRoomState {
         64
       );
       bot.flying = Boolean(rawBot.flying);
-      bot.alive = rawBot.alive !== false;
-      bot.hp = Math.max(0, finiteNumber(rawBot.hp ?? bot.hp));
+      const serverDamageActive =
+        bot.serverDamagedAt &&
+        now - bot.serverDamagedAt < SERVER_DAMAGE_AUTHORITY_MS;
+      const rawHp = Math.max(0, finiteNumber(rawBot.hp ?? bot.hp));
+
+      bot.alive = serverDamageActive && bot.alive === false
+        ? false
+        : rawBot.alive !== false;
+      bot.hp = serverDamageActive && rawHp > bot.hp
+        ? bot.hp
+        : rawHp;
       bot.maxHp = Math.max(1, finiteNumber(rawBot.maxHp ?? bot.maxHp) || 1);
       bot.radiusOuter = Math.max(1, finiteNumber(rawBot.radiusOuter ?? bot.radiusOuter) || 34);
       bot.radiusInner = Math.max(1, finiteNumber(rawBot.radiusInner ?? bot.radiusInner) || 13);
@@ -795,7 +805,7 @@ export class ArenaRoomState {
       bot.cannonBreaks = Math.max(bot.cannonBreaks, positiveInt(rawBot.cannonBreaks));
       bot.pilotDeaths = Math.max(bot.pilotDeaths, positiveInt(rawBot.pilotDeaths));
       bot.sourceClientId = client.id;
-      bot.lastSeenAt = Date.now();
+      bot.lastSeenAt = now;
     }
   }
 
@@ -920,6 +930,37 @@ export class ArenaRoomState {
       };
     }
 
+    for (const target of this.bots.values()) {
+      if (target.alive === false) continue;
+      if (target.flying) continue;
+
+      const targetIsCannon = target.state === "in-cannon";
+      const targetRadius = targetIsCannon
+        ? target.radiusOuter
+        : target.radiusInner;
+      const hitRadius = Math.max(1, targetRadius) + Math.max(1, bullet.radius);
+
+      if (distanceToSegment(target.x, target.y, from.x, from.y, to.x, to.y) > hitRadius) {
+        continue;
+      }
+
+      return {
+        id: `${now}-${bullet.id}-${target.id}`,
+        bulletId: bullet.id,
+        ownerId: bullet.ownerId,
+        ownerNick: bullet.ownerNick,
+        targetId: target.id,
+        targetNick: target.nick,
+        targetKind: targetIsCannon ? "cannon" : "pilot",
+        targetCannonId: targetIsCannon ? target.occupiedCannonId : "",
+        damage: bullet.damage,
+        weapon: bullet.weapon,
+        x: target.x,
+        y: target.y,
+        serverTime: now
+      };
+    }
+
     for (const cannon of this.cannons.values()) {
       if (cannon.occupiedBy === bullet.ownerId) continue;
       if (isServerCannonBroken(cannon)) continue;
@@ -956,25 +997,26 @@ export class ArenaRoomState {
   }
 
   applyHitDamage(hit, now) {
-    const target = this.players.get(hit.targetId);
+    const target = this.players.get(hit.targetId) || this.bots.get(hit.targetId);
+    const targetIsBot = this.bots.has(hit.targetId);
 
     let targetCannon = null;
 
     if (hit.targetKind === "cannon") {
       const hitCannonId = sanitizeEventText(hit.targetCannonId || hit.cannonEntityId, 64);
 
-      if (target) {
+      if (target && !targetIsBot) {
         if (!target.occupiedCannonId) return null;
         if (hitCannonId && hitCannonId !== target.occupiedCannonId) return null;
 
         targetCannon = this.cannons.get(target.occupiedCannonId);
-      } else {
+      } else if (!targetIsBot) {
         targetCannon = this.cannons.get(hitCannonId || hit.targetId);
       }
 
       if (targetCannon?.occupiedBy && targetCannon.occupiedBy !== target?.id) return null;
 
-      if (!targetCannon || isServerCannonBroken(targetCannon)) return null;
+      if (!targetIsBot && (!targetCannon || isServerCannonBroken(targetCannon))) return null;
     } else if (!target) {
       return null;
     }
