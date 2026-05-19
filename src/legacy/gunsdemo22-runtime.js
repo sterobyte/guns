@@ -265,6 +265,12 @@ function isMarketRoom() {
   return ACTIVE_ROOM?.roomKind === "market";
 }
 
+function canCreateCombatRoomEffects() {
+  if (ACTIVE_ROOM?.effects?.combat === true) return true;
+  if (ACTIVE_ROOM?.effects?.combat === false) return false;
+  return !isUserBaseRoom() && !isMarketRoom();
+}
+
 function isFixedCameraRoom() {
   return isUserBaseRoom() || isMarketRoom();
 }
@@ -2555,6 +2561,8 @@ function getPowerupSwapDropPoint(unit, pack) {
 }
 
 function addExplosion(x, y) {
+  if (!canCreateCombatRoomEffects()) return;
+
   roomRuntimeState.explosions.push({
     x,
     y,
@@ -2564,6 +2572,8 @@ function addExplosion(x, y) {
 }
 
 function addSmoke(x, y) {
+  if (!canCreateCombatRoomEffects()) return;
+
   roomRuntimeState.smokePuffs.push({
     x: x + (Math.random() - 0.5) * 14,
     y: y - 28 + (Math.random() - 0.5) * 8,
@@ -2576,6 +2586,8 @@ function addSmoke(x, y) {
 }
 
 function addRearSmoke(unit) {
+  if (!canCreateCombatRoomEffects()) return;
+
   const angle = unit.moveAngle + Math.PI;
 
   roomRuntimeState.rearSmokePuffs.push({
@@ -2595,6 +2607,8 @@ function addRearSmoke(unit) {
 }
 
 function addTrail(x, y, radius, color, life = 0.34) {
+  if (!canCreateCombatRoomEffects()) return;
+
   roomRuntimeState.trails.push({
     x,
     y,
@@ -2664,6 +2678,8 @@ function updateMovementTrails() {
 }
 
 function addStain(x, y, color, pilotName) {
+  if (!canCreateCombatRoomEffects()) return;
+
   roomRuntimeState.stains.push({
     x,
     y,
@@ -2677,6 +2693,8 @@ function addStain(x, y, color, pilotName) {
 }
 
 function addDeathOverlay() {
+  if (!canCreateCombatRoomEffects()) return;
+
   roomRuntimeState.deathOverlays.push({
     time: 0,
     life: 3
