@@ -3370,6 +3370,11 @@ function updateWreckRepair(unit, dt) {
   if (unit.state !== "pilot") return;
 
   if (unit.wreckRepair > 0) {
+    if (isServerCannonStateAuthoritative(unit)) {
+      updateWreckRepairSmoke(unit, dt);
+      return;
+    }
+
     unit.hp = Math.min(
       unit.maxHp,
       unit.hp + (unit.maxHp / WRECK_REPAIR_TIME) * dt
@@ -3379,12 +3384,7 @@ function updateWreckRepair(unit, dt) {
       WRECK_REPAIR_TIME *
       (1 - clamp(unit.hp / unit.maxHp, 0, 1));
 
-    unit.smokeTimer -= dt;
-
-    if (unit.smokeTimer <= 0) {
-      addSmoke(unit.x, unit.y);
-      unit.smokeTimer = 0.18;
-    }
+    updateWreckRepairSmoke(unit, dt);
 
     if (unit.hp >= unit.maxHp) {
       unit.wreckRepair = 0;
@@ -3392,6 +3392,19 @@ function updateWreckRepair(unit, dt) {
       unit.turretAngle = unit.repairAngle;
       tryEnterNearbyRepairedCannonPilots(unit);
     }
+  }
+}
+
+function isServerCannonStateAuthoritative(unit) {
+  return window.GUNS_NET?.connected === true && !!getServerCannonState(unit);
+}
+
+function updateWreckRepairSmoke(unit, dt) {
+  unit.smokeTimer -= dt;
+
+  if (unit.smokeTimer <= 0) {
+    addSmoke(unit.x, unit.y);
+    unit.smokeTimer = 0.18;
   }
 }
 
