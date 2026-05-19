@@ -188,7 +188,11 @@
       options.addScore?.(
         unit,
         options.getActiveModeRule("ammoPickupScore", 40),
-        "ammo-pickup"
+        "ammo-pickup",
+        {
+          cannonEntityId: unit.cannonEntityId,
+          ammoValue: pack.value
+        }
       );
       options.onAmmoPicked?.(unit);
       return true;

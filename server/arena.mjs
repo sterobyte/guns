@@ -595,13 +595,16 @@ export class ArenaRoomState {
     }
 
     const serverContext =
-      reason === "ammo-load"
+      reason === "ammo-load" || reason === "ammo-pickup"
         ? this.applyServerAmmoLoad(player, event)
         : reason === "repair-load"
           ? this.applyServerRepairLoad(player, event, now)
           : {};
 
-    if ((reason === "ammo-load" || reason === "repair-load") && !serverContext) {
+    if (
+      (reason === "ammo-load" || reason === "ammo-pickup" || reason === "repair-load") &&
+      !serverContext
+    ) {
       return null;
     }
 
@@ -1280,6 +1283,7 @@ function getServerScoreValue(reason, rules = {}) {
 const SCORE_REASON_TO_RULE = {
   passive: "passiveScorePerTick",
   "bullet-hit": "bulletHitScore",
+  "ammo-pickup": "ammoPickupScore",
   "ammo-load": "ammoLoadScore",
   "repair-load": "repairLoadScore",
   "pilot-kill": "pilotKillScore",
@@ -1297,6 +1301,7 @@ const COMBAT_SCORE_REASONS = new Set([
 const DEFAULT_SCORE_VALUES = {
   passive: 1,
   "bullet-hit": 30,
+  "ammo-pickup": 40,
   "ammo-load": 40,
   "repair-load": 0,
   "pilot-kill": 100,
