@@ -505,7 +505,15 @@ export class UserRegistry {
     ensureInventory(entity);
 
     if (hasInventoryPilotWeapon(entity, weaponId)) {
-      return error("item_already_owned", "Pilot weapon is already owned.");
+      return {
+        ok: true,
+        alreadyOwned: true,
+        user: pilot ? publicPilot(entity) : publicVisit(entity),
+        weaponId,
+        spentGs: 0,
+        balanceGs: normalizeCoinAmount(entity.wallet.gunsCoin),
+        inventory: publicInventory(entity)
+      };
     }
 
     if (entity.wallet.gunsCoin < price) {

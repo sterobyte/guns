@@ -5113,7 +5113,7 @@ function activateMarketItem(instance) {
       }
 
       const serverStock = getPurchasedMarketItemStock(instance, purchased);
-      setMarketItemStock(instance, serverStock ?? stock - 1);
+      setMarketItemStock(instance, serverStock ?? stock);
 
       if (getMarketItemStock(instance) <= 0) {
         bouncePlayerFromRoomObject(instance);
