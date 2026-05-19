@@ -780,6 +780,7 @@ export class ArenaRoomState {
       const cannon = this.cannons.get(cannonId);
 
       if (!cannon) continue;
+      if (rawCannon?.free !== true) continue;
       if (cannon.occupiedBy) continue;
       if (cannon.destroyed) continue;
 

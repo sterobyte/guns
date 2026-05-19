@@ -5994,10 +5994,16 @@ function getLocalBotNetworkSnapshots() {
 
 function getLocalCannonNetworkSnapshots() {
   return units
-    .filter(unit => unit.cannonEntityId && !isUnitHidden(unit))
+    .filter(unit => (
+      unit.cannonEntityId &&
+      !isUnitHidden(unit) &&
+      unit.state !== "alive"
+    ))
     .map(unit => ({
       id: unit.cannonEntityId,
       unitId: unit.id,
+      free: true,
+      broken: unit.wreckRepair > 0,
       x: Number(unit.x) || 0,
       y: Number(unit.y) || 0
     }));

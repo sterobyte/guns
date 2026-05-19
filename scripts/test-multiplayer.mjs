@@ -72,6 +72,7 @@ try {
     y: 0,
     cannons: [{
       id: "autogun2",
+      free: true,
       x: 420,
       y: 0
     }]
@@ -80,6 +81,22 @@ try {
     const cannon = client.cannons.find((item) => item.id === "autogun2");
     return cannon && cannon.x === 420 && cannon.y === 0;
   }), "server free cannon position sync");
+  clients[0].sendSnapshot({
+    state: "in-cannon",
+    gunType: "autogun",
+    cannonEntityId: "autogun0",
+    x: 0,
+    y: 0,
+    cannons: [{
+      id: "autogun2",
+      x: 999,
+      y: 999
+    }]
+  });
+  await waitFor(() => clients.every((client) => {
+    const cannon = client.cannons.find((item) => item.id === "autogun2");
+    return cannon && cannon.x === 420 && cannon.y === 0;
+  }), "server rejects non-free cannon position sync");
   clients[0].sendFreeCannonShotEvent();
   await waitFor(() => clients.every((client) => {
     const cannon = client.cannons.find((item) => item.id === "autogun2");
