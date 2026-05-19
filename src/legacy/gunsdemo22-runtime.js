@@ -1357,9 +1357,14 @@ function applyServerCannonStateToUnit(unit) {
     unit.state === "alive" &&
     ownClientId &&
     occupiedBy === ownClientId;
+  const localBotOwnsActiveCannon =
+    !unit.isPlayer &&
+    !unit.isCannonOnly &&
+    unit.state === "alive";
 
   if (
     !localPlayerOwnsActiveCannon &&
+    !localBotOwnsActiveCannon &&
     Number.isFinite(serverX) &&
     Number.isFinite(serverY)
   ) {
