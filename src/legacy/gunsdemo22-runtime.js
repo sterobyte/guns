@@ -653,6 +653,50 @@ function getOwnedPilotWeaponByType(typeId) {
   }) || "";
 }
 
+function getActivePilotWeaponId(unit) {
+  if (unit?.isPlayer) {
+    return (
+      getOwnedPilotWeaponByType("pistol") ||
+      getOwnedPilotWeaponByType("knife") ||
+      ""
+    );
+  }
+
+  return unit?.activePilotWeaponId || "";
+}
+
+function hasCarriedPowerup(unit) {
+  return !!getCarriedPowerup(unit);
+}
+
+function canUsePilotWeapon(unit) {
+  return !hasCarriedPowerup(unit);
+}
+
+function getPilotCarrySlot(unit) {
+  const carried = getCarriedPowerup(unit);
+
+  if (carried) {
+    return {
+      kind: "powerup",
+      type: carried.type,
+      value: carried.value
+    };
+  }
+
+  const weaponId = getActivePilotWeaponId(unit);
+  const weapon = getPilotWeaponDefinition(weaponId);
+
+  if (!weapon) return null;
+
+  return {
+    kind: "weapon",
+    weaponId,
+    type: weapon.typeId,
+    title: weapon.title
+  };
+}
+
 const cannonRenderMetrics = new Map();
 const cannonSpriteCache = new Map();
 const cannonTintedSpriteCache = new Map();
@@ -2426,6 +2470,7 @@ function firePilotPistol(owner, weaponId, angle) {
 
   if (owner.state !== "pilot") return false;
   if (isPilotAirborne(owner)) return false;
+  if (!canUsePilotWeapon(owner)) return false;
   if (weapon?.typeId !== "pistol") return false;
   if (fireRate <= 0) return false;
 
@@ -3052,6 +3097,7 @@ function updatePilotWeaponCollisions() {
 function updateNetworkPilotWeaponCollisions() {
   if (!window.GUNS_NET?.connected) return;
   if (player.state !== "pilot") return;
+  if (!canUsePilotWeapon(player)) return;
   if ((player.pilotWeaponCooldown || 0) > 0) return;
   if (player.pilotImmunity > 0) return;
   if (player.pilotEject) return;
@@ -3112,6 +3158,7 @@ function applyPilotWeaponContact(attacker, victim) {
   if ((attacker.pilotWeaponCooldown || 0) > 0) return;
   if (attacker.pilotImmunity > 0) return;
   if (victim.pilotImmunity > 0) return;
+  if (!canUsePilotWeapon(attacker)) return;
 
   const weaponId = attacker.isPlayer
     ? getOwnedPilotWeaponByType("knife")
@@ -5791,6 +5838,36 @@ function drawKnifeMarketIcon(size) {
   ctx.restore();
 }
 
+function drawPilotCarryIcon(slot, x, y, size) {
+  if (!slot) return;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  if (slot.kind === "weapon") {
+    if (slot.type === "knife") {
+      drawKnifeMarketIcon(size);
+    } else {
+      drawPistolMarketIcon(size);
+    }
+  } else if (slot.type === POWERUP_REPAIR) {
+    const s = size / 32;
+
+    ctx.scale(s, s);
+    drawRepairPackIcon(0, 0);
+  } else {
+    const s = size / 32;
+
+    ctx.fillStyle = LCD_INK;
+    ctx.font = `bold ${Math.max(9, Math.round(10 * s))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(Math.floor(Number(slot.value) || 0)), 0, 0);
+  }
+
+  ctx.restore();
+}
+
 function drawMenuTerminal(instance, definition) {
   const position = getRoomObjectPosition(instance);
   const p = worldToScreen(position.x, position.y);
@@ -6923,60 +7000,26 @@ function drawPilot(unit) {
 
   ctx.restore();
 
-  if (unit.carriedAmmoValue > 0 || unit.carriedRepairValue > 0) {
-    ctx.save();
-
-    const ax = p.x + z(unit.pilotRadius + 10);
-    const ay = p.y + z(unit.pilotRadius + 4);
-    const r = z(8);
-
-    ctx.globalAlpha =
-      !isUserBaseRoom() && unit.pilotImmunity > 0 ? 0.22 : 1;
-
-    ctx.beginPath();
-    ctx.arc(ax, ay, r, 0, Math.PI * 2);
-    ctx.fillStyle = LCD_BG_LIGHT;
-    ctx.fill();
-
-    ctx.strokeStyle = LCD_INK;
-    ctx.lineWidth = Math.max(1, z(1.5));
-    ctx.stroke();
-
-    ctx.fillStyle = LCD_INK;
-    ctx.font = `${Math.max(8, Math.round(9 * camera.scale))}px monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    if (unit.carriedRepairValue > 0) {
-      drawRepairPackIcon(ax, ay);
-    } else {
-      ctx.fillText(unit.carriedAmmoValue, ax, ay);
-    }
-
-    ctx.restore();
-  }
+  drawPilotCarryIcon(
+    getPilotCarrySlot(unit),
+    p.x,
+    p.y - z(unit.pilotRadius + 29),
+    z(30)
+  );
 
   drawNameLabel(
     getUnitLabelName(unit),
     p.x,
-    p.y - z(unit.pilotRadius + 15),
+    p.y + z(unit.pilotRadius + 15),
     unit.color,
     unit.pilotRadius / PILOT_RADIUS
   );
 
-  if (unit.isPlayer && isUserBaseRoom()) {
+  if (unit.isPlayer) {
     drawNameLabel(
       `${getPlayerGunsCoinBalance()} gs`,
       p.x,
-      p.y - z(unit.pilotRadius + 32),
-      unit.color,
-      unit.pilotRadius / PILOT_RADIUS
-    );
-  } else if (unit.isPlayer && isMarketRoom()) {
-    drawNameLabel(
-      `${getPlayerGunsCoinBalance()} gs`,
-      p.x,
-      p.y - z(unit.pilotRadius + 32),
+      p.y + z(unit.pilotRadius + 32),
       unit.color,
       unit.pilotRadius / PILOT_RADIUS
     );
