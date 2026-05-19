@@ -590,7 +590,7 @@ const WRECK_HP = 500;
 const HP_REGEN_TIME = 60;
 const HP_REGEN_PER_SECOND = 100 / HP_REGEN_TIME;
 
-const PILOT_RADIUS = 7;
+const PILOT_RADIUS = 11;
 const PILOT_STOP_RADIUS = 18;
 const PILOT_IMMUNITY_TIME = 5;
 
@@ -7153,9 +7153,9 @@ function drawPilot(unit) {
 
   if (unit.isPlayer) {
     drawNameLabel(
-      `${getPlayerGunsCoinBalance()} gs`,
+      `${getPlayerGunsCoinBalance()}`,
       p.x,
-      p.y + z(unit.pilotRadius + 32),
+      p.y + z(unit.pilotRadius + 39),
       unit.color,
       unit.pilotRadius / PILOT_RADIUS
     );
