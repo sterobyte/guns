@@ -6066,6 +6066,9 @@ function setupNetworkServerSnapshotEvents() {
   window.GUNS_NET.on("server:snapshot", message => {
     applyNetworkServerSnapshot(message.snapshot, message.serverTime);
   });
+  window.GUNS_NET.on("arena:state", message => {
+    applyNetworkArenaScore(message.arena);
+  });
 }
 
 function applyNetworkServerSnapshot(snapshot, serverTime = 0) {
@@ -6080,6 +6083,35 @@ function applyNetworkServerSnapshot(snapshot, serverTime = 0) {
   }
 
   applyServerPositionCorrection(snapshot);
+}
+
+function applyNetworkArenaScore(arena) {
+  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
+
+  if (!arena || !ownClientId) return;
+
+  const ownPlayer = (arena.players || [])
+    .find(row => row.id === ownClientId);
+  const ownScoreboardRow = (arena.scoreboard || [])
+    .find(row => row.id === ownClientId);
+  const serverScore = Number(ownScoreboardRow?.score ?? ownPlayer?.score);
+
+  if (!Number.isFinite(serverScore)) return;
+
+  const nextScore = Math.max(0, Math.floor(serverScore));
+  const delta = nextScore - Math.max(0, Math.floor(player.score || 0));
+
+  player.score = nextScore;
+
+  if (delta > 0) {
+    window.GUNS_APP?.addExchangeScore?.(delta);
+  }
+
+  if (ownScoreboardRow) {
+    player.pilotKills = Math.max(0, Math.floor(Number(ownScoreboardRow.pilotKills) || 0));
+    player.cannonBreaks = Math.max(0, Math.floor(Number(ownScoreboardRow.cannonBreaks) || 0));
+    player.pilotDeaths = Math.max(0, Math.floor(Number(ownScoreboardRow.pilotDeaths) || 0));
+  }
 }
 
 function forcePlayerToServerFootSnapshot(snapshot) {
