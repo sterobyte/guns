@@ -64,6 +64,22 @@ try {
   await waitFor(() => clients.every((client) => client.deaths.length >= 1), "server death event");
   clients[1].sendRespawnEvent();
   await waitFor(() => clients.every((client) => client.respawns.length >= 1), "server respawn event");
+  clients[0].sendSnapshot({
+    state: "in-cannon",
+    gunType: "autogun",
+    cannonEntityId: "autogun0",
+    x: 0,
+    y: 0,
+    cannons: [{
+      id: "autogun2",
+      x: 420,
+      y: 0
+    }]
+  });
+  await waitFor(() => clients.every((client) => {
+    const cannon = client.cannons.find((item) => item.id === "autogun2");
+    return cannon && cannon.x === 420 && cannon.y === 0;
+  }), "server free cannon position sync");
   clients[0].sendFreeCannonShotEvent();
   await waitFor(() => clients.every((client) => {
     const cannon = client.cannons.find((item) => item.id === "autogun2");
@@ -486,7 +502,8 @@ function fail(message) {
       remoteSnapshots: client.remoteSnapshots.size,
       acceptedSnapshots: client.acceptedSnapshots.length,
       matchEvents: client.matchEvents,
-      scoreboard: client.scoreboard
+      scoreboard: client.scoreboard,
+      cannons: client.cannons
     }))
   }, null, 2));
   process.exit(1);

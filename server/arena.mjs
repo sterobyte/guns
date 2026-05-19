@@ -173,6 +173,7 @@ export class ArenaRoomState {
     player.lastSnapshotAt = now;
 
     this.updateBots(snapshot.bots);
+    this.updateCannons(snapshot.cannons);
 
     return player;
   }
@@ -765,6 +766,33 @@ export class ArenaRoomState {
       bot.cannonBreaks = Math.max(bot.cannonBreaks, positiveInt(rawBot.cannonBreaks));
       bot.pilotDeaths = Math.max(bot.pilotDeaths, positiveInt(rawBot.pilotDeaths));
       bot.lastSeenAt = Date.now();
+    }
+  }
+
+  updateCannons(rawCannons) {
+    if (!Array.isArray(rawCannons)) return;
+
+    for (const rawCannon of rawCannons) {
+      const cannonId = sanitizeEventText(
+        rawCannon?.id || rawCannon?.cannonEntityId || rawCannon?.unitId || "",
+        64
+      );
+      const cannon = this.cannons.get(cannonId);
+
+      if (!cannon) continue;
+      if (cannon.occupiedBy) continue;
+      if (cannon.destroyed) continue;
+
+      const radius = getServerCannonRadius(cannon, this.getCannonConfig);
+      const point = clampPointToRoom(
+        this.roomBounds,
+        finiteNumber(rawCannon.x),
+        finiteNumber(rawCannon.y),
+        radius
+      );
+
+      cannon.x = point.x;
+      cannon.y = point.y;
     }
   }
 

@@ -2106,7 +2106,12 @@ function addScore(unit, value, reason = "", context = {}) {
   if (unit.isCannonOnly) return;
   const scoreValue = Number(value) || 0;
 
-  if (unit.isPlayer && isServerCombatAuthoritative() && isCombatScoreReason(reason)) {
+  if (
+    unit.isPlayer &&
+    isServerCombatAuthoritative() &&
+    isCombatScoreReason(reason) &&
+    !context.localOnly
+  ) {
     return;
   }
 
@@ -2153,7 +2158,11 @@ function getCombatTargetContext(unit, targetKind = "unit") {
       unit.cannonEntityId ||
       unit.id ||
       "",
-    targetKind
+    targetKind,
+    localOnly:
+      !unit.isPlayer &&
+      !unit.isCannonOnly &&
+      targetKind === "pilot"
   };
 }
 
@@ -3389,6 +3398,7 @@ function updateWreckRepair(unit, dt) {
 function tryEnterNearbyRepairedCannonPilots(cannonUnit) {
   for (const pilotUnit of units) {
     if (pilotUnit === cannonUnit) continue;
+    if (!pilotUnit.isPlayer) continue;
     if (pilotUnit.isCannonOnly) continue;
 
     tryEnterRepairedCannon(pilotUnit);
@@ -5951,7 +5961,8 @@ function getLocalNetworkSnapshot() {
     inventory: {
       pilotWeapons: window.GUNS_APP?.getPilotWeapons?.() || []
     },
-    bots: getLocalBotNetworkSnapshots()
+    bots: getLocalBotNetworkSnapshots(),
+    cannons: getLocalCannonNetworkSnapshots()
   };
 }
 
@@ -5965,6 +5976,17 @@ function getLocalBotNetworkSnapshots() {
       pilotKills: unit.pilotKills || 0,
       cannonBreaks: unit.cannonBreaks || 0,
       pilotDeaths: unit.pilotDeaths || 0
+    }));
+}
+
+function getLocalCannonNetworkSnapshots() {
+  return units
+    .filter(unit => unit.cannonEntityId && !isUnitHidden(unit))
+    .map(unit => ({
+      id: unit.cannonEntityId,
+      unitId: unit.id,
+      x: Number(unit.x) || 0,
+      y: Number(unit.y) || 0
     }));
 }
 
@@ -6098,8 +6120,9 @@ function applyNetworkArenaScore(arena) {
 
   if (!Number.isFinite(serverScore)) return;
 
-  const nextScore = Math.max(0, Math.floor(serverScore));
-  const delta = nextScore - Math.max(0, Math.floor(player.score || 0));
+  const currentScore = Math.max(0, Math.floor(player.score || 0));
+  const nextScore = Math.max(currentScore, Math.floor(serverScore));
+  const delta = nextScore - currentScore;
 
   player.score = nextScore;
 
