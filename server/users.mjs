@@ -5,8 +5,9 @@ import {
   scryptSync,
   timingSafeEqual
 } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { sanitizeNick } from "./rooms.mjs";
-import { createFileUserStore } from "./user-store.mjs";
 
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 128;
@@ -18,9 +19,7 @@ export const DEVICE_COOKIE = "guns_did";
 export class UserRegistry {
   constructor(economyConfig = {}, options = {}) {
     this.economyConfig = normalizeEconomyConfig(economyConfig);
-    this.store = options.store || createFileUserStore({
-      storageFile: options.storageFile || ""
-    });
+    this.storageFile = options.storageFile || "";
     this.anonymousVisits = new Map();
     this.pilots = new Map();
     this.authSessions = new Map();
@@ -234,31 +233,15 @@ export class UserRegistry {
     ensureWallet(pilot);
 
     if (visit) {
-      const transferred = transferWallet(visit, pilot);
-      const transferredInventory = transferInventory(visit, pilot);
-
-      if (transferred > 0) {
-        this.recordWalletTransaction(visit, -transferred, "pilot-claim-transfer-out", {
-          pilotId: pilot.id
-        });
-        this.recordWalletTransaction(pilot, transferred, "pilot-claim-transfer-in", {
-          visitId: visit.id
-        });
-      }
-
-      if (transferredInventory > 0) {
-        this.recordAdminAudit("transfer-inventory", "pilot", pilot.id, {
-          visitId: visit.id,
-          pilotWeapons: publicInventory(pilot).pilotWeapons
-        });
-      }
-
+      transferWallet(visit, pilot);
       this.linkVisitToPilot(visit, pilot, now);
     }
 
-    const session = this.createAuthSession(pilot.id, meta, device);
     this.pilots.set(pilot.normalizedNick, pilot);
+
     this.linkDeviceToPilot(device, pilot, now);
+
+    const session = this.createAuthSession(pilot.id, meta, device);
     this.persist();
 
     return {
@@ -288,7 +271,6 @@ export class UserRegistry {
     const device = this.getDeviceByToken(cookies[DEVICE_COOKIE] || visitResult.deviceToken || "");
 
     if (visit) {
-      transferInventory(visit, pilot);
       this.linkVisitToPilot(visit, pilot, pilot.lastLoginAt);
     }
 
@@ -345,7 +327,6 @@ export class UserRegistry {
       updatePresence(pilot, meta);
 
       if (cookieVisit) {
-        transferInventory(cookieVisit, pilot);
         this.linkVisitToPilot(cookieVisit, pilot, now);
       }
 
@@ -401,143 +382,16 @@ export class UserRegistry {
 
     if (!entity) return error("pilot_required", "Only registered pilots can collect gs.");
 
-    const awarded = awardGunsCoinOnce(
+    awardGunsCoinOnce(
       entity,
       "garageCoinsPickup",
       this.economyConfig.gunsCoin.visitorGrant
     );
-
-    this.recordWalletTransaction(entity, awarded, "garage-coins-pickup", {
-      awardKey: "garageCoinsPickup"
-    });
     this.persist();
 
     return {
       ok: true,
       user: pilot ? publicPilot(entity) : publicVisit(entity)
-    };
-  }
-
-  exchangeScore(rawNick, score) {
-    const nick = sanitizeNick(rawNick);
-    const pilot = this.pilots.get(normalizeNick(nick));
-    const entity = pilot || this.getVisitByNick(nick);
-
-    if (!entity) return error("user_required", "User is required to exchange score.");
-
-    const scoreValue = Math.max(0, Math.floor(Number(score) || 0));
-    const rate = Math.max(1, this.economyConfig.gunsCoin.exchangeScorePerCoin || 100);
-    const coins = Math.floor(scoreValue / rate);
-
-    if (coins <= 0) {
-      return error("not_enough_score", `At least ${rate} score is required for 1 gs.`);
-    }
-
-    ensureWallet(entity);
-    entity.wallet.gunsCoin += coins;
-    entity.lastSeenAt = Date.now();
-    this.persist();
-    this.recordWalletTransaction(entity, coins, "score-exchange", {
-      exchangedScore: coins * rate,
-      score: scoreValue,
-      rate
-    });
-
-    return {
-      ok: true,
-      user: pilot ? publicPilot(entity) : publicVisit(entity),
-      exchangedScore: coins * rate,
-      remainingScore: scoreValue - coins * rate,
-      gunsCoinAdded: coins,
-      rate
-    };
-  }
-
-  spendGunsCoin(rawNick, amount, cookies = {}, meta = {}) {
-    const nick = sanitizeNick(rawNick);
-    const session = this.getSessionByToken(cookies[AUTH_COOKIE]);
-    const sessionPilot = session ? this.getPilotById(session.pilotId) : null;
-    const pilot = sessionPilot || this.pilots.get(normalizeNick(nick));
-    const visit = this.getVisitByDeviceToken(cookies[DEVICE_COOKIE]) || this.getVisitByNick(nick);
-    const entity = pilot || visit;
-    const value = Math.max(0, Math.floor(Number(amount) || 0));
-
-    if (!entity) return error("user_required", "User is required to spend gs.");
-    if (value <= 0) return error("invalid_amount", "Spend amount must be positive.");
-
-    ensureWallet(entity);
-
-    if (entity.wallet.gunsCoin < value) {
-      return error("not_enough_gs", "Not enough gs.");
-    }
-
-    entity.wallet.gunsCoin -= value;
-    entity.lastSeenAt = Date.now();
-    this.persist();
-    this.recordWalletTransaction(entity, -value, String(meta.reason || "gs-spend"), {
-      ...meta,
-      amount: value
-    });
-
-    return {
-      ok: true,
-      user: pilot ? publicPilot(entity) : publicVisit(entity),
-      spentGs: value,
-      balanceGs: normalizeCoinAmount(entity.wallet.gunsCoin)
-    };
-  }
-
-  purchasePilotWeapon(rawNick, weapon, cookies = {}, meta = {}) {
-    const weaponId = String(weapon?.id || "").trim();
-    const price = normalizeCoinAmount(weapon?.economy?.priceGs);
-    const nick = sanitizeNick(rawNick);
-    const session = this.getSessionByToken(cookies[AUTH_COOKIE]);
-    const sessionPilot = session ? this.getPilotById(session.pilotId) : null;
-    const pilot = sessionPilot || this.pilots.get(normalizeNick(nick));
-    const visit = this.getVisitByDeviceToken(cookies[DEVICE_COOKIE]) || this.getVisitByNick(nick);
-    const entity = pilot || visit;
-
-    if (!weaponId) return error("weapon_required", "Weapon is required.");
-    if (!entity) return error("user_required", "User is required to buy items.");
-    if (price <= 0) return error("invalid_price", "Weapon price must be positive.");
-
-    ensureWallet(entity);
-    ensureInventory(entity);
-
-    if (hasInventoryPilotWeapon(entity, weaponId)) {
-      return {
-        ok: true,
-        alreadyOwned: true,
-        user: pilot ? publicPilot(entity) : publicVisit(entity),
-        weaponId,
-        spentGs: 0,
-        balanceGs: normalizeCoinAmount(entity.wallet.gunsCoin),
-        inventory: publicInventory(entity)
-      };
-    }
-
-    if (entity.wallet.gunsCoin < price) {
-      return error("not_enough_gs", "Not enough gs.");
-    }
-
-    entity.wallet.gunsCoin -= price;
-    addInventoryPilotWeapon(entity, weaponId);
-    entity.lastSeenAt = Date.now();
-    this.persist();
-    this.recordWalletTransaction(entity, -price, "market-purchase", {
-      ...meta,
-      itemType: "pilot-weapon",
-      itemId: weaponId,
-      amount: price
-    });
-
-    return {
-      ok: true,
-      user: pilot ? publicPilot(entity) : publicVisit(entity),
-      weaponId,
-      spentGs: price,
-      balanceGs: normalizeCoinAmount(entity.wallet.gunsCoin),
-      inventory: publicInventory(entity)
     };
   }
 
@@ -579,52 +433,6 @@ export class UserRegistry {
       online: users.filter((user) => user.online).length,
       connections: users.reduce((sum, user) => sum + (user.activeConnections || 0), 0),
       serverTime: Date.now()
-    };
-  }
-
-  async getUserDetail(userId, options = {}) {
-    const id = String(userId || "");
-    const user = this.list().find((item) => item.id === id);
-
-    if (!user) {
-      return error("user_not_found", "User row was not found.");
-    }
-
-    const isPilot = user.status === "claimed";
-    const devices = Array.from(this.devices.values())
-      .filter((device) => isPilot
-        ? device.claimedPilotId === id
-        : device.id === id || device.id === user.deviceId)
-      .map(publicDevice);
-    const sessions = Array.from(this.authSessions.values())
-      .filter((session) => isPilot
-        ? session.pilotId === id
-        : session.deviceId === id || session.deviceId === user.deviceId)
-      .map(publicAuthSession);
-    const linkedVisits = isPilot
-      ? Array.from(this.anonymousVisits.values())
-        .filter((visit) => visit.claimedPilotId === id)
-        .map((visit) => this.withPublicIds(publicVisit(visit), {
-          deviceId: visit.deviceId || "",
-          deviceIds: visit.deviceId ? [visit.deviceId] : [],
-          pilotId: id,
-          sessionIds: []
-        }))
-      : [];
-    const walletTransactions = await this.listWalletTransactions({
-      limit: options.limit || 50,
-      entityType: isPilot ? "pilot" : "visit",
-      entityId: id
-    });
-
-    return {
-      ok: true,
-      user,
-      devices,
-      sessions,
-      linkedVisits,
-      walletTransactions,
-      userStore: this.storageInfo()
     };
   }
 
@@ -718,15 +526,9 @@ export class UserRegistry {
     const id = String(userId || "");
 
     if (this.anonymousVisits.has(id)) {
-      const before = publicVisit(this.anonymousVisits.get(id));
-
       this.anonymousVisits.delete(id);
 
       this.persist();
-      this.recordAdminAudit("delete-user", "visit", id, {
-        before,
-        after: null
-      });
       return {
         ok: true,
         deleted: {
@@ -738,17 +540,6 @@ export class UserRegistry {
 
     for (const [normalizedNick, pilot] of this.pilots.entries()) {
       if (pilot.id !== id) continue;
-
-      const before = publicPilot(pilot);
-      const beforeSessions = Array.from(this.authSessions.values())
-        .filter((session) => session.pilotId === id)
-        .map(publicAuthSession);
-      const beforeDevices = Array.from(this.devices.values())
-        .filter((device) => device.claimedPilotId === id)
-        .map(publicDevice);
-      const beforeLinkedVisits = Array.from(this.anonymousVisits.values())
-        .filter((visit) => visit.claimedPilotId === id)
-        .map(publicVisit);
 
       this.pilots.delete(normalizedNick);
 
@@ -764,24 +555,7 @@ export class UserRegistry {
         }
       }
 
-      for (const visit of this.anonymousVisits.values()) {
-        if (visit.claimedPilotId === id) {
-          visit.claimedPilotId = null;
-          visit.claimedNick = "";
-          visit.convertedAt = 0;
-        }
-      }
-
       this.persist();
-      this.recordAdminAudit("delete-user", "pilot", id, {
-        before: {
-          pilot: before,
-          sessions: beforeSessions,
-          devices: beforeDevices,
-          linkedVisits: beforeLinkedVisits
-        },
-        after: null
-      });
       return {
         ok: true,
         deleted: {
@@ -792,107 +566,6 @@ export class UserRegistry {
     }
 
     return error("user_not_found", "User row was not found.");
-  }
-
-  setUserGunsCoin(userId, gunsCoin, meta = {}) {
-    const id = String(userId || "");
-    const nextBalance = normalizeCoinAmount(gunsCoin);
-    const visit = this.anonymousVisits.get(id);
-
-    if (visit) {
-      return this.setEntityGunsCoin(visit, "visit", id, nextBalance, meta);
-    }
-
-    for (const pilot of this.pilots.values()) {
-      if (pilot.id !== id) continue;
-
-      return this.setEntityGunsCoin(pilot, "pilot", id, nextBalance, meta);
-    }
-
-    return error("user_not_found", "User row was not found.");
-  }
-
-  setEntityGunsCoin(entity, entityType, entityId, nextBalance, meta = {}) {
-    ensureWallet(entity);
-
-    const before = entityType === "pilot"
-      ? publicPilot(entity)
-      : publicVisit(entity);
-    const previousBalance = normalizeCoinAmount(entity.wallet.gunsCoin);
-    const delta = nextBalance - previousBalance;
-
-    entity.wallet.gunsCoin = nextBalance;
-    this.persist();
-
-    if (delta !== 0) {
-      this.recordWalletTransaction(entity, delta, "admin-gs-set", {
-        previousBalance,
-        nextBalance,
-        ...(meta || {})
-      });
-    }
-
-    const after = entityType === "pilot"
-      ? publicPilot(entity)
-      : publicVisit(entity);
-
-    this.recordAdminAudit("set-gs-balance", entityType, entityId, {
-      before,
-      after,
-      delta
-    });
-
-    return {
-      ok: true,
-      user: this.list().find((item) => item.id === entityId) || after,
-      previousBalance,
-      balanceGs: nextBalance,
-      delta
-    };
-  }
-
-  unlinkDevice(deviceId) {
-    const id = String(deviceId || "");
-    const device = this.devices.get(id);
-
-    if (!device) return error("device_not_found", "Device was not found.");
-
-    const before = publicDevice(device);
-    this.clearDeviceClaim(device);
-    this.persist();
-    this.recordAdminAudit("unlink-device", "device", id, {
-      before,
-      after: publicDevice(device)
-    });
-
-    return {
-      ok: true,
-      device: publicDevice(device)
-    };
-  }
-
-  revokeSession(sessionId) {
-    const id = String(sessionId || "");
-
-    for (const [tokenHash, session] of this.authSessions.entries()) {
-      if (session.id !== id) continue;
-
-      const before = publicAuthSession(session);
-      session.revokedAt = Date.now();
-      this.authSessions.delete(tokenHash);
-      this.persist();
-      this.recordAdminAudit("revoke-session", "session", id, {
-        before,
-        after: publicAuthSession(session)
-      });
-
-      return {
-        ok: true,
-        session: publicAuthSession(session)
-      };
-    }
-
-    return error("session_not_found", "Session was not found.");
   }
 
   linkVisitToPilotByDeviceToken(token, pilotId) {
@@ -990,11 +663,10 @@ export class UserRegistry {
   }
 
   loadStorage() {
+    if (!this.storageFile || !fs.existsSync(this.storageFile)) return;
+
     try {
-      const data = this.store?.loadSnapshot?.();
-
-      if (!data) return;
-
+      const data = JSON.parse(fs.readFileSync(this.storageFile, "utf8"));
       this.anonymousVisits = new Map(
         (data.anonymousVisits || []).map((visit) => [
           visit.deviceId || visit.id,
@@ -1023,78 +695,19 @@ export class UserRegistry {
   }
 
   persist() {
-    this.store?.saveSnapshot?.({
+    if (!this.storageFile) return;
+
+    const data = {
+      version: 1,
+      savedAt: Date.now(),
       anonymousVisits: Array.from(this.anonymousVisits.values()).map(dehydratePresenceEntity),
       pilots: Array.from(this.pilots.values()).map(dehydratePresenceEntity),
       authSessions: Array.from(this.authSessions.values()),
       devices: Array.from(this.devices.values())
-    });
-  }
-
-  recordWalletTransaction(entity, amount, reason, meta = {}) {
-    ensureWallet(entity);
-    this.store?.recordWalletTransaction?.({
-      entityType: getWalletEntityType(entity),
-      entityId: entity.id || entity.deviceId || entity.normalizedNick || "",
-      currency: "gs",
-      amount,
-      balanceAfter: normalizeCoinAmount(entity.wallet?.gunsCoin),
-      reason,
-      createdAt: Date.now(),
-      meta
-    });
-  }
-
-  listWalletTransactions(options = {}) {
-    return Promise.resolve(
-      this.store?.listWalletTransactions?.(options) || []
-    );
-  }
-
-  recordAdminAudit(action, entityType, entityId, details = {}) {
-    this.store?.recordAdminAudit?.({
-      action,
-      entityType,
-      entityId,
-      actor: "admin-api",
-      createdAt: Date.now(),
-      before: details.before ?? null,
-      after: details.after ?? null,
-      meta: details.meta || {}
-    });
-  }
-
-  listAdminAudit(options = {}) {
-    return Promise.resolve(
-      this.store?.listAdminAudit?.(options) || []
-    );
-  }
-
-  recordMatchResult(result = {}) {
-    this.store?.recordMatchResult?.(result);
-  }
-
-  listMatchResults(options = {}) {
-    return Promise.resolve(
-      this.store?.listMatchResults?.(options) || []
-    );
-  }
-
-  databaseStatus() {
-    return Promise.resolve(
-      this.store?.getDatabaseStatus?.() || {
-        ...this.storageInfo(),
-        healthy: false,
-        warning: "database-status-unavailable",
-        counts: {}
-      }
-    );
-  }
-
-  storageInfo() {
-    return this.store?.describe?.() || {
-      mode: "unknown"
     };
+
+    fs.mkdirSync(path.dirname(this.storageFile), { recursive: true });
+    fs.writeFileSync(this.storageFile, `${JSON.stringify(data, null, 2)}\n`);
   }
 }
 
@@ -1102,7 +715,6 @@ function publicVisit(visit) {
   const nick = getVisitNick(visit);
   const status = getVisitStatus(visit);
   ensureWallet(visit);
-  ensureInventory(visit);
 
   return {
     id: visit.id,
@@ -1122,7 +734,6 @@ function publicVisit(visit) {
     claimedNick: visit.claimedNick || "",
     convertedAt: visit.convertedAt || 0,
     wallet: publicWallet(visit),
-    inventory: publicInventory(visit),
     meta: visit.meta || {}
   };
 }
@@ -1136,7 +747,6 @@ function hydratePresenceEntity(entity = {}) {
     roomId: ""
   };
   ensureWallet(hydrated);
-  ensureInventory(hydrated);
 
   return hydrated;
 }
@@ -1154,7 +764,6 @@ function dehydratePresenceEntity(entity = {}) {
 
 function publicPilot(pilot) {
   ensureWallet(pilot);
-  ensureInventory(pilot);
 
   return {
     id: pilot.id,
@@ -1170,7 +779,6 @@ function publicPilot(pilot) {
     status: "claimed",
     firstDeviceId: pilot.firstDeviceId || "",
     wallet: publicWallet(pilot),
-    inventory: publicInventory(pilot),
     telegramLinked: Boolean(pilot.telegramId),
     telegramUsername: pilot.telegramUsername || ""
   };
@@ -1212,48 +820,10 @@ function ensureWallet(entity) {
   return entity.wallet;
 }
 
-function ensureInventory(entity) {
-  entity.inventory ||= {};
-  if (!Array.isArray(entity.inventory.pilotWeapons)) {
-    entity.inventory.pilotWeapons = [];
-  }
-
-  entity.inventory.pilotWeapons = Array.from(
-    new Set(entity.inventory.pilotWeapons.map((id) => String(id || "").trim()).filter(Boolean))
-  );
-
-  return entity.inventory;
-}
-
 function publicWallet(entity = {}) {
-  ensureWallet(entity);
-
   return {
-    gunsCoin: normalizeCoinAmount(entity.wallet?.gunsCoin)
+    gunsCoin: normalizeCoinAmount(entity.economyAwards?.garageCoinsPickup?.amount)
   };
-}
-
-function publicInventory(entity = {}) {
-  const inventory = ensureInventory(entity);
-
-  return {
-    pilotWeapons: [...inventory.pilotWeapons]
-  };
-}
-
-function hasInventoryPilotWeapon(entity, weaponId) {
-  return ensureInventory(entity).pilotWeapons.includes(String(weaponId || "").trim());
-}
-
-function addInventoryPilotWeapon(entity, weaponId) {
-  const id = String(weaponId || "").trim();
-  const inventory = ensureInventory(entity);
-
-  if (id && !inventory.pilotWeapons.includes(id)) {
-    inventory.pilotWeapons.push(id);
-  }
-
-  return inventory;
 }
 
 function awardGunsCoinOnce(entity, awardKey, amount) {
@@ -1287,32 +857,8 @@ function transferWallet(from, to) {
   ensureWallet(from);
   ensureWallet(to);
 
-  const value = from.wallet.gunsCoin;
-
-  to.wallet.gunsCoin += value;
+  to.wallet.gunsCoin += from.wallet.gunsCoin;
   from.wallet.gunsCoin = 0;
-
-  return value;
-}
-
-function transferInventory(from, to) {
-  const fromInventory = ensureInventory(from);
-  const toInventory = ensureInventory(to);
-  let transferred = 0;
-
-  for (const weaponId of fromInventory.pilotWeapons) {
-    if (toInventory.pilotWeapons.includes(weaponId)) continue;
-    toInventory.pilotWeapons.push(weaponId);
-    transferred++;
-  }
-
-  fromInventory.pilotWeapons = [];
-
-  return transferred;
-}
-
-function getWalletEntityType(entity = {}) {
-  return entity.normalizedNick ? "pilot" : "visit";
 }
 
 function normalizeEconomyConfig(config = {}) {
@@ -1322,18 +868,9 @@ function normalizeEconomyConfig(config = {}) {
     gunsCoin: {
       visitorGrant: normalizeCoinAmount(gunsCoin.visitorGrant),
       playGrant: normalizeCoinAmount(gunsCoin.playGrant),
-      registrationGrant: normalizeCoinAmount(gunsCoin.registrationGrant),
-      exchangeScorePerCoin: normalizeExchangeRate(gunsCoin.exchangeScorePerCoin)
+      registrationGrant: normalizeCoinAmount(gunsCoin.registrationGrant)
     }
   };
-}
-
-function normalizeExchangeRate(value) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number) || number <= 0) return 100;
-
-  return Math.floor(number);
 }
 
 function normalizeCoinAmount(value) {

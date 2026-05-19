@@ -47,11 +47,6 @@ cd C:\Users\stero\Documents\Codex\2026-05-12\files-mentioned-by-the-user-guns\gu
 npm run server
 ```
 
-For public multiplayer, deploy the Node backend separately from GitHub Pages.
-The frontend targets `https://api.guns.gs` and `wss://api.guns.gs/ws`.
-Docker/Render scaffolding lives in `Dockerfile`, `render.yaml`, and
-`deploy/backend.env.example`.
-
 Server endpoints:
 
 ```txt

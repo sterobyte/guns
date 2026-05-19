@@ -1,53 +1,28 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createAcceptKey, decodeFrames, encodeFrame, safeJsonParse } from "./protocol.mjs";
 import { MultiplayerHub, sanitizeNick, sanitizeRoomId } from "./rooms.mjs";
 import { AUTH_COOKIE, DEVICE_COOKIE, UserRegistry } from "./users.mjs";
-import { createUserStore } from "./user-store.mjs";
-import { loadMongoEnv } from "../scripts/mongo-env.mjs";
-import { findLatestMongoBackup } from "../scripts/mongo-backup-utils.mjs";
 import { buildGameConfig, validateGameConfig } from "../scripts/config-tools.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-loadMongoEnv(root);
 const publishedConfigFile = path.join(root, "shared", "game-config.json");
 const draftConfigFile = path.join(root, "shared", "draft", "game-config.json");
 const usersStorageFile = path.join(root, "server", "data", "users.json");
-const host = process.env.GUNS_HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
+const host = process.env.GUNS_HOST || "127.0.0.1";
 const port = Number(process.env.GUNS_SERVER_PORT || process.env.PORT || 3000);
-const version = "0.16.93";
+const version = "0.14.0";
 const serverStartedAt = Date.now();
-const mongoBackupRoot = process.env.GUNS_MONGO_BACKUP_DIR ||
-  path.join(root, "server", "data", "mongo-backups");
 let publishedConfig = loadPublishedConfig();
-const secureCookies =
-  process.env.GUNS_COOKIE_SECURE === "1" ||
-  process.env.NODE_ENV === "production";
-const adminToken = String(process.env.GUNS_ADMIN_TOKEN || "").trim();
-const adminAuthRequired =
-  adminToken.length > 0 ||
-  process.env.NODE_ENV === "production";
+const secureCookies = process.env.GUNS_COOKIE_SECURE === "1";
 const hub = new MultiplayerHub({
-  maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16),
-  getRoomConfig: (roomId) => publishedConfig.rooms?.[roomId] || null,
-  getModeConfig: (modeId) => publishedConfig.modes?.[modeId] || null,
-  getCannonConfig: (gunType) => publishedConfig.objects?.cannons?.[gunType] || null,
-  getPilotWeaponConfig: (weaponId) => publishedConfig.objects?.pilotWeapons?.[weaponId] || null,
-  recordMatchResult: (result) => users.recordMatchResult(result)
-});
-const userStoreMode = resolveUserStoreMode(process.env);
-const usersStore = await createUserStore({
-  storageFile: usersStorageFile,
-  mode: userStoreMode,
-  mongoUrl: process.env.GUNS_MONGO_URL || "",
-  mongoDatabase: process.env.GUNS_MONGO_DATABASE || "guns",
-  mongoCollection: process.env.GUNS_MONGO_USER_COLLECTION || "user_snapshots"
+  maxClientsPerRoom: Number(process.env.GUNS_MAX_ROOM_PLAYERS || 16)
 });
 const users = new UserRegistry(getEconomyConfig(publishedConfig), {
-  store: usersStore
+  storageFile: usersStorageFile
 });
 
 process.stdout?.on?.("error", () => {});
@@ -62,16 +37,6 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const adminAuth = getAdminAuthResult(req, url);
-  if (!adminAuth.ok) {
-    sendJson(req, res, adminAuth.status, {
-      ok: false,
-      error: adminAuth.error,
-      message: adminAuth.message
-    });
-    return;
-  }
-
   if (url.pathname === "/health") {
     sendJson(req, res, 200, {
       ok: true,
@@ -79,8 +44,7 @@ const server = http.createServer((req, res) => {
       version,
       startedAt: serverStartedAt,
       uptimeMs: Date.now() - serverStartedAt,
-      time: Date.now(),
-      userStore: users.storageInfo()
+      time: Date.now()
     });
     return;
   }
@@ -109,9 +73,6 @@ const server = http.createServer((req, res) => {
       draft: getDraftStatus(),
       counts: {
         cannons: Object.keys(publishedConfig.objects?.cannons || {}).length,
-        guns: Object.keys(publishedConfig.objects?.cannons || {}).length,
-        pilotWeaponTypes: Object.keys(publishedConfig.objects?.pilotWeaponTypes || {}).length,
-        pilotWeapons: Object.keys(publishedConfig.objects?.pilotWeapons || {}).length,
         rooms: Object.keys(publishedConfig.rooms || {}).length,
         modes: Object.keys(publishedConfig.modes || {}).length
       }
@@ -311,91 +272,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname.startsWith("/api/objects/pilot-weapons/") && req.method === "PATCH") {
-    const weaponId = decodeURIComponent(
-      url.pathname.slice("/api/objects/pilot-weapons/".length)
-    ).trim();
-
-    readJsonBody(req)
-      .then((body) => {
-        const config = setPilotWeaponConfig(
-          publishedConfig,
-          weaponId,
-          body?.weapon || body
-        );
-
-        validateGameConfig(config);
-        writeConfigSources(config);
-        const builtConfig = buildVersionedGameConfig();
-        writeConfigFile(publishedConfigFile, builtConfig);
-        publishedConfig = builtConfig;
-
-        sendJson(req, res, 200, {
-          ok: true,
-          weapon: publishedConfig.objects.pilotWeapons[weaponId],
-          objects: publishedConfig.objects
-        });
-      })
-      .catch((error) => {
-        sendJson(req, res, 400, {
-          ok: false,
-          error: "invalid_pilot_weapon",
-          message: error.message
-        });
-      });
-    return;
-  }
-
   if (url.pathname === "/api/rooms") {
     sendJson(req, res, 200, {
       ok: true,
-      rooms: publishedConfig.rooms,
-      objects: publishedConfig.objects
+      rooms: publishedConfig.rooms
     });
-    return;
-  }
-
-  if (url.pathname.startsWith("/api/rooms/") && req.method === "DELETE") {
-    const roomId = decodeURIComponent(url.pathname.slice("/api/rooms/".length)).trim();
-
-    if (isRoomPublished(publishedConfig, roomId)) {
-      sendJson(req, res, 409, {
-        ok: false,
-        error: "room_published",
-        message: "Published rooms cannot be deleted"
-      });
-      return;
-    }
-
-    if (isRoomOccupied(roomId)) {
-      sendJson(req, res, 409, {
-        ok: false,
-        error: "room_not_empty",
-        message: "Room cannot be deleted while players are inside"
-      });
-      return;
-    }
-
-    try {
-      const config = deleteRoom(publishedConfig, roomId);
-
-      validateGameConfig(config);
-      writeConfigSources(config);
-      const builtConfig = buildVersionedGameConfig();
-      writeConfigFile(publishedConfigFile, builtConfig);
-      publishedConfig = builtConfig;
-
-      sendJson(req, res, 200, {
-        ok: true,
-        rooms: publishedConfig.rooms
-      });
-    } catch (error) {
-      sendJson(req, res, 400, {
-        ok: false,
-        error: "invalid_room",
-        message: error.message
-      });
-    }
     return;
   }
 
@@ -551,49 +432,6 @@ const server = http.createServer((req, res) => {
         sendJson(req, res, 400, {
           ok: false,
           error: "invalid_room",
-          message: error.message
-        });
-      });
-    return;
-  }
-
-  if (url.pathname === "/api/rooms/object" && req.method === "PATCH") {
-    readJsonBody(req)
-      .then((body) => {
-        const roomId = String(body?.roomId || "").trim();
-
-        if (isRoomPublished(publishedConfig, roomId)) {
-          sendJson(req, res, 409, {
-            ok: false,
-            error: "room_published",
-            message: "Published rooms are immutable"
-          });
-          return;
-        }
-
-        const config = setRoomObjectInstanceConfig(
-          publishedConfig,
-          roomId,
-          String(body?.instanceId || "").trim(),
-          body?.object || body
-        );
-
-        validateGameConfig(config);
-        writeConfigSources(config);
-        const builtConfig = buildVersionedGameConfig();
-        writeConfigFile(publishedConfigFile, builtConfig);
-        publishedConfig = builtConfig;
-
-        sendJson(req, res, 200, {
-          ok: true,
-          room: publishedConfig.rooms[roomId],
-          rooms: publishedConfig.rooms
-        });
-      })
-      .catch((error) => {
-        sendJson(req, res, 400, {
-          ok: false,
-          error: "invalid_room_object",
           message: error.message
         });
       });
@@ -777,259 +615,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === "/users/exchange-score" && req.method === "POST") {
-    readJsonBody(req)
-      .then((body) => {
-        const result = users.exchangeScore(body?.nick, body?.score);
-
-        if (!result.ok) {
-          sendJson(req, res, 400, result);
-          return;
-        }
-
-        sendJson(req, res, 200, result);
-      })
-      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
-
-    return;
-  }
-
-  if (url.pathname === "/users/spend-gs" && req.method === "POST") {
-    readJsonBody(req)
-      .then((body) => {
-        const result = users.spendGunsCoin(
-          body?.nick,
-          body?.amount,
-          cookies,
-          body?.meta || {}
-        );
-
-        if (!result.ok) {
-          sendJson(req, res, 400, result);
-          return;
-        }
-
-        sendJson(req, res, 200, result);
-      })
-      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
-
-    return;
-  }
-
-  if (url.pathname === "/users/purchase-pilot-weapon" && req.method === "POST") {
-    readJsonBody(req)
-      .then((body) => {
-        const weaponId = String(body?.weaponId || "").trim();
-        const purchase = resolveMarketItemPurchase(
-          publishedConfig,
-          body?.roomId,
-          body?.instanceId,
-          weaponId
-        );
-
-        if (!purchase.ok) {
-          sendJson(req, res, purchase.status || 400, {
-            ok: false,
-            error: purchase.error,
-            message: purchase.message
-          });
-          return;
-        }
-
-        const result = users.purchasePilotWeapon(
-          body?.nick,
-          purchase.weapon,
-          cookies,
-          {
-            ...(body?.meta || {}),
-            roomId: purchase.roomId,
-            instanceId: purchase.instanceId
-          }
-        );
-
-        if (!result.ok) {
-          sendJson(req, res, 400, result);
-          return;
-        }
-
-        syncLiveUserInventory(result.user, cookies, body?.nick);
-
-        sendJson(req, res, 200, {
-          ...result,
-          room: publishedConfig.rooms[purchase.roomId],
-          stock: purchase.stock
-        });
-      })
-      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
-
-    return;
-  }
-
-  if (url.pathname === "/admin/auth-check") {
-    sendJson(req, res, 200, {
-      ok: true,
-      authenticated: true,
-      version,
-      serverStartedAt,
-      uptimeMs: Date.now() - serverStartedAt
-    });
-    return;
-  }
-
   if (url.pathname === "/admin/users") {
     sendJson(req, res, 200, {
       ...users.snapshot(),
       serverStartedAt,
-      uptimeMs: Date.now() - serverStartedAt,
-      userStore: users.storageInfo()
+      uptimeMs: Date.now() - serverStartedAt
     });
-    return;
-  }
-
-  if (url.pathname === "/admin/database-status") {
-    Promise.resolve(users.databaseStatus())
-      .then((database) => sendJson(req, res, 200, {
-        ok: true,
-        version,
-        serverStartedAt,
-        uptimeMs: Date.now() - serverStartedAt,
-        latestMongoBackup: findLatestMongoBackup(mongoBackupRoot),
-        database
-      }))
-      .catch((error) => sendJson(req, res, 500, {
-        ok: false,
-        error: "database_status_failed",
-        message: error.message
-      }));
-    return;
-  }
-
-  if (url.pathname === "/admin/wallet-transactions") {
-    Promise.resolve(users.listWalletTransactions({
-      limit: url.searchParams.get("limit"),
-      entityType: url.searchParams.get("entityType"),
-      entityId: url.searchParams.get("entityId"),
-      reason: url.searchParams.get("reason")
-    }))
-      .then((transactions) => sendJson(req, res, 200, {
-        ok: true,
-        userStore: users.storageInfo(),
-        transactions
-      }))
-      .catch((error) => sendJson(req, res, 500, {
-        ok: false,
-        error: "wallet_transactions_failed",
-        message: error.message
-      }));
-    return;
-  }
-
-  if (url.pathname === "/admin/audit-log") {
-    Promise.resolve(users.listAdminAudit({
-      limit: url.searchParams.get("limit"),
-      action: url.searchParams.get("action"),
-      entityType: url.searchParams.get("entityType"),
-      entityId: url.searchParams.get("entityId"),
-      actor: url.searchParams.get("actor")
-    }))
-      .then((entries) => sendJson(req, res, 200, {
-        ok: true,
-        userStore: users.storageInfo(),
-        entries
-      }))
-      .catch((error) => sendJson(req, res, 500, {
-        ok: false,
-        error: "admin_audit_failed",
-        message: error.message
-      }));
-    return;
-  }
-
-  if (url.pathname === "/admin/match-results") {
-    Promise.resolve(users.listMatchResults({
-      limit: url.searchParams.get("limit"),
-      matchId: url.searchParams.get("matchId"),
-      roomId: url.searchParams.get("roomId"),
-      modeId: url.searchParams.get("modeId"),
-      winnerId: url.searchParams.get("winnerId")
-    }))
-      .then((results) => sendJson(req, res, 200, {
-        ok: true,
-        userStore: users.storageInfo(),
-        results
-      }))
-      .catch((error) => sendJson(req, res, 500, {
-        ok: false,
-        error: "match_results_failed",
-        message: error.message
-      }));
-    return;
-  }
-
-  if (url.pathname.startsWith("/admin/users/") && req.method === "GET") {
-    const suffix = url.pathname.slice("/admin/users/".length);
-    const walletSuffix = "/wallet-transactions";
-    const isWalletRequest = suffix.endsWith(walletSuffix);
-    const userId = decodeURIComponent(
-      isWalletRequest ? suffix.slice(0, -walletSuffix.length) : suffix
-    );
-
-    Promise.resolve(users.getUserDetail(userId, {
-      limit: url.searchParams.get("limit")
-    }))
-      .then((result) => {
-        if (!result.ok) {
-          sendJson(req, res, 404, result);
-          return;
-        }
-
-        if (isWalletRequest) {
-          sendJson(req, res, 200, {
-            ok: true,
-            user: result.user,
-            userStore: result.userStore,
-            transactions: result.walletTransactions
-          });
-          return;
-        }
-
-        sendJson(req, res, 200, result);
-      })
-      .catch((error) => sendJson(req, res, 500, {
-        ok: false,
-        error: "user_detail_failed",
-        message: error.message
-      }));
-    return;
-  }
-
-  if (url.pathname.startsWith("/admin/users/") && req.method === "PATCH") {
-    const suffix = url.pathname.slice("/admin/users/".length);
-
-    if (!suffix.endsWith("/wallet")) {
-      sendJson(req, res, 404, {
-        ok: false,
-        error: "unknown_admin_user_action"
-      });
-      return;
-    }
-
-    const userId = decodeURIComponent(suffix.slice(0, -"/wallet".length));
-
-    readJsonBody(req)
-      .then((body) => {
-        const result = users.setUserGunsCoin(userId, body?.gunsCoin, {
-          source: "admin-panel"
-        });
-
-        if (!result.ok) {
-          sendJson(req, res, 404, result);
-          return;
-        }
-
-        sendJson(req, res, 200, result);
-      })
-      .catch(() => sendJson(req, res, 400, { ok: false, error: "invalid_json" }));
     return;
   }
 
@@ -1050,26 +641,6 @@ const server = http.createServer((req, res) => {
         uptimeMs: Date.now() - serverStartedAt
       }
     });
-    return;
-  }
-
-  if (url.pathname.startsWith("/admin/devices/") && req.method === "DELETE") {
-    const suffix = url.pathname.slice("/admin/devices/".length);
-
-    if (suffix.endsWith("/claim")) {
-      const deviceId = decodeURIComponent(suffix.slice(0, -"/claim".length));
-      const result = users.unlinkDevice(deviceId);
-
-      sendJson(req, res, result.ok ? 200 : 404, result);
-      return;
-    }
-  }
-
-  if (url.pathname.startsWith("/admin/sessions/") && req.method === "DELETE") {
-    const sessionId = decodeURIComponent(url.pathname.slice("/admin/sessions/".length));
-    const result = users.revokeSession(sessionId);
-
-    sendJson(req, res, result.ok ? 200 : 404, result);
     return;
   }
 
@@ -1143,14 +714,6 @@ function writeConfigSources(config) {
     config.objects?.cannons || {}
   );
   writeConfigDirectory(
-    path.join(root, "shared", "objects", "pilot-weapon-types"),
-    config.objects?.pilotWeaponTypes || {}
-  );
-  writeConfigDirectory(
-    path.join(root, "shared", "objects", "pilot-weapons"),
-    config.objects?.pilotWeapons || {}
-  );
-  writeConfigDirectory(
     path.join(root, "shared", "objects", "room-objects"),
     config.objects?.roomObjects || {}
   );
@@ -1213,19 +776,6 @@ function setGlobalSettings(config, settings) {
   if (settings.botNameBrackets !== undefined) {
     nextConfig.settings.botNameBrackets = settings.botNameBrackets === true;
   }
-  if (settings.camera !== undefined) {
-    nextConfig.settings.camera ||= {};
-
-    if (settings.camera?.height !== undefined) {
-      const height = Number(settings.camera.height);
-
-      if (!Number.isFinite(height) || height <= 0) {
-        throw new Error("settings.camera.height must be a positive number");
-      }
-
-      nextConfig.settings.camera.height = Math.min(3, Math.max(0.5, height));
-    }
-  }
 
   return nextConfig;
 }
@@ -1238,7 +788,7 @@ function setEconomySettings(config, economy) {
   nextConfig.settings.economy ||= {};
   nextConfig.settings.economy.gunsCoin ||= {};
 
-  for (const key of ["visitorGrant", "playGrant", "registrationGrant", "exchangeScorePerCoin"]) {
+  for (const key of ["visitorGrant", "playGrant", "registrationGrant"]) {
     if (gunsCoin[key] === undefined) continue;
 
     const value = Number(gunsCoin[key]);
@@ -1264,30 +814,9 @@ function getEconomyConfig(config) {
       ),
       registrationGrant: normalizeCoinAmount(
         config?.settings?.economy?.gunsCoin?.registrationGrant
-      ),
-      exchangeScorePerCoin: normalizePositiveInteger(
-        config?.settings?.economy?.gunsCoin?.exchangeScorePerCoin,
-        100
       )
     }
   };
-}
-
-function resolveUserStoreMode(env) {
-  const requested = String(env.GUNS_USER_STORE || "").trim();
-
-  if (requested) return requested;
-  if (env.GUNS_MONGO_URL) return "mongo-collections";
-
-  return "file";
-}
-
-function normalizePositiveInteger(value, fallback) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number) || number <= 0) return fallback;
-
-  return Math.floor(number);
 }
 
 function normalizeCoinAmount(value) {
@@ -1313,7 +842,6 @@ function createDraftRoom(config, sourceRoomId) {
   draft.title = `${source.title || source.id} Draft`;
   draft.enabled = false;
   draft.published = false;
-  delete draft.inherits;
   normalizeDraftPlayerSpawn(draft);
 
   nextConfig.rooms[id] = draft;
@@ -1371,17 +899,6 @@ function publishRoom(config, roomId) {
   return nextConfig;
 }
 
-function deleteRoom(config, roomId) {
-  if (!config.rooms?.[roomId]) {
-    throw new Error(`Room not found: ${roomId}`);
-  }
-
-  const nextConfig = structuredClone(config);
-  delete nextConfig.rooms[roomId];
-
-  return nextConfig;
-}
-
 function isRoomOccupied(roomId) {
   const room = hub.rooms.get(sanitizeRoomId(roomId));
   return (room?.clients?.size || 0) > 0;
@@ -1410,199 +927,6 @@ function setRoomArena(config, roomId, shape, params) {
   };
 
   return nextConfig;
-}
-
-function setRoomObjectInstanceConfig(config, roomId, instanceId, patch = {}) {
-  const room = config.rooms?.[roomId];
-
-  if (!room) {
-    throw new Error(`Room not found: ${roomId}`);
-  }
-
-  const objectIndex = (room.objects || [])
-    .findIndex((item) => item.instanceId === instanceId);
-
-  if (objectIndex < 0) {
-    throw new Error(`Room object not found: ${instanceId}`);
-  }
-
-  const nextConfig = structuredClone(config);
-  const instance = nextConfig.rooms[roomId].objects[objectIndex];
-
-  if (patch.x !== undefined) {
-    instance.x = normalizeFiniteNumber(patch.x, "x");
-  }
-
-  if (patch.y !== undefined) {
-    instance.y = normalizeFiniteNumber(patch.y, "y");
-  }
-
-  if (patch.rotation !== undefined) {
-    instance.rotation = normalizeFiniteNumber(patch.rotation, "rotation");
-  }
-
-  if (instance.objectId === "market-item") {
-    instance.params ||= {};
-
-    if (patch.weaponId !== undefined) {
-      const weaponId = String(patch.weaponId || "").trim();
-
-      if (!nextConfig.objects?.pilotWeapons?.[weaponId]) {
-        throw new Error(`Pilot weapon not found: ${weaponId}`);
-      }
-
-      instance.params.weaponId = weaponId;
-      instance.params.icon = nextConfig.objects.pilotWeapons[weaponId].typeId ||
-        instance.params.icon ||
-        "item";
-    }
-
-    if (patch.stock !== undefined) {
-      const stock = Number(patch.stock);
-
-      if (!Number.isFinite(stock) || stock < 0) {
-        throw new Error("stock must be a non-negative number");
-      }
-
-      instance.params.stock = Math.floor(stock);
-    }
-  }
-
-  return nextConfig;
-}
-
-function syncLiveRoomConfig(roomId) {
-  const cleanRoomId = sanitizeRoomId(roomId);
-  const room = publishedConfig.rooms?.[cleanRoomId];
-  const liveRoom = hub.rooms.get(cleanRoomId);
-
-  if (!room || !liveRoom) return;
-
-  liveRoom.roomConfig = room;
-  hub.broadcast(cleanRoomId, {
-    type: "room:config",
-    room,
-    configVersion: publishedConfig.configVersion,
-    serverTime: Date.now()
-  });
-}
-
-function syncLiveUserInventory(user, cookies = {}, rawNick = "") {
-  const inventory = user?.inventory || { pilotWeapons: [] };
-  const deviceToken = cookies[DEVICE_COOKIE] || "";
-  const nick = sanitizeNick(user?.nick || rawNick);
-  const touchedRooms = new Set();
-
-  for (const room of hub.rooms.values()) {
-    for (const client of room.clients.values()) {
-      const sameDevice = deviceToken && client.deviceToken === deviceToken;
-      const sameNick = nick && sanitizeNick(client.nick) === nick;
-
-      if (!sameDevice && !sameNick) continue;
-
-      client.inventory = inventory;
-      room.arena.setPlayerInventory(client.id, inventory);
-      client.send({
-        type: "inventory:sync",
-        inventory,
-        user,
-        serverTime: Date.now()
-      });
-      touchedRooms.add(room.id);
-    }
-  }
-
-  for (const roomId of touchedRooms) {
-    hub.broadcastRoomState(roomId);
-  }
-}
-
-function resolveMarketItemPurchase(config, roomIdValue, instanceIdValue, weaponIdValue) {
-  const roomId = String(roomIdValue || "").trim();
-  const instanceId = String(instanceIdValue || "").trim();
-  const requestedWeaponId = String(weaponIdValue || "").trim();
-  const room = config.rooms?.[roomId];
-
-  if (!roomId || !instanceId) {
-    return {
-      ok: false,
-      status: 400,
-      error: "market_context_required",
-      message: "Market purchase requires roomId and instanceId."
-    };
-  }
-
-  if (!room) {
-    return {
-      ok: false,
-      status: 404,
-      error: "room_not_found",
-      message: "Room was not found."
-    };
-  }
-
-  const instance = (room.objects || [])
-    .find(item => item.instanceId === instanceId);
-
-  if (!instance || instance.objectId !== "market-item") {
-    return {
-      ok: false,
-      status: 404,
-      error: "market_item_not_found",
-      message: "Market item was not found."
-    };
-  }
-
-  const weaponId = String(instance.params?.weaponId || "").trim();
-
-  if (!weaponId || (requestedWeaponId && requestedWeaponId !== weaponId)) {
-    return {
-      ok: false,
-      status: 409,
-      error: "market_item_mismatch",
-      message: "Market item does not match requested weapon."
-    };
-  }
-
-  const weapon = config.objects?.pilotWeapons?.[weaponId] || null;
-
-  if (!weapon) {
-    return {
-      ok: false,
-      status: 404,
-      error: "weapon_not_found",
-      message: "Pilot weapon was not found."
-    };
-  }
-
-  const stock = Math.max(0, Math.floor(Number(instance.params?.stock) || 0));
-
-  if (stock <= 0) {
-    return {
-      ok: false,
-      status: 409,
-      error: "market_item_sold_out",
-      message: "Market item is sold out."
-    };
-  }
-
-  return {
-    ok: true,
-    roomId,
-    instanceId,
-    weapon,
-    stock
-  };
-}
-
-function normalizeFiniteNumber(value, label) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number)) {
-    throw new Error(`${label} must be a finite number`);
-  }
-
-  return number;
 }
 
 function normalizeRoomArenaParams(shape, params) {
@@ -1687,72 +1011,6 @@ function setCannonFireRate(config, cannonId, controller, value) {
   return nextConfig;
 }
 
-function setPilotWeaponConfig(config, weaponId, patch = {}) {
-  if (!config.objects?.pilotWeapons?.[weaponId]) {
-    throw new Error(`Pilot weapon not found: ${weaponId}`);
-  }
-
-  const nextConfig = structuredClone(config);
-  const weapon = nextConfig.objects.pilotWeapons[weaponId];
-
-  if (patch.title !== undefined) {
-    const title = String(patch.title || "").trim();
-    if (!title) throw new Error("Weapon title is required");
-    weapon.title = title;
-  }
-
-  if (patch.description !== undefined) {
-    const description = String(patch.description || "").trim();
-    if (!description) throw new Error("Weapon description is required");
-    weapon.description = description;
-  }
-
-  if (patch.priceGs !== undefined) {
-    weapon.economy ||= {};
-    weapon.economy.priceGs = normalizeNonNegativeNumber(
-      patch.priceGs,
-      "priceGs"
-    );
-  }
-
-  weapon.gameplay ||= {};
-
-  if (patch.damage !== undefined) {
-    const damage = Number(patch.damage);
-    if (!Number.isFinite(damage) || damage <= 0) {
-      throw new Error("damage must be a positive number");
-    }
-    weapon.gameplay.damage = damage;
-  }
-
-  if (patch.fireRate !== undefined && weapon.typeId === "pistol") {
-    weapon.gameplay.fireRate = normalizeNonNegativeNumber(
-      patch.fireRate,
-      "fireRate"
-    );
-  }
-
-  if (patch.magazine !== undefined && weapon.typeId === "pistol") {
-    const magazine = Number(patch.magazine);
-    if (!Number.isFinite(magazine) || magazine <= 0) {
-      throw new Error("magazine must be a positive number");
-    }
-    weapon.gameplay.magazine = Math.floor(magazine);
-  }
-
-  return nextConfig;
-}
-
-function normalizeNonNegativeNumber(value, label) {
-  const number = Number(value);
-
-  if (!Number.isFinite(number) || number < 0) {
-    throw new Error(`${label} must be a non-negative number`);
-  }
-
-  return number;
-}
-
 globalThis.GUNS_MULTIPLAYER_SERVER = server;
 
 server.on("upgrade", (req, socket) => {
@@ -1788,26 +1046,14 @@ server.on("upgrade", (req, socket) => {
   const deviceToken = cookies[DEVICE_COOKIE] || "";
 
   client.deviceToken = deviceToken;
-  const room = hub.join(client, roomId, nick);
-
-  if (!room) return;
-
-  const user = users.register(nick, {
+  hub.join(client, roomId, nick);
+  users.register(nick, {
     source: "websocket",
     deviceToken,
     connectionId: client.id,
     online: true,
     roomId
   });
-  client.inventory = user?.inventory || { pilotWeapons: [] };
-  room.arena.setPlayerInventory(client.id, client.inventory);
-  client.send({
-    type: "inventory:sync",
-    inventory: client.inventory,
-    user,
-    serverTime: Date.now()
-  });
-  hub.broadcastRoomState(roomId);
 
   socket.on("data", (chunk) => {
     client.lastSeenAt = Date.now();
@@ -1903,85 +1149,14 @@ function sendEmpty(req, res, status) {
   res.end();
 }
 
-function getAdminAuthResult(req, url) {
-  if (!isAdminProtectedPath(url.pathname)) {
-    return { ok: true };
-  }
-
-  if (!adminAuthRequired) {
-    return { ok: true };
-  }
-
-  if (!adminToken) {
-    return {
-      ok: false,
-      status: 503,
-      error: "admin_auth_not_configured",
-      message: "Admin API token is not configured."
-    };
-  }
-
-  if (isAdminTokenValid(getAdminRequestToken(req))) {
-    return { ok: true };
-  }
-
-  return {
-    ok: false,
-    status: 401,
-    error: "admin_auth_required",
-    message: "Admin API token is required."
-  };
-}
-
-function isAdminProtectedPath(pathname) {
-  return (
-    pathname === "/admin/users" ||
-    pathname.startsWith("/admin/") ||
-    pathname === "/api/objects" ||
-    pathname.startsWith("/api/objects/") ||
-    pathname === "/api/settings" ||
-    pathname === "/api/economy" ||
-    pathname === "/api/rooms" ||
-    pathname.startsWith("/api/rooms/") ||
-    pathname === "/api/modes" ||
-    pathname === "/api/config/status" ||
-    pathname === "/api/config/draft" ||
-    pathname === "/api/config/publish" ||
-    pathname === "/api/config/discard"
-  );
-}
-
-function getAdminRequestToken(req) {
-  const headerToken = String(req.headers["x-guns-admin-token"] || "").trim();
-  const authorization = String(req.headers.authorization || "").trim();
-
-  if (headerToken) return headerToken;
-  if (authorization.toLowerCase().startsWith("bearer ")) {
-    return authorization.slice(7).trim();
-  }
-
-  return "";
-}
-
-function isAdminTokenValid(candidate) {
-  const expected = Buffer.from(adminToken);
-  const actual = Buffer.from(String(candidate || ""));
-
-  if (expected.length <= 0 || actual.length !== expected.length) {
-    return false;
-  }
-
-  return timingSafeEqual(actual, expected);
-}
-
 function corsHeaders(req) {
   const origin = req.headers.origin;
 
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-GUNS-ADMIN-TOKEN",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
 }

@@ -1,6 +1,3 @@
 backend.log
 backend.err.log
 server/data/
-.env
-.env.local
-node_modules/

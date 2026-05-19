@@ -1,8 +1,0 @@
-node_modules
-.git
-.env
-.env.local
-server/data
-backend.log
-backend.err.log
-npm-debug.log

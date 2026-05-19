@@ -9,11 +9,6 @@
       "start.aria": "GUNS start screen",
       "start.nickPlaceholder": "PILOT",
       "start.play": "GO",
-      "base.roomGo": "GO",
-      "room.main.title": "Main Arena",
-      "room.main.description": "Classic public arena",
-      "room.guns-market.title": "Guns Market",
-      "room.guns-market.description": "Portable weapons shop",
       "start.tutorial": "TUTORIAL",
       "start.versionAria": "Game version",
       "tutorial.aria": "GUNS tutorial",
@@ -52,11 +47,6 @@
       "start.aria": "GUNS стартовый экран",
       "start.nickPlaceholder": "ПИЛОТ",
       "start.play": "ПОЕХАЛИ",
-      "base.roomGo": "\u041f\u041e\u0415\u0425\u0410\u041b\u0418",
-      "room.main.title": "\u0413\u043b\u0430\u0432\u043d\u0430\u044f \u0430\u0440\u0435\u043d\u0430",
-      "room.main.description": "\u041a\u043b\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u043f\u0443\u0431\u043b\u0438\u0447\u043d\u0430\u044f \u0430\u0440\u0435\u043d\u0430",
-      "room.guns-market.title": "\u041e\u0440\u0443\u0436\u0435\u0439\u043d\u044b\u0439 \u0440\u044b\u043d\u043e\u043a",
-      "room.guns-market.description": "\u041c\u0430\u0433\u0430\u0437\u0438\u043d \u043d\u043e\u0441\u0438\u043c\u043e\u0433\u043e \u043e\u0440\u0443\u0436\u0438\u044f",
       "start.tutorial": "ТУТОРИАЛ",
       "start.versionAria": "Версия",
       "tutorial.aria": "\u0422\u0443\u0442\u043e\u0440\u0438\u0430\u043b GUNS",
@@ -92,6 +82,8 @@
     }
   };
 
+  let language = normalizeLanguage(localStorage.getItem(storageKey)) || defaultLanguage;
+
   function normalizeLanguage(value) {
     const shortCode = String(value || "")
       .trim()
@@ -99,16 +91,6 @@
       .split("-")[0];
 
     return dictionaries[shortCode] ? shortCode : "";
-  }
-
-  const forcedLanguage = normalizeLanguage(config.forcedLanguage);
-  let language =
-    forcedLanguage ||
-    normalizeLanguage(localStorage.getItem(storageKey)) ||
-    defaultLanguage;
-
-  if (forcedLanguage) {
-    localStorage.setItem(storageKey, forcedLanguage);
   }
 
   function format(template, params) {
@@ -145,7 +127,7 @@
   }
 
   function setLanguage(nextLanguage) {
-    language = forcedLanguage || normalizeLanguage(nextLanguage) || fallbackLanguage;
+    language = normalizeLanguage(nextLanguage) || fallbackLanguage;
     localStorage.setItem(storageKey, language);
     apply();
     window.dispatchEvent(new CustomEvent("guns:languagechange", { detail: { language } }));

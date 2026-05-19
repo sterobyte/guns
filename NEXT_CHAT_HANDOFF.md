@@ -32,8 +32,8 @@ https://guns.gs
 
 At the moment of this handoff:
 
-- game/backend: `0.16.26`
-- admin panel: `0.2.1`
+- game/backend: `0.14.0`
+- admin panel: `0.1.34`
 
 Important rule: after every code fix, bump the relevant version by one patch step.
 
@@ -62,10 +62,6 @@ Then always run:
 ```cmd
 npm.cmd run check
 ```
-
-Mongo is the normal backend path now: if `GUNS_MONGO_URL` exists and `GUNS_USER_STORE` is not set, the server automatically uses `mongo-collections`. Secrets stay only in `.env.local` or hosting env vars.
-
-Public multiplayer target is `https://api.guns.gs` and `wss://api.guns.gs/ws`. `api.guns.gs` still needs DNS/hosting outside GitHub Pages. Docker/Render deployment files are in `Dockerfile`, `render.yaml`, and `deploy/backend.env.example`; see `docs/public-multiplayer-deploy.md`.
 
 For the panel, run:
 
@@ -121,7 +117,7 @@ Active runtime:
 src/legacy/gunsdemo22-runtime.js
 ```
 
-This is still the big canvas runtime: player, bots, room rendering, bullets, collisions, FPS, base, arena, effects.
+This is still the big canvas runtime: player, bots, room rendering, bullets, collisions, FPS, cabinet, arena, effects.
 
 Modular pieces already started:
 
@@ -131,8 +127,6 @@ src/rooms/room-session.js
 src/rooms/geometry.js
 shared/rooms/*.json
 shared/objects/cannons/*.json
-shared/objects/pilot-weapon-types/*.json
-shared/objects/pilot-weapons/*.json
 shared/objects/room-objects/*.json
 shared/settings.json
 ```
@@ -157,8 +151,7 @@ server/rooms.mjs
 We are moving step by step from prototype to a large structured project:
 
 - rooms are data-driven;
-- guns are data-driven objects; old internal config key is still `cannons` during migration;
-- pilot weapons are data-driven portable objects;
+- cannons are data-driven objects;
 - room objects should become reusable objects;
 - admin panel should become the main constructor/source of truth;
 - later MongoDB should become the persistent source of truth;
@@ -168,11 +161,10 @@ Do not rush Mongo until local data/config structure is clean enough.
 
 ## Important Product Concepts
 
-- The main entity is the player/pilot, not the gun.
-- Guns are expendable vehicles/tools.
-- Pilot weapons are portable tools used by the pilot outside guns.
-- User base is a private room, separate from public battle arenas.
-- Public arenas and base must be isolated.
+- The main entity is the player/pilot, not the cannon.
+- Cannons are expendable vehicles/tools.
+- User cabinet/garage is a private room, separate from public battle arenas.
+- Public arenas and cabinet must be isolated.
 - Room objects like teleport/menu terminals should be reusable objects, not one-off room hacks.
 - Tutorial is still paused until object/room structure is cleaner.
 
@@ -224,11 +216,11 @@ Auth session rule:
 - server should not expire auth sessions by TTL;
 - logout/admin action/deletion should invalidate it.
 
-## Base Current Behavior
+## Cabinet Current Behavior
 
-The user base is the first screen.
+The user cabinet is the first screen.
 
-Base room:
+Cabinet room:
 
 ```text
 shared/rooms/user-cabinet.json
@@ -269,14 +261,14 @@ Not `guns coin` in UI.
 
 - Language buttons `РУС` / `ENG` were removed from the cabinet room.
 - Menu/teleport activation now requires the pilot to go deeper into the object, not just touch the boundary.
-- Machinegun bullets are no longer forced red; they use owner/gun color.
-- Base version is drawn on the top background.
-- Base uses cycling/pulsing background.
-- Base effects from arenas should not leak into the base; room runtime state exists to isolate effects.
+- Machinegun bullets are no longer forced red; they use owner/cannon color.
+- Cabinet version is drawn on the top background.
+- Cabinet uses cycling/pulsing background.
+- Cabinet effects from arenas should not leak into the cabinet; room runtime state exists to isolate effects.
 
-## Guns
+## Cannons
 
-Current gun types:
+Current cannon types:
 
 - `autogun`
 - `doublegun`

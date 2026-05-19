@@ -5,18 +5,12 @@
   let nick = "";
   let seq = 0;
   let serverArena = null;
-  let serverMatch = null;
-  let ownServerSnapshot = null;
-  let roomClientCount = 0;
   const peers = new Map();
   const remoteSnapshots = new Map();
   const listeners = new Map();
 
   function clearSessionState() {
     serverArena = null;
-    serverMatch = null;
-    ownServerSnapshot = null;
-    roomClientCount = 0;
     peers.clear();
     remoteSnapshots.clear();
   }
@@ -31,9 +25,10 @@
   }
 
   function getDefaultUrl() {
-    const configured = getWebSocketBaseUrl();
-
-    if (!configured) return "";
+    const configured =
+      window.GUNS_CONFIG?.multiplayer?.localWebSocketUrl ||
+      "ws://127.0.0.1:3000/ws";
+    if (!canUseLocalEndpoint(configured)) return "";
 
     const url = new URL(configured);
 
@@ -52,48 +47,36 @@
   }
 
   function getApiUrl(path) {
-    const base = getHttpBaseUrl();
-
-    if (!base) return "";
+    const base =
+      window.GUNS_CONFIG?.multiplayer?.localHttpUrl ||
+      "http://127.0.0.1:3000";
+    if (!canUseLocalEndpoint(base)) return "";
 
     return `${base}${path}`;
   }
 
-  function getHttpBaseUrl() {
-    const config = window.GUNS_CONFIG?.multiplayer || {};
+  function canUseLocalEndpoint(rawUrl) {
+    let endpoint = null;
 
-    if (isLocalPage()) {
-      return config.localHttpUrl || "http://127.0.0.1:3000";
+    try {
+      endpoint = new URL(rawUrl);
+    } catch {
+      return false;
     }
 
-    return config.publicHttpUrl || window.location.origin;
-  }
-
-  function getWebSocketBaseUrl() {
-    const config = window.GUNS_CONFIG?.multiplayer || {};
-
-    if (isLocalPage()) {
-      return config.localWebSocketUrl || "ws://127.0.0.1:3000/ws";
-    }
-
-    return config.publicWebSocketUrl || `${getWebSocketOrigin(window.location.origin)}/ws`;
-  }
-
-  function isLocalPage() {
+    const endpointHost = endpoint.hostname;
     const pageHost = window.location.hostname;
-
-    return (
+    const pageIsLocal =
       pageHost === "localhost" ||
       pageHost === "127.0.0.1" ||
       pageHost === "::1" ||
-      pageHost === ""
-    );
-  }
+      pageHost === "";
+    const endpointIsLocal =
+      endpointHost === "localhost" ||
+      endpointHost === "127.0.0.1" ||
+      endpointHost === "::1";
 
-  function getWebSocketOrigin(httpOrigin) {
-    return String(httpOrigin || "")
-      .replace(/^https:/, "wss:")
-      .replace(/^http:/, "ws:");
+    return pageIsLocal || !endpointIsLocal;
   }
 
   function send(message) {
@@ -144,17 +127,13 @@
 
     if (message.type === "room:state" && message.room?.players) {
       peers.clear();
-      roomClientCount = message.room.players.length;
 
       for (const peer of message.room.players) {
-        if (peer.id === clientId) continue;
         peers.set(peer.id, peer);
       }
 
       if (message.room.arena) {
         serverArena = message.room.arena;
-        serverMatch = message.room.match || message.room.arena.match || serverMatch;
-        syncOwnArenaSnapshot();
         syncArenaSnapshots();
       }
     }
@@ -162,12 +141,6 @@
     if (message.type === "peer:left") {
       peers.delete(message.clientId);
       remoteSnapshots.delete(message.clientId);
-      roomClientCount = Math.max(0, roomClientCount - 1);
-    }
-
-    if (message.type === "peer:joined" && message.peer?.id && message.peer.id !== clientId) {
-      peers.set(message.peer.id, message.peer);
-      roomClientCount = Math.max(roomClientCount, peers.size + 1);
     }
 
     if (message.type === "peer:snapshot" && message.from && message.snapshot) {
@@ -179,19 +152,8 @@
       });
     }
 
-    if (message.type === "server:snapshot" && message.snapshot) {
-      ownServerSnapshot = {
-        ...message.snapshot,
-        clientId,
-        receivedAt: Date.now(),
-        serverTime: message.serverTime || 0
-      };
-    }
-
     if ((message.type === "arena:state" || message.type === "arena") && message.arena) {
       serverArena = message.arena;
-      serverMatch = message.arena.match || serverMatch;
-      syncOwnArenaSnapshot();
       syncArenaSnapshots();
     }
 
@@ -212,20 +174,6 @@
         serverTime: serverArena.serverTime || 0
       });
     }
-  }
-
-  function syncOwnArenaSnapshot() {
-    if (!serverArena?.players || !clientId) return;
-
-    const player = serverArena.players.find((row) => row.id === clientId);
-    if (!player) return;
-
-    ownServerSnapshot = {
-      ...player,
-      clientId,
-      receivedAt: Date.now(),
-      serverTime: serverArena.serverTime || 0
-    };
   }
 
   window.GUNS_NET = {
@@ -356,59 +304,6 @@
       })
         .then((result) => result?.data || null);
     },
-    exchangeScore(nickValue, scoreValue) {
-      const cleanNick = String(nickValue || getStoredNick()).trim();
-
-      if (!cleanNick) {
-        return Promise.resolve(null);
-      }
-
-      return apiFetch("/users/exchange-score", {
-        method: "POST",
-        body: JSON.stringify({
-          nick: cleanNick,
-          score: Math.max(0, Math.floor(Number(scoreValue) || 0))
-        })
-      })
-        .then((result) => result?.data || null);
-    },
-    spendGunsCoin(nickValue, amountValue, meta = {}) {
-      const cleanNick = String(nickValue || getStoredNick()).trim();
-
-      if (!cleanNick) {
-        return Promise.resolve(null);
-      }
-
-      return apiFetch("/users/spend-gs", {
-        method: "POST",
-        body: JSON.stringify({
-          nick: cleanNick,
-          amount: Math.max(0, Math.floor(Number(amountValue) || 0)),
-          meta
-        })
-      })
-        .then((result) => result?.data || null);
-    },
-    purchasePilotWeapon(nickValue, weaponId, meta = {}) {
-      const cleanNick = String(nickValue || getStoredNick()).trim();
-      const id = String(weaponId || "").trim();
-
-      if (!cleanNick || !id) {
-        return Promise.resolve(null);
-      }
-
-      return apiFetch("/users/purchase-pilot-weapon", {
-        method: "POST",
-        body: JSON.stringify({
-          nick: cleanNick,
-          weaponId: id,
-          roomId: meta.roomId,
-          instanceId: meta.instanceId,
-          meta
-        })
-      })
-        .then((result) => result?.data || null);
-    },
     on(type, handler) {
       if (!listeners.has(type)) {
         listeners.set(type, new Set());
@@ -433,94 +328,19 @@
         clientTime: Date.now()
       });
     },
-    sendScoreEvent(event) {
-      return send({
-        type: "score:event",
-        event,
-        clientTime: Date.now()
-      });
-    },
-    sendCombatEvent(event) {
-      return send({
-        type: "combat:event",
-        event,
-        clientTime: Date.now()
-      });
-    },
-    sendShootEvent(event) {
-      return send({
-        type: "shoot:event",
-        event,
-        clientTime: Date.now()
-      });
-    },
-    sendMeleeEvent(event) {
-      return send({
-        type: "melee:event",
-        event,
-        clientTime: Date.now()
-      });
-    },
-    sendRespawnEvent(event) {
-      return send({
-        type: "respawn:event",
-        event,
-        clientTime: Date.now()
-      });
-    },
     getRemoteSnapshots(maxAge = 2000) {
       const now = Date.now();
 
       return Array.from(remoteSnapshots.values())
         .filter((snapshot) => now - snapshot.receivedAt <= maxAge);
     },
-    getOwnServerSnapshot(maxAge = 2000) {
-      if (!ownServerSnapshot) return null;
-      if (Date.now() - ownServerSnapshot.receivedAt > maxAge) return null;
-
-      return ownServerSnapshot;
-    },
     getArenaState(maxAge = 2000) {
       if (!serverArena) return null;
       if (Date.now() - (serverArena.serverTime || 0) > maxAge) return null;
       return serverArena;
     },
-    getServerBullets(maxAge = 1000) {
-      const arena = this.getArenaState(maxAge);
-
-      return Array.isArray(arena?.bullets) ? arena.bullets : [];
-    },
-    getServerCannons(maxAge = 2000) {
-      const arena = this.getArenaState(maxAge);
-
-      return Array.isArray(arena?.cannons) ? arena.cannons : [];
-    },
     getScoreboardRows() {
       return serverArena?.scoreboard || null;
-    },
-    getMatchState(maxAge = 3000) {
-      if (!serverMatch) return null;
-      if (Date.now() - (serverArena?.serverTime || 0) > maxAge) return null;
-      return serverMatch;
-    },
-    getDebugState() {
-      const remoteSnapshotCount = this.getRemoteSnapshots().length;
-
-      return {
-        mode: this.mode,
-        connected: this.connected,
-        clientId,
-        roomId,
-        nick,
-        roomClientCount,
-        peerCount: peers.size,
-        matchId: serverMatch?.id || "",
-        matchState: serverMatch?.state || "",
-        matchRemainingMs: serverMatch?.remainingMs ?? null,
-        ownServerState: ownServerSnapshot?.state || "",
-        serverCannons: this.getServerCannons().length,
-        remoteSnapshotCount
-      };
     },
     ping() {
       return send({
@@ -536,12 +356,9 @@
         clientId,
         roomId,
         nick,
-        roomClientCount,
         peerCount: peers.size,
         peers: Array.from(peers.values()),
         remoteSnapshots: this.getRemoteSnapshots(),
-        ownServerSnapshot: this.getOwnServerSnapshot(),
-        serverCannons: this.getServerCannons(),
         arena: this.getArenaState(),
         readyForServerAdapter: true
       };

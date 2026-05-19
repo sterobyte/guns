@@ -1,7 +1,10 @@
 (function () {
   const localConfigUrl = "./shared/game-config.json";
-  const apiBaseUrl = getHttpBaseUrl();
-  const apiUrl = apiBaseUrl ? `${apiBaseUrl}/api/config/current` : "";
+  const apiUrl =
+    window.GUNS_CONFIG?.multiplayer?.localHttpUrl &&
+    canUseLocalEndpoint(window.GUNS_CONFIG.multiplayer.localHttpUrl)
+      ? `${window.GUNS_CONFIG.multiplayer.localHttpUrl}/api/config/current`
+      : "";
 
   const apiConfig = loadConfig(apiUrl);
   const localConfig = loadConfig(localConfigUrl);
@@ -92,24 +95,27 @@
     return 0;
   }
 
-  function getHttpBaseUrl() {
-    const config = window.GUNS_CONFIG?.multiplayer || {};
+  function canUseLocalEndpoint(rawUrl) {
+    let endpoint = null;
 
-    if (isLocalPage()) {
-      return config.localHttpUrl || "";
+    try {
+      endpoint = new URL(rawUrl);
+    } catch {
+      return false;
     }
 
-    return config.publicHttpUrl || window.location.origin;
-  }
-
-  function isLocalPage() {
+    const endpointHost = endpoint.hostname;
     const pageHost = window.location.hostname;
-
-    return (
+    const pageIsLocal =
       pageHost === "localhost" ||
       pageHost === "127.0.0.1" ||
       pageHost === "::1" ||
-      pageHost === ""
-    );
+      pageHost === "";
+    const endpointIsLocal =
+      endpointHost === "localhost" ||
+      endpointHost === "127.0.0.1" ||
+      endpointHost === "::1";
+
+    return pageIsLocal || !endpointIsLocal;
   }
 })();

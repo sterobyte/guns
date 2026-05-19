@@ -286,50 +286,6 @@
           }
         }
       }
-    },
-    pilotWeaponTypes: {
-      pistol: {
-        id: "pistol",
-        kind: "pilot-weapon-type",
-        title: "pistol"
-      },
-      knife: {
-        id: "knife",
-        kind: "pilot-weapon-type",
-        title: "knife"
-      }
-    },
-    pilotWeapons: {
-      "basic-pistol": {
-        id: "basic-pistol",
-        typeId: "pistol",
-        kind: "pilot-weapon",
-        title: "pistol",
-        description: "starter sidearm",
-        version: 1,
-        economy: {
-          priceGs: 25
-        },
-        gameplay: {
-          fireRate: 0,
-          damage: 10,
-          magazine: 8
-        }
-      },
-      "basic-knife": {
-        id: "basic-knife",
-        typeId: "knife",
-        kind: "pilot-weapon",
-        title: "knife",
-        description: "close contact blade",
-        version: 1,
-        economy: {
-          priceGs: 10
-        },
-        gameplay: {
-          damage: 1
-        }
-      }
     }
   };
 
@@ -357,22 +313,11 @@
     return definitions.cannons[type] || definitions.cannons.autogun;
   }
 
-  function getPilotWeaponDefinition(type) {
-    return (
-      definitions.pilotWeapons?.[type] ||
-      definitions.pilotWeapons?.["basic-pistol"] ||
-      null
-    );
-  }
-
   window.GUNS_OBJECTS = {
     definitions,
     byPath,
     cannons: {
       get: getCannonDefinition
-    },
-    pilotWeapons: {
-      get: getPilotWeaponDefinition
     },
     refreshFromConfig(config) {
       definitions = config?.objects || fallbackDefinitions;

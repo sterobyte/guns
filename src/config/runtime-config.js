@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.16.93",
+    version: "0.14.0",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",
@@ -10,16 +10,14 @@ window.GUNS_CONFIG = {
 
   i18n: {
     defaultLanguage: "ru",
-    forcedLanguage: "ru",
     fallbackLanguage: "en",
     storageKey: "guns.language"
   },
 
   render: {
     healthBarOpacity: 0.5,
-    canvasMaxDevicePixelRatio: 1,
+    canvasMaxDevicePixelRatio: 2,
     arenaBackgroundCacheScale: 1,
-    cameraHeight: 1,
     cameraZoom: {
       min: 0.72,
       max: 1.22,
@@ -101,8 +99,8 @@ window.GUNS_CONFIG = {
 
   migration: {
     entitySplitTarget: {
-      pilots: "separate player/bot bodies and controller state from gun bodies",
-      guns: "equipment objects with type, hp, ammo, occupantPilotId",
+      pilots: "separate player/bot bodies and controller state from cannon bodies",
+      cannons: "equipment objects with type, hp, ammo, occupantPilotId",
       controllers: "human, bot, remote-client, admin"
     },
     multiplayerTarget: {
@@ -115,8 +113,6 @@ window.GUNS_CONFIG = {
     enabled: true,
     localHttpUrl: "http://127.0.0.1:3000",
     localWebSocketUrl: "ws://127.0.0.1:3000/ws",
-    publicHttpUrl: "https://api.guns.gs",
-    publicWebSocketUrl: "wss://api.guns.gs/ws",
     defaultRoomId: "main",
     maxRoomPlayers: 16,
     protocolVersion: 1,

@@ -37,12 +37,6 @@ export function buildGameConfig(root) {
   const cannons = readJsonDirectory(
     path.join(sharedRoot, "objects", "cannons")
   );
-  const pilotWeaponTypes = readJsonDirectory(
-    path.join(sharedRoot, "objects", "pilot-weapon-types")
-  );
-  const pilotWeapons = readJsonDirectory(
-    path.join(sharedRoot, "objects", "pilot-weapons")
-  );
   const roomObjects = readJsonDirectory(
     path.join(sharedRoot, "objects", "room-objects")
   );
@@ -56,8 +50,6 @@ export function buildGameConfig(root) {
     status: "published",
     objects: {
       cannons,
-      pilotWeaponTypes,
-      pilotWeapons,
       roomObjects
     },
     rooms,
@@ -76,8 +68,6 @@ export function validateGameConfig(config) {
   requireString(config.configVersion, "configVersion");
   requireObject(config.objects, "objects");
   requireObject(config.objects.cannons, "objects.cannons");
-  requireObject(config.objects.pilotWeaponTypes, "objects.pilotWeaponTypes");
-  requireObject(config.objects.pilotWeapons, "objects.pilotWeapons");
   requireObject(config.objects.roomObjects, "objects.roomObjects");
   requireObject(config.rooms, "rooms");
   requireObject(config.modes, "modes");
@@ -85,14 +75,6 @@ export function validateGameConfig(config) {
 
   for (const [id, cannon] of Object.entries(config.objects.cannons)) {
     validateCannon(id, cannon);
-  }
-
-  for (const [id, pilotWeaponType] of Object.entries(config.objects.pilotWeaponTypes)) {
-    validatePilotWeaponType(id, pilotWeaponType);
-  }
-
-  for (const [id, pilotWeapon] of Object.entries(config.objects.pilotWeapons)) {
-    validatePilotWeapon(id, pilotWeapon, config);
   }
 
   for (const [id, roomObject] of Object.entries(config.objects.roomObjects)) {
@@ -113,12 +95,6 @@ export function validateGameConfig(config) {
 function validateSettings(settings) {
   requireObject(settings, "settings");
   requireBoolean(settings.botNameBrackets, "settings.botNameBrackets");
-  if (settings.camera !== undefined) {
-    requireObject(settings.camera, "settings.camera");
-    if (settings.camera.height !== undefined) {
-      requirePositiveNumber(settings.camera.height, "settings.camera.height");
-    }
-  }
   requireObject(settings.economy, "settings.economy");
   requireObject(settings.economy.gunsCoin, "settings.economy.gunsCoin");
   requireNonNegativeNumber(
@@ -164,44 +140,6 @@ function validateCannon(id, cannon) {
   requireObject(cannon.render, `cannon.${id}.render`);
 }
 
-function validatePilotWeaponType(id, type) {
-  requireMatchingId(id, type, "pilotWeaponType");
-  requireString(type.kind, `pilotWeaponType.${id}.kind`);
-  requireString(type.title, `pilotWeaponType.${id}.title`);
-}
-
-function validatePilotWeapon(id, weapon, config) {
-  requireMatchingId(id, weapon, "pilotWeapon");
-  requireString(weapon.typeId, `pilotWeapon.${id}.typeId`);
-  requireString(weapon.kind, `pilotWeapon.${id}.kind`);
-  requireString(weapon.title, `pilotWeapon.${id}.title`);
-  requireString(weapon.description, `pilotWeapon.${id}.description`);
-  requireNumber(weapon.version, `pilotWeapon.${id}.version`);
-  requireObject(weapon.economy, `pilotWeapon.${id}.economy`);
-  requireNonNegativeNumber(weapon.economy.priceGs, `pilotWeapon.${id}.economy.priceGs`);
-  requireObject(weapon.gameplay, `pilotWeapon.${id}.gameplay`);
-  requirePositiveNumber(weapon.gameplay.damage, `pilotWeapon.${id}.gameplay.damage`);
-
-  if (weapon.gameplay.fireRate !== undefined) {
-    requireNonNegativeNumber(weapon.gameplay.fireRate, `pilotWeapon.${id}.gameplay.fireRate`);
-  }
-
-  if (weapon.gameplay.magazine !== undefined) {
-    requirePositiveNumber(weapon.gameplay.magazine, `pilotWeapon.${id}.gameplay.magazine`);
-  }
-
-  if (weapon.typeId === "pistol") {
-    requireNonNegativeNumber(weapon.gameplay.fireRate, `pilotWeapon.${id}.gameplay.fireRate`);
-    requirePositiveNumber(weapon.gameplay.magazine, `pilotWeapon.${id}.gameplay.magazine`);
-  }
-
-  if (!config.objects.pilotWeaponTypes[weapon.typeId]) {
-    throw new Error(
-      `pilotWeapon.${id}.typeId references missing pilot weapon type ${weapon.typeId}`
-    );
-  }
-}
-
 function validateMode(id, mode) {
   requireMatchingId(id, mode, "mode");
   requireString(mode.kind, `mode.${id}.kind`);
@@ -232,6 +170,9 @@ function validateRoom(id, room, config) {
   }
   requireBoolean(room.enabled, `room.${id}.enabled`);
   requireBoolean(room.published, `room.${id}.published`);
+  if (room.inherits !== undefined) {
+    requireString(room.inherits, `room.${id}.inherits`);
+  }
   requireString(room.modeId, `room.${id}.modeId`);
   requireObject(room.arena, `room.${id}.arena`);
   validateRoomArena(id, room.arena);
@@ -240,6 +181,10 @@ function validateRoom(id, room, config) {
 
   if (!config.modes[room.modeId]) {
     throw new Error(`room.${id}.modeId references missing mode ${room.modeId}`);
+  }
+
+  if (room.inherits && !config.rooms[room.inherits]) {
+    throw new Error(`room.${id}.inherits references missing room ${room.inherits}`);
   }
 
   if (!Array.isArray(room.allowedCannons)) {
@@ -292,13 +237,6 @@ function validateRoomPowerups(roomId, powerups) {
       powerups.initialCount,
       `room.${roomId}.powerups.initialCount`
     );
-  }
-
-  if (
-    powerups.enabled !== undefined &&
-    typeof powerups.enabled !== "boolean"
-  ) {
-    throw new Error(`room.${roomId}.powerups.enabled must be a boolean`);
   }
 }
 

@@ -1,15 +1,14 @@
 {
-  "id": "main",
-  "title": "Main Arena",
-  "description": "Classic public arena",
+  "id": "main-draft-1",
+  "title": "Main Arena Draft",
+  "description": "Draft classic arena",
   "enabled": true,
-  "published": true,
+  "published": false,
   "modeId": "classic-deathmatch",
   "arena": {
-    "shape": "rectangle",
+    "shape": "circle",
     "params": {
-      "width": 1720,
-      "height": 1720
+      "radius": 1000
     }
   },
   "limits": {

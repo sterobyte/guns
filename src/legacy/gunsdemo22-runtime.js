@@ -4,9 +4,6 @@ const blurCanvas = document.createElement("canvas");
 const blurCtx = blurCanvas.getContext("2d");
 
 const gridSize = 40;
-const USER_BASE_ROOM_ID = "user-cabinet";
-const USER_BASE_ROOM_KIND = "user-base";
-const LEGACY_USER_BASE_ROOM_KIND = "user-cabinet";
 
 const {
   DEFAULT_ROOM_RADIUS,
@@ -174,14 +171,14 @@ function getActiveRoomObjectInstances() {
     ? ACTIVE_ROOM.objects
     : [];
 
-  if (!isUserBaseRoom()) return objects;
+  if (!isUserCabinetRoom()) return objects;
 
   return objects.filter(item =>
     String(item.params?.role || "") !== "language-terminal"
   );
 }
 
-function getBaseLanguageTerminalInstances() {
+function getCabinetLanguageTerminalInstances() {
   return [
     {
       instanceId: "language-ru-terminal",
@@ -253,26 +250,8 @@ function getRoomObjectDefinition(objectId) {
   return window.GUNS_SHARED_CONFIG?.objects?.roomObjects?.[objectId] || null;
 }
 
-function isUserBaseRoom() {
-  return (
-    ACTIVE_ROOM?.id === USER_BASE_ROOM_ID ||
-    ACTIVE_ROOM?.roomKind === USER_BASE_ROOM_KIND ||
-    ACTIVE_ROOM?.roomKind === LEGACY_USER_BASE_ROOM_KIND
-  );
-}
-
-function isMarketRoom() {
-  return ACTIVE_ROOM?.roomKind === "market";
-}
-
-function canCreateCombatRoomEffects() {
-  if (ACTIVE_ROOM?.effects?.combat === true) return true;
-  if (ACTIVE_ROOM?.effects?.combat === false) return false;
-  return !isUserBaseRoom() && !isMarketRoom();
-}
-
-function isFixedCameraRoom() {
-  return isUserBaseRoom() || isMarketRoom();
+function isUserCabinetRoom() {
+  return ACTIVE_ROOM?.roomKind === "user-cabinet";
 }
 
 function getPlayerCallsign() {
@@ -291,12 +270,6 @@ function getPlayerGunsCoinBalance() {
   const coins = Number(window.GUNS_APP?.getWalletGunsCoin?.());
 
   return Number.isFinite(coins) ? Math.max(0, Math.floor(coins)) : 0;
-}
-
-function getPlayerExchangeScoreBalance() {
-  const score = Number(window.GUNS_APP?.getExchangeScore?.());
-
-  return Number.isFinite(score) ? Math.max(0, Math.floor(score)) : 0;
 }
 
 function isPilotDialogOpen() {
@@ -327,10 +300,6 @@ function applyActiveRoomToUnits() {
 }
 
 function enterRoom(roomId) {
-  if (roomId === USER_BASE_ROOM_ID && !isUserBaseRoom()) {
-    window.GUNS_APP?.bankExchangeScore?.(player.score);
-  }
-
   const entryState = window.GUNS_ROOM_ENTRY.createRoomEntryState(roomId);
 
   applyRoomEntryState(entryState);
@@ -342,7 +311,6 @@ function enterRoom(roomId) {
   window.GUNS_MODE_REGISTRY?.onRoomEnter?.(activeModeState, {
     room: ACTIVE_ROOM
   });
-  window.GUNS_APP?.syncBaseRoomPanel?.();
 
   return ACTIVE_ROOM;
 }
@@ -364,9 +332,8 @@ function applyRoomEntryState(entryState) {
 
 function applyRoomGameplayState() {
   applyActiveRoomToUnits();
-  player.score = getPlayerExchangeScoreBalance();
 
-  if (isUserBaseRoom()) {
+  if (isUserCabinetRoom()) {
     player.pilotImmunity = 0;
   }
 
@@ -392,12 +359,7 @@ function resetUnitRuntimeState(unit) {
   unit.pilotFlyState = "ground";
   unit.pilotFlyTime = 0;
   unit.pilotRadius = PILOT_RADIUS;
-  unit.pilotHp = 1;
   unit.pilotImmunity = unit.isPlayer ? PILOT_IMMUNITY_TIME : 0;
-  unit.activePilotWeaponId = "";
-  unit.pilotWeaponCooldown = 0;
-  unit.pilotFireCooldown = 0;
-  unit.pilotCarryIconState = null;
   unit.carriedAmmoValue = 0;
   unit.carriedRepairValue = 0;
   unit.wreckRepair = 0;
@@ -435,25 +397,6 @@ function resetActiveModeState() {
   syncLegacyRuntimeCollections();
 }
 
-function syncActiveModeStateFromServer() {
-  const match = window.GUNS_NET?.getMatchState?.();
-
-  if (!match || !activeModeState || match.roomId !== activeRoomId) return;
-
-  activeModeState.serverMatchId = match.id || "";
-  activeModeState.serverState = match.state || "";
-  activeModeState.startedAt = match.startedAt || activeModeState.startedAt;
-  activeModeState.durationMs = Math.max(0, Number(match.durationMs) || 0);
-  activeModeState.remainingMs = Math.max(0, Number(match.remainingMs) || 0);
-  activeModeState.ended = match.state === "finished";
-  activeModeState.endedAt = match.finishedAt || activeModeState.endedAt;
-  activeModeState.endReason = match.finishReason || activeModeState.endReason;
-  activeModeState.results = match.results || activeModeState.results || null;
-  activeModeState.winnerId = match.results?.winnerId || activeModeState.winnerId || "";
-  activeModeState.winnerNick = match.results?.winnerNick || activeModeState.winnerNick || "";
-  syncLegacyRuntimeCollections();
-}
-
 function resetRoomRuntimeState() {
   hintMessages.length = 0;
   scoreboardRows.clear();
@@ -469,7 +412,6 @@ function resetRoomRuntimeState() {
   roomRuntimeState.deathOverlays.length = 0;
   ammoSpawnTimer = 0;
   roomObjectActivationCooldown = 0;
-  pendingTeleportActivation = null;
   clearPlayerDeathPrompt();
 }
 
@@ -505,8 +447,6 @@ function invalidateRenderCaches() {
   lcdOverlayPatternColor = "";
   cannonTintedSpriteCache?.clear?.();
   cannonScaledSpriteCache?.clear?.();
-  deathUiSpriteCache?.clear?.();
-  modeBadgeSpriteCache?.clear?.();
 }
 
 applySkinPalette(SKIN);
@@ -524,17 +464,12 @@ const ARENA_BACKGROUND_CACHE_SCALE =
   1;
 const PERF_DEBUG =
   new URLSearchParams(window.location.search).has("fps");
-const MULTIPLAYER_DEBUG =
-  new URLSearchParams(window.location.search).has("mp");
 const PERF_DEBUG_LABEL =
   new URLSearchParams(window.location.search).get("fps") ||
   "1";
 const PERF_REPORT_RATE_MS = 250;
 const PERF_SMOOTHING = 0.18;
 const LIVE_CONFIG_REFRESH_MS = 5000;
-const SERVER_POSITION_CORRECTION_DEADZONE = 36;
-const SERVER_POSITION_CORRECTION_SNAP_DISTANCE = 220;
-const SERVER_POSITION_CORRECTION_BLEND = 0.35;
 let liveConfigVersion =
   window.GUNS_SHARED_CONFIG?.configVersion ||
   "";
@@ -551,7 +486,10 @@ let roomRuntimeState = createRoomRuntimeState();
 const hintMessages = [];
 const scoreboardRows = new Map();
 const remoteRenderStates = new Map();
-const playerDeathPrompt = window.GUNS_DEATH_FLOW.createPlayerDeathPrompt();
+const playerDeathPrompt = {
+  active: false,
+  buttons: []
+};
 let arenaBackgroundCache = null;
 const cabinetBackdropImages = [];
 const CABINET_BACKDROP_INTERVAL_MS = 30000;
@@ -590,7 +528,7 @@ const WRECK_HP = 500;
 const HP_REGEN_TIME = 60;
 const HP_REGEN_PER_SECOND = 100 / HP_REGEN_TIME;
 
-const PILOT_RADIUS = 11;
+const PILOT_RADIUS = 7;
 const PILOT_STOP_RADIUS = 18;
 const PILOT_IMMUNITY_TIME = 5;
 
@@ -599,18 +537,6 @@ const PILOT_EJECT_DISTANCE = 510;
 const PILOT_EJECT_PEAK_RADIUS = 27;
 const PILOT_FLY_PEAK_RADIUS = 17;
 const PILOT_FLY_TRANSITION_TIME = 0.75;
-const PILOT_WEAPON_CONTACT_COOLDOWN = 0.65;
-const PILOT_CARRY_ICON_ANIMATION_MS = 520;
-const PILOT_WEAPON_SLOTS = {
-  Digit1: "knife",
-  Numpad1: "knife",
-  Digit2: "pistol",
-  Numpad2: "pistol"
-};
-const PILOT_WEAPON_ICON_SOURCES = {
-  knife: "./assets/pilot-weapons/guns-knife.png",
-  pistol: "./assets/pilot-weapons/guns-pistol.png"
-};
 const GRAVE_NAME_TRIGGER_RADIUS = 32;
 const GRAVE_NAME_SHOW_TIME = 1;
 
@@ -630,128 +556,10 @@ function getCannonDefinitionNumber(type, path, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function getPilotWeaponDefinition(type = "basic-pistol") {
-  return window.GUNS_OBJECTS?.pilotWeapons?.get?.(type) || null;
-}
-
-function getPilotWeaponNumber(type, path, fallback) {
-  const definition = getPilotWeaponDefinition(type);
-  const value = window.GUNS_OBJECTS?.byPath?.(
-    definition,
-    path,
-    fallback
-  );
-  const number = Number(value);
-
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function getDefaultPilotWeaponId() {
-  return getPilotWeaponDefinition("basic-knife")
-    ? "basic-knife"
-    : "basic-pistol";
-}
-
-function playerHasPilotWeapon(weaponId) {
-  return window.GUNS_APP?.hasPilotWeapon?.(weaponId) === true;
-}
-
-function getOwnedPilotWeaponByType(typeId) {
-  const type = String(typeId || "").trim();
-  const owned = window.GUNS_APP?.getPilotWeapons?.() || [];
-
-  return owned.find(weaponId => {
-    return getPilotWeaponDefinition(weaponId)?.typeId === type;
-  }) || "";
-}
-
-function isOwnedPilotWeapon(weaponId) {
-  const id = String(weaponId || "").trim();
-
-  return !!id && playerHasPilotWeapon(id);
-}
-
-function getFallbackPilotWeaponId() {
-  return (
-    getOwnedPilotWeaponByType("pistol") ||
-    getOwnedPilotWeaponByType("knife") ||
-    ""
-  );
-}
-
-function getActivePilotWeaponId(unit) {
-  if (unit?.isPlayer) {
-    if (isOwnedPilotWeapon(unit.activePilotWeaponId)) {
-      return unit.activePilotWeaponId;
-    }
-
-    return getFallbackPilotWeaponId();
-  }
-
-  return unit?.activePilotWeaponId || "";
-}
-
-function selectPlayerPilotWeaponByType(typeId) {
-  const weaponId = getOwnedPilotWeaponByType(typeId);
-
-  if (!weaponId) return false;
-
-  player.activePilotWeaponId = weaponId;
-  return true;
-}
-
-function hasCarriedPowerup(unit) {
-  return !!getCarriedPowerup(unit);
-}
-
-function canUsePilotWeapon(unit) {
-  return !hasCarriedPowerup(unit);
-}
-
-function getPilotCarrySlot(unit) {
-  const carried = getCarriedPowerup(unit);
-
-  if (carried) {
-    return {
-      kind: "powerup",
-      type: carried.type,
-      value: carried.value
-    };
-  }
-
-  const weaponId = getActivePilotWeaponId(unit);
-  const weapon = getPilotWeaponDefinition(weaponId);
-
-  if (!weapon) return null;
-
-  return {
-    kind: "weapon",
-    weaponId,
-    type: weapon.typeId,
-    title: weapon.title
-  };
-}
-
-function getPilotCarrySlotKey(slot) {
-  if (!slot) return "empty";
-  if (slot.kind === "weapon") return `weapon:${slot.weaponId}`;
-
-  return `powerup:${slot.type}:${Math.floor(Number(slot.value) || 0)}`;
-}
-
-function easeOutBack(t) {
-  const c1 = 1.70158;
-  const c3 = c1 + 1;
-
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-}
-
 const cannonRenderMetrics = new Map();
 const cannonSpriteCache = new Map();
 const cannonTintedSpriteCache = new Map();
 const cannonScaledSpriteCache = new Map();
-const deathUiSpriteCache = new Map();
-const modeBadgeSpriteCache = new Map();
 
 function getCannonRenderMetrics(type = "autogun") {
   const key = type || "autogun";
@@ -849,10 +657,8 @@ const keys = {
 };
 
 let paused = false;
-let baseCursorFollowEnabled = true;
 let cameraUserZoom = CAMERA_ZOOM_MIN;
 let roomObjectActivationCooldown = 0;
-let pendingTeleportActivation = null;
 
 const camera = {
   x: 0,
@@ -879,42 +685,24 @@ function isTutorialMode() {
 }
 
 function getCameraBaseScale() {
-  const cameraHeight = getCameraHeight();
-
-  if (isFixedCameraRoom()) {
+  if (isUserCabinetRoom()) {
     return Math.min(
       window.innerWidth / Math.max(1, getRoomWidth() + 96),
       window.innerHeight / Math.max(1, getRoomHeight() + 96)
-    ) / cameraHeight;
+    );
   }
 
-  return CAMERA_BASE_SCALE * cameraUserZoom / cameraHeight;
-}
-
-function getCameraHeight() {
-  const value = Number(
-    window.GUNS_SHARED_CONFIG?.settings?.camera?.height ??
-    window.GUNS_CONFIG?.render?.cameraHeight ??
-    1
-  );
-
-  return Number.isFinite(value) && value > 0
-    ? clamp(value, 0.5, 3)
-    : 1;
+  return CAMERA_BASE_SCALE * cameraUserZoom;
 }
 
 function adjustCameraZoom(direction) {
-  if (isFixedCameraRoom()) return;
+  if (isUserCabinetRoom()) return;
 
   cameraUserZoom = clamp(
     cameraUserZoom + direction * CAMERA_ZOOM_STEP,
     CAMERA_ZOOM_MIN,
     CAMERA_ZOOM_MAX
   );
-}
-
-function canUseCursorFollow() {
-  return !isUserBaseRoom() || baseCursorFollowEnabled;
 }
 
 function randomPilotOffset() {
@@ -1046,10 +834,6 @@ function makeUnit(
 
     pilotHp: 1,
     pilotImmunity: PILOT_IMMUNITY_TIME,
-    activePilotWeaponId: "",
-    pilotWeaponCooldown: 0,
-    pilotFireCooldown: 0,
-    pilotCarryIconState: null,
 
     pilotKnockback: null,
     pilotEject: null,
@@ -1370,7 +1154,6 @@ function syncDomainEntities() {
     }
 
     if (unit.cannonEntityId) {
-      applyServerCannonStateToUnit(unit);
       cannonUnitById.set(unit.cannonEntityId, unit);
 
       cannons.push({
@@ -1388,131 +1171,14 @@ function syncDomainEntities() {
         broken: unit.wreckRepair > 0,
         destroyed: !!unit.cannonDestroyed,
         occupantPilotId:
-          getServerCannonOccupant(unit) ||
-          occupantByCannonId.get(unit.cannonEntityId) ||
-          null,
+          occupantByCannonId.get(unit.cannonEntityId) || null,
         free:
           unit.state === "pilot" &&
           !unit.cannonDestroyed &&
           unit.wreckRepair <= 0 &&
-          unit.hp > 0 &&
-          !isServerCannonUnavailable(unit) &&
-          !isCannonOccupiedByRemote(unit)
+          unit.hp > 0
       });
     }
-  }
-}
-
-function getServerCannonState(unit) {
-  if (!unit?.cannonEntityId) return null;
-
-  const serverCannons = window.GUNS_NET?.getServerCannons?.() || [];
-
-  return serverCannons.find(cannon => cannon.id === unit.cannonEntityId) || null;
-}
-
-function getServerCannonOccupant(unit) {
-  const serverCannon = getServerCannonState(unit);
-
-  return serverCannon?.occupiedBy || "";
-}
-
-function isCannonOccupiedByRemote(unit) {
-  const occupiedBy = getServerCannonOccupant(unit);
-  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
-
-  return Boolean(occupiedBy && occupiedBy !== ownClientId);
-}
-
-function isServerCannonUnavailable(unit) {
-  const serverCannon = getServerCannonState(unit);
-
-  if (!serverCannon) return false;
-
-  return Boolean(serverCannon.broken || serverCannon.destroyed) ||
-    Number(serverCannon.hp) <= 0;
-}
-
-function applyServerCannonStateToUnit(unit) {
-  const serverCannon = getServerCannonState(unit);
-
-  if (!serverCannon) return;
-
-  const maxHp = Number(serverCannon.maxHp);
-  const hp = Number(serverCannon.hp);
-  const maxAmmo = Number(serverCannon.maxAmmo);
-  const ammo = Number(serverCannon.ammo);
-  const serverX = Number(serverCannon.x);
-  const serverY = Number(serverCannon.y);
-  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
-  const occupiedBy = serverCannon.occupiedBy || "";
-  const localPlayerOwnsActiveCannon =
-    unit.isPlayer &&
-    unit.state === "alive" &&
-    ownClientId &&
-    occupiedBy === ownClientId;
-  const localBotOwnsCannon =
-    !unit.isPlayer &&
-    !unit.isCannonOnly;
-
-  if (localBotOwnsCannon) {
-    return;
-  }
-
-  if (
-    !localPlayerOwnsActiveCannon &&
-    Number.isFinite(serverX) &&
-    Number.isFinite(serverY)
-  ) {
-    unit.x = serverX;
-    unit.y = serverY;
-  }
-
-  if (Number.isFinite(maxHp) && maxHp > 0) {
-    unit.maxHp = maxHp;
-  }
-
-  if (Number.isFinite(hp)) {
-    unit.hp = clamp(hp, 0, Math.max(1, unit.maxHp || maxHp || 1));
-  }
-
-  if (Number.isFinite(maxAmmo) && maxAmmo >= 0) {
-    unit.maxAmmo = Math.floor(maxAmmo);
-  }
-
-  if (Number.isFinite(ammo)) {
-    unit.ammo = clamp(
-      Math.floor(ammo),
-      0,
-      Math.max(0, Math.floor(unit.maxAmmo || maxAmmo || 0))
-    );
-  }
-
-  if (serverCannon.destroyed) {
-    unit.cannonDestroyed = true;
-    unit.wreckRepair = 0;
-    unit.wreckHp = 0;
-    unit.hp = 0;
-    return;
-  }
-
-  if (serverCannon.broken || unit.hp <= 0) {
-    unit.cannonDestroyed = false;
-    unit.wreckRepair = clamp(
-      Number(serverCannon.repairRemainingMs) / 1000,
-      0,
-      WRECK_REPAIR_TIME
-    ) || WRECK_REPAIR_TIME;
-    unit.wreckHp = Math.max(unit.wreckHp || 0, WRECK_HP);
-    unit.hp = 0;
-    return;
-  }
-
-  unit.cannonDestroyed = false;
-
-  if (unit.wreckRepair > 0) {
-    unit.wreckRepair = 0;
-    unit.wreckHp = 0;
   }
 }
 
@@ -1684,25 +1350,14 @@ let ammoSpawnTimer = 0;
 let lastTime = performance.now();
 let lastNetworkSnapshotAt = 0;
 let lastDomainSyncAt = 0;
-let lastExitedCannonSnapshot = null;
-let networkCombatEventsInitialized = false;
-let networkRoomConfigEventsInitialized = false;
-let networkInventoryEventsInitialized = false;
-let networkServerSnapshotEventsInitialized = false;
-let lastAppliedServerSnapshotAt = 0;
 let perfLastFrameAt = performance.now();
 let perfLastReportAt = performance.now();
 let perfLastFps = 0;
 let perfFrameMs = 1000 / 60;
-let arenaGraphicsPrewarmed = false;
+let cannonSpritesPrewarmed = false;
 const DOMAIN_SYNC_RATE_MS = 250;
 
 const collisionLocks = new Set();
-
-setupNetworkCombatEvents();
-setupNetworkRoomConfigEvents();
-setupNetworkInventoryEvents();
-setupNetworkServerSnapshotEvents();
 
 function resize() {
   const rawDpr = window.devicePixelRatio || 1;
@@ -1782,32 +1437,10 @@ function getSpriteImage(src) {
   }
 
   const image = new Image();
-  image.decoding = "async";
   image.src = src;
   cannonSpriteCache.set(src, image);
 
   return image;
-}
-
-function isSpriteImageReady(image) {
-  return Boolean(
-    image?.complete &&
-    (image.naturalWidth || image.width) &&
-    (image.naturalHeight || image.height)
-  );
-}
-
-function watchSpriteImagePrewarm(image) {
-  if (!image || image.gunsPrewarmWatch) return;
-
-  image.gunsPrewarmWatch = true;
-  image.addEventListener(
-    "load",
-    () => {
-      arenaGraphicsPrewarmed = prewarmArenaGraphics();
-    },
-    { once: true }
-  );
 }
 
 function preloadCannonSprites() {
@@ -1816,18 +1449,13 @@ function preloadCannonSprites() {
   for (const definition of Object.values(definitions)) {
     const sprites = definition?.render?.sprites || {};
 
-    watchSpriteImagePrewarm(getSpriteImage(sprites.body?.src));
-    watchSpriteImagePrewarm(getSpriteImage(sprites.turret?.src));
-  }
-
-  for (const src of Object.values(PILOT_WEAPON_ICON_SOURCES)) {
-    watchSpriteImagePrewarm(getSpriteImage(src));
+    getSpriteImage(sprites.body?.src);
+    getSpriteImage(sprites.turret?.src);
   }
 }
 
-function prewarmArenaGraphics() {
+function prewarmCannonSpritePalettes() {
   const definitions = window.GUNS_OBJECTS?.definitions?.cannons || {};
-  let allReady = true;
 
   for (const definition of Object.values(definitions)) {
     const render = definition?.render || {};
@@ -1835,33 +1463,17 @@ function prewarmArenaGraphics() {
     if (render.renderer !== "sprite-cannon-canvas") continue;
 
     const sprites = render.sprites || {};
-    const bodyConfig = sprites.body || {};
-    const turretConfig = sprites.turret || {};
     const body = getSpriteImage(sprites.body?.src);
     const turret = getSpriteImage(sprites.turret?.src);
-    const bodyReady = isSpriteImageReady(body);
-    const turretReady = isSpriteImageReady(turret);
 
-    if (!bodyReady || !turretReady) {
-      watchSpriteImagePrewarm(body);
-      watchSpriteImagePrewarm(turret);
-      allReady = false;
-      continue;
+    if (body?.complete) {
+      getPaletteSprite(body, sprites.body?.src);
     }
 
-    const bodySprite = getPaletteSprite(body, sprites.body?.src);
-    const turretSprite = getPaletteSprite(turret, sprites.turret?.src);
-    const bodyRadiusPx = Number(bodyConfig.radiusPx) || 207;
-    const radiusOuter = Number(definition?.physics?.radiusOuter) || 34;
-    const spriteScale = radiusOuter / bodyRadiusPx;
-
-    getScaledSprite(bodySprite, sprites.body?.src || "", bodyConfig, spriteScale);
-    getScaledSprite(turretSprite, sprites.turret?.src || "", turretConfig, spriteScale);
+    if (turret?.complete) {
+      getPaletteSprite(turret, sprites.turret?.src);
+    }
   }
-
-  prewarmDeathUiGraphics();
-
-  return allReady;
 }
 
 preloadCannonSprites();
@@ -2090,7 +1702,7 @@ function screenToWorld(x, y) {
 }
 
 function clampCamera() {
-  if (isFixedCameraRoom()) {
+  if (isUserCabinetRoom()) {
     camera.x = 0;
     camera.y = 0;
     return;
@@ -2199,69 +1811,17 @@ function forEachEnemy(unit, callback) {
   }
 }
 
-function addScore(unit, value, reason = "", context = {}) {
+function addScore(unit, value, reason = "") {
   if (!unit) return;
   if (unit.isCannonOnly) return;
   const scoreValue = Number(value) || 0;
 
-  if (
-    unit.isPlayer &&
-    isServerCombatAuthoritative() &&
-    isCombatScoreReason(reason) &&
-    !context.localOnly
-  ) {
-    return;
-  }
-
   unit.score += scoreValue;
-  if (unit.isPlayer) {
-    window.GUNS_APP?.addExchangeScore?.(scoreValue);
-    const sendServerPointEvent = isCombatScoreReason(reason)
-      ? window.GUNS_NET?.sendCombatEvent
-      : window.GUNS_NET?.sendScoreEvent;
-
-    sendServerPointEvent?.({
-      value: scoreValue,
-      reason,
-      total: unit.score,
-      ...context
-    });
-  }
   window.GUNS_MODE_REGISTRY?.onScore?.(activeModeState, {
     unit,
     value: scoreValue,
     reason
   });
-}
-
-function isServerCombatAuthoritative() {
-  return window.GUNS_NET?.connected === true;
-}
-
-function isCombatScoreReason(reason) {
-  return (
-    reason === "bullet-hit" ||
-    reason === "pilot-kill" ||
-    reason === "cannon-break" ||
-    reason === "pilot-death"
-  );
-}
-
-function getCombatTargetContext(unit, targetKind = "unit") {
-  if (!unit) return {};
-
-  return {
-    targetId:
-      unit.pilotEntityId ||
-      unit.cannonEntityId ||
-      unit.id ||
-      "",
-    targetKind,
-    localOnly:
-      !unit.isPlayer &&
-      !unit.isCannonOnly &&
-      targetKind === "pilot"
-  };
 }
 
 function updatePassiveScore(unit, dt) {
@@ -2309,7 +1869,7 @@ function isPilotAirborne(unit) {
 }
 
 function isDeathBlurActive() {
-  return window.GUNS_DEATH_FLOW.isDeathPromptActive(playerDeathPrompt);
+  return playerDeathPrompt.active;
 }
 
 function getPilotFlyAmount(unit) {
@@ -2331,7 +1891,7 @@ function getPilotFlyAmount(unit) {
 
 function startPlayerFlyToggle() {
   if (isDeathBlurActive()) return;
-  if (isUserBaseRoom()) return;
+  if (isUserCabinetRoom()) return;
   if (player.state !== "pilot") return;
   if (player.pilotEject) return;
 
@@ -2356,40 +1916,59 @@ function startPlayerFlyToggle() {
 }
 
 function clearPlayerDeathPrompt() {
-  window.GUNS_DEATH_FLOW.clearPlayerDeathPrompt(
-    playerDeathPrompt,
-    roomRuntimeState
-  );
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  roomRuntimeState.deathOverlays.length = 0;
 }
 
 function startPlayerDeathPrompt() {
-  window.GUNS_DEATH_FLOW.startPlayerDeathPrompt({
-    prompt: playerDeathPrompt,
-    roomRuntimeState,
-    player,
-    mouse,
-    pilotImmunityTime: PILOT_IMMUNITY_TIME
-  });
+  clearPlayerDeathPrompt();
+  playerDeathPrompt.active = true;
+  mouse.down = false;
+
+  player.state = "pilot";
+  player.pilotFlyState = "rising";
+  player.pilotFlyTime = 0;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotImmunity = Math.max(
+    player.pilotImmunity,
+    PILOT_IMMUNITY_TIME
+  );
 }
 
 function continuePlayerAfterDeath() {
-  window.GUNS_DEATH_FLOW.continuePlayerAfterDeath({
-    prompt: playerDeathPrompt,
-    player,
-    mouse,
-    pilotImmunityTime: PILOT_IMMUNITY_TIME
-  });
-  sendNetworkRespawnEvent();
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  mouse.down = false;
+
+  player.pilotFlyState = "falling";
+  player.pilotFlyTime = 0;
+  player.pilotKnockback = null;
+  player.pilotEject = null;
+  player.pilotImmunity = PILOT_IMMUNITY_TIME;
 }
 
 function exitPlayerAfterDeath() {
-  window.GUNS_DEATH_FLOW.exitPlayerAfterDeath({
-    prompt: playerDeathPrompt,
-    player,
-    mouse,
-    pilotRadius: PILOT_RADIUS,
-    pilotImmunityTime: PILOT_IMMUNITY_TIME
-  });
+  playerDeathPrompt.active = false;
+  playerDeathPrompt.buttons = [];
+  mouse.down = false;
+
+  player.pilotFlyState = "ground";
+  player.pilotFlyTime = 0;
+  player.pilotRadius = PILOT_RADIUS;
+  player.pilotImmunity = PILOT_IMMUNITY_TIME;
+
+  if (window.GUNS_APP?.stop) {
+    window.GUNS_APP.stop();
+    return;
+  }
+
+  if (window.GUNS_APP) {
+    window.GUNS_APP.started = false;
+  }
+  window.GUNS_NET?.disconnect?.();
+  document.getElementById("start-screen")?.classList.remove("hidden");
 }
 
 function updatePilotFly(unit, dt) {
@@ -2461,16 +2040,15 @@ function getNearestEnemy(unit) {
 }
 
 function fireBullet(owner, angle) {
-  if (owner.state !== "alive") return [];
-  if (owner.ammo <= 0) return [];
+  if (owner.state !== "alive") return;
+  if (owner.ammo <= 0) return;
 
   const perpX = Math.cos(angle + Math.PI / 2);
   const perpY = Math.sin(angle + Math.PI / 2);
   const bulletColor = getBulletColor(owner);
-  const bullets = [];
 
   const makeBullet = (offset) => {
-    const bullet = {
+    roomRuntimeState.bullets.push({
       x:
         owner.x +
         Math.cos(angle) * 85 +
@@ -2492,10 +2070,7 @@ function fireBullet(owner, angle) {
 
       damage:
         owner.bulletDamage * owner.damageMultiplier
-    };
-
-    roomRuntimeState.bullets.push(bullet);
-    bullets.push(bullet);
+    });
   };
 
   const definition = getCannonDefinition(owner.gunType);
@@ -2514,68 +2089,10 @@ function fireBullet(owner, angle) {
   if (isTutorialMode() && owner === player) {
     tutorial.shotCount++;
   }
-
-  return bullets;
-}
-
-function firePilotPistol(owner, weaponId, angle) {
-  const weapon = getPilotWeaponDefinition(weaponId);
-  const fireRate = getPilotWeaponNumber(weaponId, "gameplay.fireRate", 0);
-
-  if (owner.state !== "pilot") return false;
-  if (isPilotAirborne(owner)) return false;
-  if (!canUsePilotWeapon(owner)) return false;
-  if (weapon?.typeId !== "pistol") return false;
-  if (fireRate <= 0) return false;
-
-  const bullet = {
-    x: owner.pilotX + Math.cos(angle) * (owner.pilotRadius + 10),
-    y: owner.pilotY + Math.sin(angle) * (owner.pilotRadius + 10),
-    vx: Math.cos(angle) * BULLET_SPEED * 0.72,
-    vy: Math.sin(angle) * BULLET_SPEED * 0.72,
-    radius: 3,
-    life: 1.05,
-    owner,
-    color: owner.color,
-    damage: getPilotWeaponNumber(weaponId, "gameplay.damage", 0)
-  };
-
-  roomRuntimeState.bullets.push(bullet);
-
-  return bullet;
 }
 
 function getBulletColor(owner) {
   return owner.color;
-}
-
-function getPowerupOptions() {
-  return {
-    roomRuntimeState,
-    room: ACTIVE_ROOM,
-    units,
-    ammoPackValue: AMMO_PACK_VALUE,
-    repairPackHealRatio: REPAIR_PACK_HEAL_RATIO,
-    packFadeTime: AMMO_PACK_FADE_TIME,
-    packLifeTime: AMMO_PACK_LIFE_TIME,
-    wreckRepairTime: WRECK_REPAIR_TIME,
-    spawnTimer: ammoSpawnTimer,
-    randomPointInRoom,
-    clampPointToRoom,
-    getMaxAmmo,
-    addScore,
-    getActiveModeRule,
-    isUnitHidden,
-    isPilotAirborne,
-    isUserBaseRoom,
-    distance,
-    clamp,
-    onAmmoPicked(unit) {
-      if (isTutorialMode() && unit === player) {
-        tutorial.ammoPicked = true;
-      }
-    }
-  };
 }
 
 function addPowerup(x, y, type, value) {
@@ -2590,11 +2107,11 @@ function addPowerup(x, y, type, value) {
 }
 
 function addAmmoPack(x, y, value = AMMO_PACK_VALUE) {
-  window.GUNS_POWERUPS.addAmmoPack(getPowerupOptions(), x, y, value);
+  addPowerup(x, y, POWERUP_AMMO, value);
 }
 
 function addRepairPack(x, y, value = REPAIR_PACK_HEAL_RATIO) {
-  window.GUNS_POWERUPS.addRepairPack(getPowerupOptions(), x, y, value);
+  addPowerup(x, y, POWERUP_REPAIR, value);
 }
 
 function spawnAmmoPack() {
@@ -2608,7 +2125,11 @@ function spawnRepairPack() {
 }
 
 function spawnPowerup() {
-  window.GUNS_POWERUPS.spawnPowerup(getPowerupOptions());
+  if (Math.random() < 0.28) {
+    spawnRepairPack();
+  } else {
+    spawnAmmoPack();
+  }
 }
 
 function getInitialRoomPowerupCount() {
@@ -2618,7 +2139,9 @@ function getInitialRoomPowerupCount() {
 }
 
 function spawnInitialRoomPowerups() {
-  window.GUNS_POWERUPS.spawnInitialRoomPowerups(getPowerupOptions());
+  for (let i = 0; i < getInitialRoomPowerupCount(); i++) {
+    spawnPowerup();
+  }
 }
 
 function dropCarriedAmmo(unit) {
@@ -2640,19 +2163,41 @@ function dropCarriedRepair(unit) {
 }
 
 function dropCarriedPowerups(unit) {
-  window.GUNS_POWERUPS.dropCarriedPowerups(getPowerupOptions(), unit);
+  dropCarriedAmmo(unit);
+  dropCarriedRepair(unit);
 }
 
 function getCarriedPowerup(unit) {
-  return window.GUNS_POWERUPS.getCarriedPowerup(unit);
+  if (unit.carriedAmmoValue > 0) {
+    return {
+      type: POWERUP_AMMO,
+      value: unit.carriedAmmoValue
+    };
+  }
+
+  if (unit.carriedRepairValue > 0) {
+    return {
+      type: POWERUP_REPAIR,
+      value: unit.carriedRepairValue
+    };
+  }
+
+  return null;
 }
 
 function clearCarriedPowerups(unit) {
-  window.GUNS_POWERUPS.clearCarriedPowerups(unit);
+  unit.carriedAmmoValue = 0;
+  unit.carriedRepairValue = 0;
 }
 
 function setCarriedPowerup(unit, type, value) {
-  window.GUNS_POWERUPS.setCarriedPowerup(unit, type, value);
+  clearCarriedPowerups(unit);
+
+  if (type === POWERUP_AMMO) {
+    unit.carriedAmmoValue = value;
+  } else if (type === POWERUP_REPAIR) {
+    unit.carriedRepairValue = value;
+  }
 }
 
 function getPowerupSwapDropPoint(unit, pack) {
@@ -2676,8 +2221,6 @@ function getPowerupSwapDropPoint(unit, pack) {
 }
 
 function addExplosion(x, y) {
-  if (!canCreateCombatRoomEffects()) return;
-
   roomRuntimeState.explosions.push({
     x,
     y,
@@ -2687,8 +2230,6 @@ function addExplosion(x, y) {
 }
 
 function addSmoke(x, y) {
-  if (!canCreateCombatRoomEffects()) return;
-
   roomRuntimeState.smokePuffs.push({
     x: x + (Math.random() - 0.5) * 14,
     y: y - 28 + (Math.random() - 0.5) * 8,
@@ -2701,8 +2242,6 @@ function addSmoke(x, y) {
 }
 
 function addRearSmoke(unit) {
-  if (!canCreateCombatRoomEffects()) return;
-
   const angle = unit.moveAngle + Math.PI;
 
   roomRuntimeState.rearSmokePuffs.push({
@@ -2722,8 +2261,6 @@ function addRearSmoke(unit) {
 }
 
 function addTrail(x, y, radius, color, life = 0.34) {
-  if (!canCreateCombatRoomEffects()) return;
-
   roomRuntimeState.trails.push({
     x,
     y,
@@ -2737,7 +2274,6 @@ function addTrail(x, y, radius, color, life = 0.34) {
 function updateMovementTrails() {
   for (const unit of units) {
     if (unit.isCannonOnly) continue;
-    if (isUnitHidden(unit)) continue;
 
     const cannonMoving =
       Math.hypot(unit.lastMoveVx || 0, unit.lastMoveVy || 0) > 18;
@@ -2793,8 +2329,6 @@ function updateMovementTrails() {
 }
 
 function addStain(x, y, color, pilotName) {
-  if (!canCreateCombatRoomEffects()) return;
-
   roomRuntimeState.stains.push({
     x,
     y,
@@ -2808,8 +2342,6 @@ function addStain(x, y, color, pilotName) {
 }
 
 function addDeathOverlay() {
-  if (!canCreateCombatRoomEffects()) return;
-
   roomRuntimeState.deathOverlays.push({
     time: 0,
     life: 3
@@ -3066,7 +2598,7 @@ function destroyCannonCompletely(unit, attacker) {
   if (attacker && attacker !== unit) {
     attacker.frags++;
     attacker.cannonBreaks++;
-    addScore(attacker, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(unit, "cannon"));
+    addScore(attacker, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
     window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
       unit,
       attacker
@@ -3087,150 +2619,36 @@ function killPilot(victim, killer) {
 
   victim.pilotDeaths++;
 
-  if (victim.isPlayer && !isServerCombatAuthoritative()) {
-    window.GUNS_NET?.sendCombatEvent?.({
-      value: 0,
-      reason: "pilot-death",
-      total: victim.score,
-      ...getCombatTargetContext(victim, "pilot")
-    });
-  }
-
   if (killer && killer !== victim) {
     killer.frags++;
     killer.pilotKills++;
-    addScore(killer, getActiveModeRule("pilotKillScore", 100), "pilot-kill", getCombatTargetContext(victim, "pilot"));
+    addScore(killer, getActiveModeRule("pilotKillScore", 100), "pilot-kill");
     window.GUNS_MODE_REGISTRY?.onPilotKill?.(activeModeState, {
       victim,
       killer
     });
   }
 
-  window.GUNS_DEATH_FLOW.applyPilotDeathState({
-    victim,
-    pilotRadius: PILOT_RADIUS,
-    pilotImmunityTime: PILOT_IMMUNITY_TIME,
-    clampPilotToRoom
-  });
+  victim.pilotHp = 1;
+  victim.pilotImmunity = PILOT_IMMUNITY_TIME;
+
+  victim.pilotKnockback = null;
+  victim.pilotEject = null;
+
+  victim.pilotRadius = PILOT_RADIUS;
+  victim.pilotFlyState = "ground";
+  victim.pilotFlyTime = 0;
+  victim.carriedAmmoValue = 0;
+  victim.carriedRepairValue = 0;
+  victim.pilotLastMoveVx = 0;
+  victim.pilotLastMoveVy = 0;
+
+  clampPilotToRoom(victim);
+
+  victim.state = "pilot";
 
   if (victim.isPlayer) {
     startPlayerDeathPrompt();
-  }
-}
-
-function updatePilotWeaponCollisions() {
-  for (let i = 0; i < units.length; i++) {
-    for (let j = i + 1; j < units.length; j++) {
-      const a = units[i];
-      const b = units[j];
-
-      if (!canPilotWeaponContact(a, b)) continue;
-
-      const dx = b.pilotX - a.pilotX;
-      const dy = b.pilotY - a.pilotY;
-      const d = Math.hypot(dx, dy) || 1;
-
-      if (d > a.pilotRadius + b.pilotRadius) continue;
-
-      applyPilotWeaponContact(a, b);
-      applyPilotWeaponContact(b, a);
-
-      if (!a.pilotKnockback) {
-        startPilotKnockback(a, -dx / d, -dy / d);
-      }
-
-      if (!b.pilotKnockback) {
-        startPilotKnockback(b, dx / d, dy / d);
-      }
-    }
-  }
-
-  updateNetworkPilotWeaponCollisions();
-}
-
-function updateNetworkPilotWeaponCollisions() {
-  if (!window.GUNS_NET?.connected) return;
-  if (player.state !== "pilot") return;
-  if (!canUsePilotWeapon(player)) return;
-  if ((player.pilotWeaponCooldown || 0) > 0) return;
-  if (player.pilotImmunity > 0) return;
-  if (player.pilotEject) return;
-  if (isPilotAirborne(player)) return;
-
-  const weaponId = getActivePilotWeaponId(player);
-  const weapon = getPilotWeaponDefinition(weaponId);
-
-  if (weapon?.typeId !== "knife") return;
-
-  const damage = getPilotWeaponNumber(weaponId, "gameplay.damage", 0);
-
-  if (damage <= 0) return;
-
-  const snapshots = window.GUNS_NET.getRemoteSnapshots?.() || [];
-
-  for (const snapshot of snapshots) {
-    if (!snapshot || snapshot.alive === false) continue;
-    if (snapshot.state !== "on-foot") continue;
-    if (snapshot.flying) continue;
-
-    const targetId = snapshot.clientId || snapshot.id || "";
-    const targetRadius = Number(snapshot.radiusInner) || PILOT_RADIUS;
-    const d = Math.hypot(
-      Number(snapshot.x) - player.pilotX,
-      Number(snapshot.y) - player.pilotY
-    );
-
-    if (!targetId || d > player.pilotRadius + targetRadius) continue;
-
-    player.pilotWeaponCooldown = PILOT_WEAPON_CONTACT_COOLDOWN;
-    window.GUNS_NET.sendMeleeEvent?.({
-      targetId,
-      weapon: weaponId,
-      damage
-    });
-    break;
-  }
-}
-
-function canPilotWeaponContact(a, b) {
-  return (
-    a !== b &&
-    !isUnitHidden(a) &&
-    !isUnitHidden(b) &&
-    !a.isCannonOnly &&
-    !b.isCannonOnly &&
-    a.state === "pilot" &&
-    b.state === "pilot" &&
-    !a.pilotEject &&
-    !b.pilotEject &&
-    !isPilotAirborne(a) &&
-    !isPilotAirborne(b)
-  );
-}
-
-function applyPilotWeaponContact(attacker, victim) {
-  if ((attacker.pilotWeaponCooldown || 0) > 0) return;
-  if (attacker.pilotImmunity > 0) return;
-  if (victim.pilotImmunity > 0) return;
-  if (!canUsePilotWeapon(attacker)) return;
-
-  const weaponId = attacker.isPlayer
-    ? getActivePilotWeaponId(attacker)
-    : attacker.activePilotWeaponId || "";
-  const weapon = getPilotWeaponDefinition(weaponId);
-
-  if (weapon?.typeId !== "knife") return;
-
-  const damage = getPilotWeaponNumber(weaponId, "gameplay.damage", 0);
-
-  if (damage <= 0) return;
-
-  attacker.pilotWeaponCooldown = PILOT_WEAPON_CONTACT_COOLDOWN;
-  victim.pilotHp = Math.max(0, Number(victim.pilotHp || 1) - damage);
-
-  if (victim.pilotHp <= 0) {
-    dropCarriedPowerups(victim);
-    killPilot(victim, attacker);
   }
 }
 
@@ -3244,8 +2662,6 @@ function startKnockbackUnit(unit, nx, ny) {
 
     time: 0
   };
-
-  markCannonPositionForSync(unit);
 }
 
 function startPilotKnockback(unit, nx, ny) {
@@ -3326,16 +2742,9 @@ function updateKnockback(unit, dt) {
 
   if (t >= 1) {
     unit.knockback = null;
-    markCannonPositionForSync(unit, 300);
   }
 
   return true;
-}
-
-function markCannonPositionForSync(unit, durationMs = 800) {
-  if (!unit?.cannonEntityId) return;
-
-  unit.cannonPositionSyncUntil = Date.now() + durationMs;
 }
 
 function updatePilotKnockback(unit, dt) {
@@ -3480,11 +2889,6 @@ function updateWreckRepair(unit, dt) {
   if (unit.state !== "pilot") return;
 
   if (unit.wreckRepair > 0) {
-    if (isServerCannonStateAuthoritative(unit)) {
-      updateWreckRepairSmoke(unit, dt);
-      return;
-    }
-
     unit.hp = Math.min(
       unit.maxHp,
       unit.hp + (unit.maxHp / WRECK_REPAIR_TIME) * dt
@@ -3494,7 +2898,12 @@ function updateWreckRepair(unit, dt) {
       WRECK_REPAIR_TIME *
       (1 - clamp(unit.hp / unit.maxHp, 0, 1));
 
-    updateWreckRepairSmoke(unit, dt);
+    unit.smokeTimer -= dt;
+
+    if (unit.smokeTimer <= 0) {
+      addSmoke(unit.x, unit.y);
+      unit.smokeTimer = 0.18;
+    }
 
     if (unit.hp >= unit.maxHp) {
       unit.wreckRepair = 0;
@@ -3505,23 +2914,9 @@ function updateWreckRepair(unit, dt) {
   }
 }
 
-function isServerCannonStateAuthoritative(unit) {
-  return window.GUNS_NET?.connected === true && !!getServerCannonState(unit);
-}
-
-function updateWreckRepairSmoke(unit, dt) {
-  unit.smokeTimer -= dt;
-
-  if (unit.smokeTimer <= 0) {
-    addSmoke(unit.x, unit.y);
-    unit.smokeTimer = 0.18;
-  }
-}
-
 function tryEnterNearbyRepairedCannonPilots(cannonUnit) {
   for (const pilotUnit of units) {
     if (pilotUnit === cannonUnit) continue;
-    if (!pilotUnit.isPlayer) continue;
     if (pilotUnit.isCannonOnly) continue;
 
     tryEnterRepairedCannon(pilotUnit);
@@ -3542,8 +2937,6 @@ function tryEnterRepairedCannon(unit) {
     if (cannon.cannonDestroyed) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
-    if (isServerCannonUnavailable(cannon)) continue;
-    if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
 
@@ -3669,10 +3062,7 @@ function tryEnterRepairedCannon(unit) {
         unit.ammo + unit.carriedAmmoValue
       );
 
-      addScore(unit, getActiveModeRule("ammoLoadScore", 40), "ammo-load", {
-        cannonEntityId: unit.cannonEntityId,
-        ammoValue: unit.carriedAmmoValue
-      });
+      addScore(unit, getActiveModeRule("ammoLoadScore", 40), "ammo-load");
     }
 
     unit.carriedAmmoValue = 0;
@@ -3715,11 +3105,9 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
   if (pilotUnit.carriedRepairValue <= 0) return false;
   if (cannonUnit.hp >= cannonUnit.maxHp) return false;
 
-  const repairValue = pilotUnit.carriedRepairValue;
-
   cannonUnit.hp = Math.min(
     cannonUnit.maxHp,
-    cannonUnit.hp + cannonUnit.maxHp * repairValue
+    cannonUnit.hp + cannonUnit.maxHp * pilotUnit.carriedRepairValue
   );
 
   if (cannonUnit.wreckRepair > 0) {
@@ -3730,39 +3118,156 @@ function applyCarriedRepairToCannon(pilotUnit, cannonUnit) {
           (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
   }
 
-  if (pilotUnit.isPlayer) {
-    addScore(pilotUnit, 0, "repair-load", {
-      cannonEntityId: cannonUnit.cannonEntityId,
-      repairValue
-    });
-  }
-
   pilotUnit.carriedRepairValue = 0;
 
   return true;
 }
 
 function applyCarriedPowerupToCannon(pilotUnit, cannonUnit) {
-  return window.GUNS_POWERUPS.applyCarriedPowerupToCannon(
-    getPowerupOptions(),
-    pilotUnit,
-    cannonUnit
-  );
+  const carried = getCarriedPowerup(pilotUnit);
+
+  if (!carried) return false;
+
+  if (carried.type === POWERUP_AMMO) {
+    cannonUnit.ammo = Math.min(
+      getMaxAmmo(cannonUnit),
+      cannonUnit.ammo + carried.value
+    );
+
+    addScore(cannonUnit, getActiveModeRule("ammoLoadScore", 40), "ammo-load");
+  } else if (carried.type === POWERUP_REPAIR) {
+    cannonUnit.hp = Math.min(
+      cannonUnit.maxHp,
+      cannonUnit.hp + cannonUnit.maxHp * carried.value
+    );
+
+    if (cannonUnit.wreckRepair > 0) {
+      cannonUnit.wreckRepair =
+        cannonUnit.hp >= cannonUnit.maxHp
+          ? 0
+          : WRECK_REPAIR_TIME *
+            (1 - clamp(cannonUnit.hp / cannonUnit.maxHp, 0, 1));
+    }
+  }
+
+  clearCarriedPowerups(pilotUnit);
+
+  return true;
 }
 
 function updateAmmoPickup() {
-  window.GUNS_POWERUPS.updatePowerupPickup(getPowerupOptions());
+  for (let i = roomRuntimeState.ammoPacks.length - 1; i >= 0; i--) {
+    const pack = roomRuntimeState.ammoPacks[i];
+
+    let picked = false;
+
+    for (const unit of units) {
+      if (isUnitHidden(unit)) continue;
+
+      if (
+        unit.state === "alive" &&
+        distance(unit, pack) <=
+          unit.radiusOuter + pack.radius
+      ) {
+        if (pack.type === POWERUP_AMMO) {
+          if (unit.ammo >= getMaxAmmo(unit)) continue;
+
+          unit.ammo = Math.min(
+            getMaxAmmo(unit),
+            unit.ammo + pack.value
+          );
+
+          addScore(unit, getActiveModeRule("ammoPickupScore", 40), "ammo-pickup");
+
+          if (isTutorialMode() && unit === player) {
+            tutorial.ammoPicked = true;
+          }
+        } else if (pack.type === POWERUP_REPAIR) {
+          if (unit.hp >= unit.maxHp) continue;
+
+          unit.hp = Math.min(
+            unit.maxHp,
+            unit.hp + unit.maxHp * pack.value
+          );
+        }
+
+        roomRuntimeState.ammoPacks.splice(i, 1);
+
+        picked = true;
+        break;
+      }
+
+      if (
+        unit.state === "pilot" &&
+        !unit.isCannonOnly &&
+        !isPilotAirborne(unit) &&
+        unit.pilotImmunity <= 0 &&
+        Math.hypot(
+          unit.pilotX - pack.x,
+          unit.pilotY - pack.y
+        ) <= unit.pilotRadius + pack.radius
+      ) {
+        const carried = getCarriedPowerup(unit);
+
+        if (carried) {
+          const dropPoint =
+            getPowerupSwapDropPoint(unit, pack);
+
+          setCarriedPowerup(unit, pack.type, pack.value);
+
+          pack.x = dropPoint.x;
+          pack.y = dropPoint.y;
+          pack.type = carried.type;
+          pack.value = carried.value;
+          pack.time = 0;
+
+          picked = true;
+          break;
+        }
+
+        if (pack.type === POWERUP_AMMO) {
+          unit.carriedAmmoValue = pack.value;
+
+          if (isTutorialMode() && unit === player) {
+            tutorial.ammoPicked = true;
+          }
+        } else if (pack.type === POWERUP_REPAIR) {
+          unit.carriedRepairValue = pack.value;
+        }
+
+        roomRuntimeState.ammoPacks.splice(i, 1);
+
+        picked = true;
+        break;
+      }
+    }
+
+    if (picked) continue;
+  }
 }
 
 function updateAmmoPacks(dt) {
-  window.GUNS_POWERUPS.updatePowerupTimers(getPowerupOptions(), dt);
+  for (let i = roomRuntimeState.ammoPacks.length - 1; i >= 0; i--) {
+    const pack = roomRuntimeState.ammoPacks[i];
+
+    pack.time += dt;
+
+    if (pack.time >= AMMO_PACK_LIFE_TIME + AMMO_PACK_FADE_TIME) {
+      roomRuntimeState.ammoPacks.splice(i, 1);
+    }
+  }
 }
 
 function updateAmmoSpawning(dt) {
-  ammoSpawnTimer = window.GUNS_POWERUPS.updatePowerupSpawning(
-    getPowerupOptions(),
-    dt
-  );
+  if (isUserCabinetRoom()) return;
+
+  ammoSpawnTimer -= dt;
+
+  if (ammoSpawnTimer <= 0) {
+    spawnPowerup();
+
+    ammoSpawnTimer = 4 + Math.random() * 3;
+  }
 }
 
 function updateCannonCollisions() {
@@ -3987,7 +3492,7 @@ function updateBullets(dt) {
           d <= target.radiusOuter + bullet.radius
         ) {
           target.hp = Math.max(0, target.hp - bullet.damage);
-          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "cannon"));
+          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
 
           removeBulletAt(i);
 
@@ -3996,7 +3501,7 @@ function updateBullets(dt) {
           if (target.hp <= 0) {
             destroyCannon(target);
             bullet.owner.cannonBreaks++;
-            addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(target, "cannon"));
+            addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
             window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
               unit: target,
               attacker: bullet.owner
@@ -4022,7 +3527,7 @@ function updateBullets(dt) {
           pilotD <=
           target.pilotRadius + bullet.radius
         ) {
-          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "pilot"));
+          addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
 
           if (
             !target.pilotEject &&
@@ -4053,7 +3558,7 @@ function updateBullets(dt) {
                 0,
                 target.hp - bullet.damage
               );
-              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "broken-cannon"));
+              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
 
               target.wreckRepair =
                 WRECK_REPAIR_TIME *
@@ -4068,7 +3573,7 @@ function updateBullets(dt) {
 
             if (target.wreckRepair <= 0) {
               target.hp = Math.max(0, target.hp - bullet.damage);
-              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit", getCombatTargetContext(target, "free-cannon"));
+              addScore(bullet.owner, getActiveModeRule("bulletHitScore", 30), "bullet-hit");
 
               removeBulletAt(i);
 
@@ -4077,7 +3582,7 @@ function updateBullets(dt) {
               if (target.hp <= 0) {
                 breakEmptyCannon(target);
                 bullet.owner.cannonBreaks++;
-                addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break", getCombatTargetContext(target, "free-cannon"));
+                addScore(bullet.owner, getActiveModeRule("cannonBreakScore", 50), "cannon-break");
                 window.GUNS_MODE_REGISTRY?.onCannonBreak?.(activeModeState, {
                   unit: target,
                   attacker: bullet.owner
@@ -4277,8 +3782,6 @@ function getNearestFreeCannonForPilot(unit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
-    if (isServerCannonUnavailable(cannon)) continue;
-    if (isCannonOccupiedByRemote(cannon)) continue;
     if (cannon.wreckRepair > 0) continue;
     if (cannon.hp <= 0) continue;
     if (!canEnterCannon(unit, cannon)) continue;
@@ -4469,11 +3972,6 @@ function startPlayerExitEject() {
 
 function finishPlayerExitEject() {
   if (player.state !== "alive") return;
-  lastExitedCannonSnapshot = {
-    id: player.cannonEntityId || "",
-    x: player.x,
-    y: player.y
-  };
 
   const moveSpeed =
     Math.hypot(player.lastMoveVx || 0, player.lastMoveVy || 0);
@@ -4546,7 +4044,6 @@ function updatePostEjectBrake(unit, dt) {
 
   unit.lastMoveVx = vx;
   unit.lastMoveVy = vy;
-  markCannonPositionForSync(unit, 300);
 
   b.speed = Math.max(
     0,
@@ -4585,7 +4082,7 @@ function updatePlayer(dt) {
     const inKnockback =
       updateKnockback(player, dt);
 
-    if (!controlsLocked && !inKnockback && mouse.active && canUseCursorFollow()) {
+    if (!controlsLocked && !inKnockback && mouse.active) {
       const target =
         screenToWorld(mouse.x, mouse.y);
 
@@ -4615,7 +4112,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isFixedCameraRoom()) {
+    if (!isUserCabinetRoom()) {
       camera.x = player.x;
       camera.y = player.y;
     }
@@ -4672,8 +4169,7 @@ function updatePlayer(dt) {
       !controlsLocked &&
       !ejecting &&
       !pilotKnock &&
-      mouse.active &&
-      canUseCursorFollow()
+      mouse.active
     ) {
       const target =
         screenToWorld(mouse.x, mouse.y);
@@ -4688,7 +4184,7 @@ function updatePlayer(dt) {
       }
     }
 
-    if (!isFixedCameraRoom()) {
+    if (!isUserCabinetRoom()) {
       camera.x = player.pilotX;
       camera.y = player.pilotY;
     }
@@ -4798,14 +4294,8 @@ function updateBot(bot, dt) {
 }
 
 function updatePlayerShooting(dt) {
-  if (player.exitRequested) return;
-
-  if (player.state === "pilot") {
-    updatePlayerPilotShooting();
-    return;
-  }
-
   if (player.state !== "alive") return;
+  if (player.exitRequested) return;
 
   player.fireCooldown -= dt;
 
@@ -4814,43 +4304,13 @@ function updatePlayerShooting(dt) {
     mouse.active &&
     player.fireCooldown <= 0
   ) {
-    const bullets = fireBullet(
+    fireBullet(
       player,
       player.turretAngle
     );
 
-    sendNetworkShootEvent("gun", bullets);
-
     player.fireCooldown =
       player.fireRate;
-  }
-}
-
-function updatePlayerPilotShooting() {
-  if (isUserBaseRoom()) return;
-  if (isPilotDialogOpen()) return;
-  if (!mouse.down || !mouse.active || player.pilotFireCooldown > 0) return;
-
-  const weaponId = getActivePilotWeaponId(player);
-  const weapon = getPilotWeaponDefinition(weaponId);
-
-  if (weapon?.typeId !== "pistol") return;
-
-  const target = screenToWorld(mouse.x, mouse.y);
-  const angle = Math.atan2(
-    target.y - player.pilotY,
-    target.x - player.pilotX
-  );
-
-  const bullet = firePilotPistol(player, weaponId, angle);
-
-  if (bullet) {
-    sendNetworkShootEvent(weaponId, bullet);
-    player.pilotFireCooldown = getPilotWeaponNumber(
-      weaponId,
-      "gameplay.fireRate",
-      0
-    );
   }
 }
 
@@ -4999,42 +4459,24 @@ function updateTutorial(dt) {
 function updateRoomObjects(dt) {
   roomObjectActivationCooldown = Math.max(0, roomObjectActivationCooldown - dt);
 
-  if (isPilotDialogOpen()) {
-    clearPendingTeleportActivation();
-    return;
-  }
-
-  if (player.state !== "pilot" || isPilotAirborne(player)) {
-    clearPendingTeleportActivation();
-    return;
-  }
+  if (player.state !== "pilot" || isPilotAirborne(player)) return;
 
   const hit = getNearRoomObjectInstance();
 
-  if (!hit) {
-    clearPendingTeleportActivation();
-    return;
-  }
+  if (!hit) return;
 
   const label = String(hit.instance.params?.label || hit.definition?.title || hit.instance.objectId);
   if (
     hit.definition?.kind !== "teleport" &&
-    hit.definition?.kind !== "market-item" &&
-    !(isUserBaseRoom() && hit.definition?.kind === "menu-terminal")
+    !(isUserCabinetRoom() && hit.definition?.kind === "menu-terminal")
   ) {
     addHint(`${label}: ENTER`);
   }
 
   if (hit.definition?.kind === "teleport" && roomObjectActivationCooldown <= 0) {
-    updateTeleportActivation(hit.instance, hit.definition, dt);
+    activateTeleport(hit.instance);
   } else if (hit.definition?.kind === "menu-terminal" && roomObjectActivationCooldown <= 0) {
-    clearPendingTeleportActivation();
     activateMenuTerminal(hit.instance);
-  } else if (hit.definition?.kind === "market-item" && roomObjectActivationCooldown <= 0) {
-    clearPendingTeleportActivation();
-    activateMarketItem(hit.instance);
-  } else if (hit.definition?.kind !== "teleport") {
-    clearPendingTeleportActivation();
   }
 }
 
@@ -5077,78 +4519,6 @@ function isPlayerOverRoomObject(instance, definition) {
 
 function activateTeleport(instance) {
   performTeleport(instance);
-}
-
-function updateTeleportActivation(instance, definition, dt) {
-  const delay = getTeleportTriggerDelaySeconds(instance, definition);
-
-  if (delay <= 0) {
-    clearPendingTeleportActivation();
-    activateTeleport(instance);
-    return;
-  }
-
-  if (pendingTeleportActivation?.instanceId !== instance.instanceId) {
-    pendingTeleportActivation = {
-      instanceId: instance.instanceId,
-      remaining: delay
-    };
-  }
-
-  pendingTeleportActivation.remaining = Math.max(
-    0,
-    pendingTeleportActivation.remaining - dt
-  );
-
-  addHint(`TELEPORT ${Math.ceil(pendingTeleportActivation.remaining)}s`);
-
-  if (pendingTeleportActivation.remaining <= 0) {
-    clearPendingTeleportActivation();
-    activateTeleport(instance);
-  }
-}
-
-function getTeleportTriggerDelaySeconds(instance, definition) {
-  const value =
-    instance.params?.triggerDelaySeconds ??
-    instance.params?.delaySeconds ??
-    definition?.behavior?.triggerDelaySeconds ??
-    0;
-  const delay = Number(value);
-
-  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
-}
-
-function clearPendingTeleportActivation() {
-  pendingTeleportActivation = null;
-}
-
-function handleTeleportClick(pointerX, pointerY) {
-  if (isPilotDialogOpen()) return false;
-  if (player.state !== "pilot" || isPilotAirborne(player)) return false;
-
-  const worldPoint = screenToWorld(pointerX, pointerY);
-
-  for (const instance of getActiveRoomObjectInstances()) {
-    const definition = getRoomObjectDefinition(instance.objectId);
-
-    if (definition?.kind !== "teleport") continue;
-    if (!isPlayerOverRoomObject(instance, definition)) continue;
-    if (!isWorldPointOverTeleport(worldPoint, instance, definition)) continue;
-
-    clearPendingTeleportActivation();
-    activateTeleport(instance);
-    return true;
-  }
-
-  return false;
-}
-
-function isWorldPointOverTeleport(point, instance, definition) {
-  const position = getRoomObjectPosition(instance);
-  const radius = Number(definition.render?.radius) || 42;
-
-  return Math.hypot(point.x - position.x, point.y - position.y) <= radius;
 }
 
 function performTeleport(instance) {
@@ -5196,13 +4566,7 @@ function activateMenuTerminal(instance) {
 
   if (action === "open-pilot") {
     roomObjectActivationCooldown = 0.6;
-    window.GUNS_APP?.handleBasePilotAction?.();
-    return;
-  }
-
-  if (action === "exchange-score") {
-    roomObjectActivationCooldown = 0.6;
-    window.GUNS_APP?.handleBaseExchange?.();
+    window.GUNS_APP?.handleCabinetPilotAction?.();
     return;
   }
 
@@ -5215,97 +4579,23 @@ function activateMenuTerminal(instance) {
   }
 }
 
-function getMarketItemStock(instance) {
-  const stock = Number(instance.params?.stock ?? 0);
-
-  return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0;
-}
-
-function setMarketItemStock(instance, stock) {
-  if (!instance.params) {
-    instance.params = {};
-  }
-
-  instance.params.stock = Math.max(0, Math.floor(Number(stock) || 0));
-}
-
-function getMarketItemPrice(instance) {
-  const weapon = getPilotWeaponDefinition(instance.params?.weaponId);
-  const price = Number(weapon?.economy?.priceGs);
-
-  return Number.isFinite(price) ? Math.max(0, Math.floor(price)) : 0;
-}
-
-function getPurchasedMarketItemStock(instance, result) {
-  const serverInstance = result?.room?.objects
-    ?.find(item => item.instanceId === instance.instanceId);
-  const stock = Number(serverInstance?.params?.stock ?? result?.stock);
-
-  return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : null;
-}
-
-function activateMarketItem(instance) {
-  const stock = getMarketItemStock(instance);
-  const price = getMarketItemPrice(instance);
-  const weaponId = String(instance.params?.weaponId || "");
-
-  if (
-    stock <= 0 ||
-    !weaponId ||
-    instance.purchasePending ||
-    getPlayerGunsCoinBalance() < price
-  ) {
-    bouncePlayerFromRoomObject(instance);
-    return;
-  }
-
-  instance.purchasePending = true;
-  roomObjectActivationCooldown = 0.8;
-
-  Promise.resolve(window.GUNS_APP?.purchasePilotWeapon?.(weaponId, price, {
-    roomId: activeRoomId,
-    instanceId: instance.instanceId
-  }))
-    .then((purchased) => {
-      if (!purchased) {
-        bouncePlayerFromRoomObject(instance);
-        return;
-      }
-
-      const serverStock = getPurchasedMarketItemStock(instance, purchased);
-      setMarketItemStock(instance, serverStock ?? stock);
-
-      if (getMarketItemStock(instance) <= 0) {
-        bouncePlayerFromRoomObject(instance);
-      }
-    })
-    .catch(() => bouncePlayerFromRoomObject(instance))
-    .finally(() => {
-      instance.purchasePending = false;
-    });
-}
-
 function getMenuTerminalLabel(instance, definition) {
   const action = String(instance.params?.action || "").trim();
 
   if (action === "open-pilot") {
-    return window.GUNS_APP?.getBasePilotActionLabel?.() || "CHANGE CALLSIGN";
+    return window.GUNS_APP?.getCabinetPilotActionLabel?.() || "CHANGE CALLSIGN";
   }
 
   return String(instance.params?.label || definition.title || "MENU");
 }
 
 function update(dt) {
-  syncActiveModeStateFromServer();
-
-  if (!activeModeState?.serverMatchId) {
-    window.GUNS_MODE_REGISTRY?.onTick?.(activeModeState, {
-      room: ACTIVE_ROOM,
-      units,
-      player,
-      dt
-    });
-  }
+  window.GUNS_MODE_REGISTRY?.onTick?.(activeModeState, {
+    room: ACTIVE_ROOM,
+    units,
+    player,
+    dt
+  });
 
   if (isTutorialMode() && !tutorial.initialized) {
     setupTutorialScenario();
@@ -5358,22 +4648,10 @@ function update(dt) {
     }
   }
 
-  if (!isActiveModeEnded()) {
-    updatePilotWeaponCollisions();
-  }
-
   for (const unit of units) {
     unit.recoilTime = Math.max(
       0,
       unit.recoilTime - dt
-    );
-    unit.pilotWeaponCooldown = Math.max(
-      0,
-      (unit.pilotWeaponCooldown || 0) - dt
-    );
-    unit.pilotFireCooldown = Math.max(
-      0,
-      (unit.pilotFireCooldown || 0) - dt
     );
 
     updatePostEjectBrake(unit, dt);
@@ -5593,7 +4871,7 @@ function paddingToPixels(inset, scale) {
   return 16 * scale + inset;
 }
 
-function getBaseBackdropSources() {
+function getCabinetBackdropSources() {
   const backgrounds = window.GUNS_CONFIG?.visual?.startBackgrounds || [];
 
   return backgrounds
@@ -5601,7 +4879,7 @@ function getBaseBackdropSources() {
     .filter(Boolean);
 }
 
-function getBaseBackdropImage(src) {
+function getCabinetBackdropImage(src) {
   let entry = cabinetBackdropImages.find(item => item.src === src);
 
   if (entry) return entry;
@@ -5621,7 +4899,7 @@ function getBaseBackdropImage(src) {
   return entry;
 }
 
-function drawBaseBackdropImage(entry, alpha, transform) {
+function drawCabinetBackdropImage(entry, alpha, transform) {
   if (!entry?.loaded) return;
 
   const scale =
@@ -5640,8 +4918,8 @@ function drawBaseBackdropImage(entry, alpha, transform) {
   ctx.restore();
 }
 
-function drawBaseBackdrop() {
-  const sources = getBaseBackdropSources();
+function drawCabinetBackdrop() {
+  const sources = getCabinetBackdropSources();
 
   if (!sources.length) {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -5669,13 +4947,13 @@ function drawBaseBackdrop() {
   };
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-  drawBaseBackdropImage(getBaseBackdropImage(sources[currentIndex]), 1 - fade, transform);
-  drawBaseBackdropImage(getBaseBackdropImage(sources[nextIndex]), fade, transform);
+  drawCabinetBackdropImage(getCabinetBackdropImage(sources[currentIndex]), 1 - fade, transform);
+  drawCabinetBackdropImage(getCabinetBackdropImage(sources[nextIndex]), fade, transform);
 }
 
 function drawGrid() {
-  if (isUserBaseRoom()) {
-    drawBaseBackdrop();
+  if (isUserCabinetRoom()) {
+    drawCabinetBackdrop();
   } else {
     ctx.fillStyle = SKIN.roomOutside;
     ctx.fillRect(
@@ -5697,15 +4975,15 @@ function drawGrid() {
     z(getRoomHeight() + 32)
   );
 
-  drawUserBaseFloorCallsign();
+  drawUserCabinetFloorCallsign();
   drawArenaFloorTimer();
 
-  if (isUserBaseRoom()) {
-    drawBaseVersion();
+  if (isUserCabinetRoom()) {
+    drawCabinetVersion();
   }
 }
 
-function drawBaseVersion() {
+function drawCabinetVersion() {
   ctx.save();
   ctx.font = "bold 13px monospace";
   ctx.textAlign = "center";
@@ -5719,8 +4997,8 @@ function drawBaseVersion() {
   ctx.restore();
 }
 
-function drawUserBaseFloorCallsign() {
-  if (!isUserBaseRoom()) return;
+function drawUserCabinetFloorCallsign() {
+  if (!isUserCabinetRoom()) return;
 
   const p = worldToScreen(0, 34);
   const callsign = getPlayerCallsign();
@@ -5746,13 +5024,12 @@ function drawUserBaseFloorCallsign() {
   ctx.strokeText(callsign, p.x, p.y);
   ctx.globalAlpha = 0.08;
   ctx.fillText(callsign, p.x, p.y);
-
   ctx.restore();
 }
 
 function shouldDrawArenaFloorTimer() {
   return (
-    !isUserBaseRoom() &&
+    !isUserCabinetRoom() &&
     !!activeModeState &&
     activeModeState.durationMs > 0 &&
     getActiveModeRule("showTimer", 0) > 0
@@ -5797,210 +5074,8 @@ function drawRoomObjects() {
       drawMenuTerminal(instance, definition);
     } else if (definition?.kind === "teleport") {
       drawTeleport(instance, definition);
-    } else if (definition?.kind === "market-item") {
-      drawMarketItem(instance, definition);
     }
   }
-}
-
-function drawMarketItem(instance, definition) {
-  const position = getRoomObjectPosition(instance);
-  const p = worldToScreen(position.x, position.y);
-  const weapon = getPilotWeaponDefinition(instance.params?.weaponId);
-  const icon = String(instance.params?.icon || weapon?.typeId || "").toLowerCase();
-  const title = String(weapon?.title || instance.params?.label || "item");
-  const price = Number(weapon?.economy?.priceGs);
-  const stock = getMarketItemStock(instance);
-  const width = z(Number(definition.render?.width) || 120);
-  const height = z(Number(definition.render?.height) || 120);
-  const iconSize = z(Number(definition.render?.iconSize) || 64);
-  const isNear =
-    player.state === "pilot" &&
-    isPlayerOverRoomObject(instance, definition);
-
-  ctx.save();
-  ctx.translate(p.x, p.y);
-  ctx.rotate(Number(instance.rotation || 0));
-
-  ctx.fillStyle = isNear ? LCD_PANEL : "rgba(31, 43, 22, 0.10)";
-  ctx.strokeStyle = isNear ? LCD_INK : LCD_SOFT;
-  ctx.lineWidth = Math.max(1, z(isNear ? 2 : 1.25));
-  ctx.fillRect(-width / 2, -height / 2, width, height);
-  ctx.strokeRect(-width / 2, -height / 2, width, height);
-
-  ctx.save();
-  ctx.translate(0, -height * 0.12);
-  drawPilotWeaponIcon(icon, iconSize);
-  ctx.restore();
-
-  ctx.fillStyle = LCD_INK;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  ctx.font = `${Math.max(11, z(13))}px monospace`;
-  ctx.fillText(title, 0, height * 0.24);
-  if (Number.isFinite(price)) {
-    ctx.font = `${Math.max(10, z(12))}px monospace`;
-    ctx.fillText(`${price} gs`, 0, height * 0.38);
-  }
-  ctx.font = `bold ${Math.max(11, z(14))}px monospace`;
-  ctx.fillText(`x${stock}`, width * 0.32, -height * 0.42);
-
-  ctx.restore();
-}
-
-function getPilotWeaponIconImage(type) {
-  return getSpriteImage(PILOT_WEAPON_ICON_SOURCES[type] || "");
-}
-
-function drawPilotWeaponIcon(type, size) {
-  const icon = String(type || "").toLowerCase();
-  const image = getPilotWeaponIconImage(icon);
-
-  if (isSpriteImageReady(image)) {
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    const scale = size / Math.max(width, height);
-    const drawWidth = width * scale;
-    const drawHeight = height * scale;
-
-    ctx.drawImage(
-      image,
-      -drawWidth / 2,
-      -drawHeight / 2,
-      drawWidth,
-      drawHeight
-    );
-    return;
-  }
-
-  if (icon === "knife") {
-    drawKnifeMarketIcon(size);
-  } else {
-    drawPistolMarketIcon(size);
-  }
-}
-
-function drawPistolMarketIcon(size) {
-  const s = size / 64;
-
-  ctx.fillStyle = LCD_INK;
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = Math.max(1, z(2));
-
-  ctx.fillRect(-26 * s, -18 * s, 42 * s, 10 * s);
-  ctx.fillRect(10 * s, -14 * s, 20 * s, 6 * s);
-  ctx.fillRect(-18 * s, -8 * s, 20 * s, 13 * s);
-  ctx.save();
-  ctx.translate(-1 * s, 4 * s);
-  ctx.rotate(-0.28);
-  ctx.fillRect(-8 * s, 0, 14 * s, 30 * s);
-  ctx.restore();
-  ctx.fillRect(3 * s, 0, 15 * s, 6 * s);
-}
-
-function drawKnifeMarketIcon(size) {
-  const s = size / 64;
-
-  ctx.fillStyle = LCD_INK;
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = Math.max(1, z(2));
-
-  ctx.beginPath();
-  ctx.moveTo(-5 * s, -30 * s);
-  ctx.lineTo(12 * s, -6 * s);
-  ctx.lineTo(2 * s, 11 * s);
-  ctx.lineTo(-14 * s, -11 * s);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillRect(-13 * s, 9 * s, 27 * s, 7 * s);
-  ctx.save();
-  ctx.translate(0, 20 * s);
-  ctx.rotate(0.12);
-  ctx.fillRect(-7 * s, -4 * s, 14 * s, 25 * s);
-  ctx.restore();
-}
-
-function drawPilotCarryIcon(slot, x, y, size) {
-  if (!slot) return;
-
-  ctx.save();
-  ctx.translate(x, y);
-
-  if (slot.kind === "weapon") {
-    drawPilotWeaponIcon(slot.type, size);
-  } else if (slot.type === POWERUP_REPAIR) {
-    const s = size / 32;
-
-    ctx.scale(s, s);
-    drawRepairPackIcon(0, 0);
-  } else {
-    const s = size / 32;
-
-    ctx.fillStyle = LCD_INK;
-    ctx.font = `bold ${Math.max(9, Math.round(10 * s))}px monospace`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(String(Math.floor(Number(slot.value) || 0)), 0, 0);
-  }
-
-  ctx.restore();
-}
-
-function drawAnimatedPilotCarrySlot(unit, slot, x, y, size) {
-  const now = performance.now();
-  const key = getPilotCarrySlotKey(slot);
-  let state = unit.pilotCarryIconState;
-
-  if (!state) {
-    state = {
-      key,
-      slot,
-      previousSlot: null,
-      startedAt: 0
-    };
-    unit.pilotCarryIconState = state;
-  } else if (state.key !== key) {
-    state = {
-      key,
-      slot,
-      previousSlot: state.slot,
-      startedAt: now
-    };
-    unit.pilotCarryIconState = state;
-  } else {
-    state.slot = slot;
-  }
-
-  if (!slot) return;
-
-  const elapsed = now - state.startedAt;
-  const t = state.startedAt
-    ? clamp(elapsed / PILOT_CARRY_ICON_ANIMATION_MS, 0, 1)
-    : 1;
-  const eased = clamp(easeOutBack(t), 0, 1.14);
-
-  if (state.previousSlot && t < 1) {
-    ctx.save();
-    ctx.globalAlpha = 1 - t;
-    drawPilotCarryIcon(
-      state.previousSlot,
-      x,
-      y + z(34 * t),
-      size * (1 - 0.12 * t)
-    );
-    ctx.restore();
-  }
-
-  ctx.save();
-  ctx.globalAlpha = state.startedAt ? clamp(t * 1.6, 0, 1) : 1;
-  drawPilotCarryIcon(
-    slot,
-    x,
-    y - z(28 * (1 - eased)),
-    size
-  );
-  ctx.restore();
 }
 
 function drawMenuTerminal(instance, definition) {
@@ -6041,10 +5116,6 @@ function drawTeleport(instance, definition) {
   const isNear =
     player.state === "pilot" &&
     isPlayerOverRoomObject(instance, definition);
-  const countdown =
-    pendingTeleportActivation?.instanceId === instance.instanceId
-      ? Math.ceil(Math.max(0, pendingTeleportActivation.remaining))
-      : 0;
 
   ctx.save();
   ctx.translate(p.x, p.y);
@@ -6073,10 +5144,6 @@ function drawTeleport(instance, definition) {
   ctx.fillStyle = LCD_INK;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  if (countdown > 0) {
-    ctx.font = `bold ${Math.max(12, z(15))}px monospace`;
-    ctx.fillText(`${countdown}s`, 0, -radius - z(30));
-  }
   ctx.font = `${Math.max(12, z(15))}px monospace`;
   ctx.fillText(label, 0, radius + z(12));
   if (description) {
@@ -6168,7 +5235,6 @@ function getServerScoreboardRowColor(row) {
 
 function getLocalNetworkSnapshot() {
   const inCannon = player.state === "alive";
-  const exitedCannon = inCannon ? null : lastExitedCannonSnapshot;
 
   return {
     nick: getUnitDisplayName(player),
@@ -6176,15 +5242,10 @@ function getLocalNetworkSnapshot() {
     y: inCannon ? player.y : player.pilotY,
     angle: inCannon ? player.turretAngle : player.pilotAngle,
     state: inCannon ? "in-cannon" : "on-foot",
-    cannonEntityId: inCannon ? player.cannonEntityId : exitedCannon?.id || "",
-    exitedCannonId: inCannon ? "" : exitedCannon?.id || "",
-    exitedCannonX: inCannon ? 0 : exitedCannon?.x || 0,
-    exitedCannonY: inCannon ? 0 : exitedCannon?.y || 0,
-    gunType: inCannon ? player.gunType : "",
     flying: isPilotAirborne(player),
     alive: player.pilotAlive !== false,
-    hp: inCannon ? player.hp : player.pilotHp,
-    maxHp: inCannon ? player.maxHp : 1,
+    hp: inCannon ? player.hp : 0,
+    maxHp: inCannon ? player.maxHp : 100,
     ammo: inCannon ? player.ammo : 0,
     maxAmmo: inCannon ? getMaxAmmo(player) : 0,
     radiusOuter: player.radiusOuter,
@@ -6193,65 +5254,20 @@ function getLocalNetworkSnapshot() {
     pilotKills: player.pilotKills || 0,
     cannonBreaks: player.cannonBreaks || 0,
     pilotDeaths: player.pilotDeaths || 0,
-    inventory: {
-      pilotWeapons: window.GUNS_APP?.getPilotWeapons?.() || []
-    },
-    bots: getLocalBotNetworkSnapshots(),
-    cannons: getLocalCannonNetworkSnapshots()
+    bots: getLocalBotNetworkSnapshots()
   };
 }
 
 function getLocalBotNetworkSnapshots() {
   return units
     .filter(unit => !unit.isPlayer && !unit.isCannonOnly && !isUnitHidden(unit))
-    .map(unit => {
-      const inCannon = unit.state === "alive";
-
-      return {
-        id: unit.id,
-        nick: getUnitDisplayName(unit),
-        x: inCannon ? unit.x : unit.pilotX,
-        y: inCannon ? unit.y : unit.pilotY,
-        angle: inCannon ? unit.turretAngle : unit.pilotAngle,
-        state: inCannon ? "in-cannon" : "on-foot",
-        cannonEntityId: inCannon ? unit.cannonEntityId : "",
-        occupiedCannonId: inCannon ? unit.cannonEntityId : "",
-        gunType: inCannon ? unit.gunType : "",
-        flying: isPilotAirborne(unit),
-        alive: unit.pilotAlive !== false,
-        hp: inCannon ? unit.hp : unit.pilotHp,
-        maxHp: inCannon ? unit.maxHp : 1,
-        radiusOuter: unit.radiusOuter,
-        radiusInner: unit.radiusInner,
-        score: unit.score || 0,
-        pilotKills: unit.pilotKills || 0,
-        cannonBreaks: unit.cannonBreaks || 0,
-        pilotDeaths: unit.pilotDeaths || 0
-      };
-    });
-}
-
-function getLocalCannonNetworkSnapshots() {
-  const now = Date.now();
-
-  return units
-    .filter(unit => (
-      unit.cannonEntityId &&
-      !isUnitHidden(unit) &&
-      unit.state !== "alive" &&
-      (
-        unit.knockback ||
-        unit.postEjectBrake ||
-        Number(unit.cannonPositionSyncUntil || 0) >= now
-      )
-    ))
     .map(unit => ({
-      id: unit.cannonEntityId,
-      unitId: unit.id,
-      free: true,
-      broken: unit.wreckRepair > 0,
-      x: Number(unit.x) || 0,
-      y: Number(unit.y) || 0
+      id: unit.id,
+      nick: getUnitDisplayName(unit),
+      score: unit.score || 0,
+      pilotKills: unit.pilotKills || 0,
+      cannonBreaks: unit.cannonBreaks || 0,
+      pilotDeaths: unit.pilotDeaths || 0
     }));
 }
 
@@ -6266,297 +5282,17 @@ function sendNetworkSnapshot(now) {
   window.GUNS_NET.sendSnapshot?.(getLocalNetworkSnapshot());
 }
 
-function sendNetworkShootEvent(weapon, bullets) {
-  if (!window.GUNS_NET?.connected) return;
-
-  const cannonEntityId =
-    weapon === "gun" && player.state === "alive"
-      ? player.cannonEntityId || ""
-      : "";
-
-  const list = (Array.isArray(bullets) ? bullets : [bullets])
-    .filter(Boolean)
-    .map(bullet => ({
-      weapon,
-      cannonEntityId,
-      x: bullet.x,
-      y: bullet.y,
-      vx: bullet.vx,
-      vy: bullet.vy,
-      radius: bullet.radius,
-      damage: bullet.damage,
-      lifeMs: Math.max(100, Math.round((bullet.life || 1.4) * 1000))
-    }));
-
-  if (!list.length) return;
-
-  window.GUNS_NET.sendShootEvent?.({
-    weapon,
-    cannonEntityId,
-    bullets: list
-  });
-}
-
-function sendNetworkRespawnEvent() {
-  if (!window.GUNS_NET?.connected) return;
-
-  window.GUNS_NET.sendRespawnEvent?.({
-    x: player.pilotX,
-    y: player.pilotY,
-    state: "on-foot",
-    flying: isPilotAirborne(player),
-    maxHp: 1
-  });
-}
-
-function setupNetworkCombatEvents() {
-  if (networkCombatEventsInitialized) return;
-  if (!window.GUNS_NET?.on) return;
-
-  networkCombatEventsInitialized = true;
-  window.GUNS_NET.on("damage:event", message => {
-    applyNetworkDamageEvent(message.damage);
-  });
-  window.GUNS_NET.on("death:event", message => {
-    applyNetworkDeathEvent(message.death);
-  });
-  window.GUNS_NET.on("respawn:event", message => {
-    applyNetworkRespawnEvent(message.respawn);
-  });
-}
-
-function setupNetworkRoomConfigEvents() {
-  if (networkRoomConfigEventsInitialized) return;
-  if (!window.GUNS_NET?.on) return;
-
-  networkRoomConfigEventsInitialized = true;
-  window.GUNS_NET.on("room:config", message => {
-    applyNetworkRoomConfig(message.room);
-  });
-}
-
-function setupNetworkInventoryEvents() {
-  if (networkInventoryEventsInitialized) return;
-  if (!window.GUNS_NET?.on) return;
-
-  networkInventoryEventsInitialized = true;
-  window.GUNS_NET.on("inventory:sync", message => {
-    window.GUNS_APP?.syncInventory?.(message.user || message.inventory);
-  });
-}
-
-function setupNetworkServerSnapshotEvents() {
-  if (networkServerSnapshotEventsInitialized) return;
-  if (!window.GUNS_NET?.on) return;
-
-  networkServerSnapshotEventsInitialized = true;
-  window.GUNS_NET.on("server:snapshot", message => {
-    applyNetworkServerSnapshot(message.snapshot, message.serverTime);
-  });
-  window.GUNS_NET.on("arena:state", message => {
-    applyNetworkArenaScore(message.arena);
-  });
-}
-
-function applyNetworkServerSnapshot(snapshot, serverTime = 0) {
-  if (!snapshot) return;
-  if (serverTime && serverTime <= lastAppliedServerSnapshotAt) return;
-
-  lastAppliedServerSnapshotAt = serverTime || Date.now();
-
-  if (snapshot.state === "on-foot" && player.state === "alive") {
-    forcePlayerToServerFootSnapshot(snapshot);
-    return;
-  }
-
-  applyServerPositionCorrection(snapshot);
-}
-
-function applyNetworkArenaScore(arena) {
-  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
-
-  if (!arena || !ownClientId) return;
-
-  const ownPlayer = (arena.players || [])
-    .find(row => row.id === ownClientId);
-  const ownScoreboardRow = (arena.scoreboard || [])
-    .find(row => row.id === ownClientId);
-  const serverScore = Number(ownScoreboardRow?.score ?? ownPlayer?.score);
-
-  if (!Number.isFinite(serverScore)) return;
-
-  const currentScore = Math.max(0, Math.floor(player.score || 0));
-  const nextScore = Math.max(currentScore, Math.floor(serverScore));
-  const delta = nextScore - currentScore;
-
-  player.score = nextScore;
-
-  if (delta > 0) {
-    window.GUNS_APP?.addExchangeScore?.(delta);
-  }
-
-  if (ownScoreboardRow) {
-    player.pilotKills = Math.max(0, Math.floor(Number(ownScoreboardRow.pilotKills) || 0));
-    player.cannonBreaks = Math.max(0, Math.floor(Number(ownScoreboardRow.cannonBreaks) || 0));
-    player.pilotDeaths = Math.max(0, Math.floor(Number(ownScoreboardRow.pilotDeaths) || 0));
-  }
-}
-
-function forcePlayerToServerFootSnapshot(snapshot) {
-  const x = Number(snapshot.x);
-  const y = Number(snapshot.y);
-
-  player.state = "pilot";
-  player.exitRequested = false;
-  player.exitStopTimer = 0;
-  player.knockback = null;
-  player.pilotKnockback = null;
-  player.pilotEject = null;
-  player.pilotHp = Math.max(1, Number(snapshot.hp) || player.pilotHp || 1);
-  player.pilotImmunity = Math.max(player.pilotImmunity || 0, 0.35);
-  player.pilotFlyState = snapshot.flying ? "flying" : "ground";
-  player.pilotFlyTime = 0;
-
-  if (Number.isFinite(x)) {
-    player.pilotX = x;
-  }
-
-  if (Number.isFinite(y)) {
-    player.pilotY = y;
-  }
-
-  clampPilotToRoom(player);
-}
-
-function applyServerPositionCorrection(snapshot) {
-  const x = Number(snapshot.x);
-  const y = Number(snapshot.y);
-
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-
-  if (snapshot.state === "in-cannon" && player.state === "alive") {
-    correctPointTowardServer(player, "x", "y", x, y, player.radiusOuter);
-    return;
-  }
-
-  if (snapshot.state === "on-foot" && player.state === "pilot") {
-    correctPointTowardServer(player, "pilotX", "pilotY", x, y, player.pilotRadius);
-  }
-}
-
-function correctPointTowardServer(unit, xKey, yKey, serverX, serverY, radius = 0) {
-  const dx = serverX - unit[xKey];
-  const dy = serverY - unit[yKey];
-  const distance = Math.hypot(dx, dy);
-
-  if (distance <= SERVER_POSITION_CORRECTION_DEADZONE) return;
-
-  const ratio = distance >= SERVER_POSITION_CORRECTION_SNAP_DISTANCE
-    ? 1
-    : SERVER_POSITION_CORRECTION_BLEND;
-
-  unit[xKey] += dx * ratio;
-  unit[yKey] += dy * ratio;
-
-  if (xKey === "x") {
-    clampToRoomPoint(unit, radius);
-  } else {
-    clampPilotToRoom(unit);
-  }
-}
-
-function applyNetworkRoomConfig(room) {
-  if (!room?.id) return;
-
-  window.GUNS_SHARED_CONFIG ||= {};
-  window.GUNS_SHARED_CONFIG.rooms ||= {};
-  window.GUNS_SHARED_CONFIG.rooms[room.id] = room;
-
-  if (room.id !== activeRoomId) return;
-
-  ACTIVE_ROOM = room;
-  ROOM_GEOMETRY = window.GUNS_ROOM_ENTRY.createRoomGeometryState(ACTIVE_ROOM);
-  ROOM_SHAPE = ROOM_GEOMETRY.shape;
-  ROOM_RADIUS = ROOM_GEOMETRY.radius;
-  ROOM_WIDTH = ROOM_GEOMETRY.width;
-  ROOM_HEIGHT = ROOM_GEOMETRY.height;
-}
-
-function isNetworkEventForPlayer(event) {
-  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
-
-  return !!ownClientId && event?.targetId === ownClientId;
-}
-
-function applyNetworkDamageEvent(event) {
-  if (!isNetworkEventForPlayer(event)) return;
-
-  const afterHp = Math.max(0, Number(event.afterHp) || 0);
-
-  if (event.targetKind === "cannon" && player.state === "alive") {
-    player.hp = afterHp;
-    return;
-  }
-
-  if (event.targetKind === "pilot" && player.state === "pilot") {
-    player.pilotHp = afterHp;
-  }
-}
-
-function applyNetworkDeathEvent(event) {
-  if (!isNetworkEventForPlayer(event)) return;
-
-  if (event.targetKind === "cannon" && player.state === "alive") {
-    destroyCannon(player);
-    return;
-  }
-
-  if (event.targetKind !== "pilot") return;
-  if (isPilotDialogOpen()) return;
-
-  addStain(
-    player.pilotX,
-    player.pilotY,
-    player.color,
-    getUnitDisplayName(player)
-  );
-  dropCarriedPowerups(player);
-  window.GUNS_DEATH_FLOW.applyPilotDeathState({
-    victim: player,
-    pilotRadius: PILOT_RADIUS,
-    pilotImmunityTime: PILOT_IMMUNITY_TIME,
-    clampPilotToRoom
-  });
-  startPlayerDeathPrompt();
-}
-
-function applyNetworkRespawnEvent(event) {
-  if (!isNetworkEventForPlayer({
-    targetId: event?.clientId
-  })) {
-    return;
-  }
-
-  player.pilotX = Number(event.x) || player.pilotX;
-  player.pilotY = Number(event.y) || player.pilotY;
-  player.pilotHp = Math.max(1, Number(event.hp) || 1);
-  player.pilotImmunity = PILOT_IMMUNITY_TIME;
-  player.pilotKnockback = null;
-  player.pilotEject = null;
-  player.pilotWeaponCooldown = 0;
-  player.pilotFlyState = event.flying ? player.pilotFlyState : "falling";
-  player.pilotFlyTime = 0;
-  player.state = "pilot";
-}
-
-function drawNameLabel(text, x, y, color = "#000000", scale = 1) {
+function drawNameLabel(text, x, y, color = LCD_INK, scale = 1) {
   ctx.save();
 
   ctx.font = `${Math.round(12 * scale)}px monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillStyle = color || "#000000";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = LCD_BG_LIGHT;
+  ctx.fillStyle = color;
 
+  ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
 
   ctx.restore();
@@ -6769,38 +5505,6 @@ function drawBullets() {
 
     ctx.fill();
   }
-}
-
-function drawServerBullets() {
-  const bullets = window.GUNS_NET?.getServerBullets?.() || [];
-  const ownClientId = window.GUNS_NET?.describe?.().clientId || "";
-
-  if (!bullets.length) return;
-
-  ctx.save();
-  ctx.globalAlpha = 0.8;
-  ctx.fillStyle = LCD_INK;
-
-  for (const bullet of bullets) {
-    if (bullet.ownerId === ownClientId) continue;
-
-    const p = worldToScreen(
-      bullet.x,
-      bullet.y
-    );
-
-    ctx.beginPath();
-    ctx.arc(
-      p.x,
-      p.y,
-      z(bullet.radius || 4),
-      0,
-      Math.PI * 2
-    );
-    ctx.fill();
-  }
-
-  ctx.restore();
 }
 
 function drawTrails() {
@@ -7112,7 +5816,7 @@ function drawPilot(unit) {
 
   ctx.save();
 
-  if (!isUserBaseRoom() && unit.pilotImmunity > 0) {
+  if (!isUserCabinetRoom() && unit.pilotImmunity > 0) {
     ctx.globalAlpha = 0.22;
   }
 
@@ -7132,31 +5836,46 @@ function drawPilot(unit) {
 
   ctx.restore();
 
-  drawAnimatedPilotCarrySlot(
-    unit,
-    getPilotCarrySlot(unit),
-    p.x,
-    p.y - z(unit.pilotRadius + 22),
-    z(30)
-  );
+  if (unit.carriedAmmoValue > 0 || unit.carriedRepairValue > 0) {
+    ctx.save();
+
+    const ax = p.x + z(unit.pilotRadius + 10);
+    const ay = p.y + z(unit.pilotRadius + 4);
+    const r = z(8);
+
+    ctx.globalAlpha =
+      !isUserCabinetRoom() && unit.pilotImmunity > 0 ? 0.22 : 1;
+
+    ctx.beginPath();
+    ctx.arc(ax, ay, r, 0, Math.PI * 2);
+    ctx.fillStyle = LCD_BG_LIGHT;
+    ctx.fill();
+
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = Math.max(1, z(1.5));
+    ctx.stroke();
+
+    ctx.fillStyle = LCD_INK;
+    ctx.font = `${Math.max(8, Math.round(9 * camera.scale))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    if (unit.carriedRepairValue > 0) {
+      drawRepairPackIcon(ax, ay);
+    } else {
+      ctx.fillText(unit.carriedAmmoValue, ax, ay);
+    }
+
+    ctx.restore();
+  }
 
   drawNameLabel(
     getUnitLabelName(unit),
     p.x,
-    p.y + z(unit.pilotRadius + 15),
-    "#000000",
+    p.y - z(unit.pilotRadius + 15),
+    unit.color,
     unit.pilotRadius / PILOT_RADIUS
   );
-
-  if (unit.isPlayer) {
-    drawNameLabel(
-      `${getPlayerGunsCoinBalance()}`,
-      p.x,
-      p.y + z(unit.pilotRadius + 39),
-      "#000000",
-      unit.pilotRadius / PILOT_RADIUS
-    );
-  }
 }
 
 function angleDelta(from, to) {
@@ -7308,7 +6027,7 @@ function drawRemotePilot(snapshot) {
 }
 
 function drawRemotePilots() {
-  if (isUserBaseRoom()) return;
+  if (isUserCabinetRoom()) return;
 
   const snapshots = window.GUNS_NET?.getRemoteSnapshots?.() || [];
   const activeIds = new Set();
@@ -7687,8 +6406,6 @@ function getNearestPilotlessCannon(fromUnit) {
     if (isUnitHidden(cannon)) continue;
     if (cannon.cannonDestroyed) continue;
     if (cannon.state !== "pilot") continue;
-    if (isServerCannonUnavailable(cannon)) continue;
-    if (isCannonOccupiedByRemote(cannon)) continue;
 
     const d = Math.hypot(
       fromUnit.pilotX - cannon.x,
@@ -8023,53 +6740,32 @@ function drawPauseOverlay() {
 }
 
 function drawModeBadge(label) {
-  const sprite = getModeBadgeSprite(label);
-  const width = sprite.width;
-  const height = sprite.height;
+  ctx.save();
+
+  ctx.font = "12px monospace";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+
+  const paddingX = 8;
+  const paddingY = 5;
+  const width = ctx.measureText(label).width + paddingX * 2;
+  const height = 22;
   const x = window.innerWidth - 16 - width;
   const y = 16;
 
-  ctx.drawImage(sprite, x, y);
-}
+  ctx.globalAlpha = 0.90;
+  ctx.fillStyle = LCD_BG_LIGHT;
+  ctx.fillRect(x, y, width, height);
 
-function getModeBadgeSprite(label) {
-  const textValue = String(label || "");
-  const key = `${textValue}|${LCD_BG_LIGHT}|${LCD_INK}`;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = LCD_INK;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, width, height);
 
-  if (modeBadgeSpriteCache.has(key)) {
-    return modeBadgeSpriteCache.get(key);
-  }
+  ctx.fillStyle = LCD_INK;
+  ctx.fillText(label, window.innerWidth - 16 - paddingX, y + paddingY);
 
-  const scratch = getModeBadgeSprite.scratch ||
-    (getModeBadgeSprite.scratch = document.createElement("canvas"));
-  const scratchCtx = getModeBadgeSprite.ctx ||
-    (getModeBadgeSprite.ctx = scratch.getContext("2d"));
-  const paddingX = 8;
-  const paddingY = 5;
-
-  scratchCtx.font = "12px monospace";
-  const width = Math.ceil(scratchCtx.measureText(textValue).width + paddingX * 2);
-  const height = 22;
-  const canvas = document.createElement("canvas");
-  const spriteCtx = canvas.getContext("2d");
-
-  canvas.width = width;
-  canvas.height = height;
-  spriteCtx.font = "12px monospace";
-  spriteCtx.textAlign = "right";
-  spriteCtx.textBaseline = "top";
-  spriteCtx.globalAlpha = 0.90;
-  spriteCtx.fillStyle = LCD_BG_LIGHT;
-  spriteCtx.fillRect(0, 0, width, height);
-  spriteCtx.globalAlpha = 1;
-  spriteCtx.strokeStyle = LCD_INK;
-  spriteCtx.lineWidth = 1;
-  spriteCtx.strokeRect(0.5, 0.5, width - 1, height - 1);
-  spriteCtx.fillStyle = LCD_INK;
-  spriteCtx.fillText(textValue, width - paddingX, paddingY);
-  modeBadgeSpriteCache.set(key, canvas);
-
-  return canvas;
+  ctx.restore();
 }
 
 function formatModeTime(ms) {
@@ -8081,10 +6777,6 @@ function formatModeTime(ms) {
 }
 
 function getModeWinnerLabel() {
-  if (activeModeState?.winnerNick) {
-    return activeModeState.winnerNick;
-  }
-
   const winnerId = activeModeState?.winnerId;
   const winner = units.find(unit => unit.id === winnerId);
 
@@ -8092,7 +6784,7 @@ function getModeWinnerLabel() {
 }
 
 function drawModeStateOverlay() {
-  if (!activeModeState || isUserBaseRoom()) return;
+  if (!activeModeState || isUserCabinetRoom()) return;
 
   if (
     !activeModeState.ended &&
@@ -8125,56 +6817,6 @@ function drawModeStateOverlay() {
   ctx.font = "14px monospace";
   ctx.fillText(`WINNER ${getModeWinnerLabel()}`, x + panelW / 2, y + 76);
   ctx.restore();
-}
-
-function drawMultiplayerDebugOverlay() {
-  if (!MULTIPLAYER_DEBUG) return;
-
-  const state = window.GUNS_NET?.getDebugState?.() || {};
-  const lines = [
-    `net ${state.connected ? "on" : "off"} ${state.mode || "-"}`,
-    `client ${shortDebugId(state.clientId)}`,
-    `room ${state.roomId || "-"}`,
-    `clients ${state.roomClientCount ?? 0}`,
-    `peers ${state.peerCount ?? 0}`,
-    `remote ${state.remoteSnapshotCount ?? 0}`,
-    `match ${shortDebugId(state.matchId)}`,
-    `state ${state.matchState || "-"}`,
-    `left ${formatModeTime(state.matchRemainingMs || 0)}`
-  ];
-  const panelW = 278;
-  const panelH = 18 + lines.length * 18;
-  const x = window.innerWidth - panelW - 12;
-  const y = 12;
-
-  ctx.save();
-  ctx.fillStyle = LCD_PANEL;
-  ctx.globalAlpha = 0.92;
-  ctx.fillRect(x, y, panelW, panelH);
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = LCD_INK;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, panelW, panelH);
-  ctx.fillStyle = LCD_INK;
-  ctx.font = "13px monospace";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], x + 10, y + 9 + i * 18);
-  }
-
-  ctx.restore();
-}
-
-function shortDebugId(value) {
-  const textValue = String(value || "");
-
-  if (!textValue) return "-";
-
-  return textValue.length > 18
-    ? `${textValue.slice(0, 8)}...${textValue.slice(-6)}`
-    : textValue;
 }
 
 function drawFlyMode() {
@@ -8233,58 +6875,31 @@ function drawDeathPromptButtons() {
   const buttons = getDeathPromptButtons();
   playerDeathPrompt.buttons = buttons;
 
+  ctx.save();
+
+  ctx.font = "12px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
   for (const button of buttons) {
-    ctx.drawImage(
-      getDeathButtonSprite(
-        button.label,
-        button.w,
-        button.h
-      ),
-      button.x,
-      button.y
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = LCD_BG_LIGHT;
+    ctx.fillRect(button.x, button.y, button.w, button.h);
+
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = LCD_INK;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(button.x, button.y, button.w, button.h);
+
+    ctx.fillStyle = LCD_INK;
+    ctx.fillText(
+      button.label,
+      button.x + button.w / 2,
+      button.y + button.h / 2
     );
   }
-}
 
-function getDeathButtonSprite(label, width = 116, height = 28) {
-  const textValue = String(label || "");
-  const key = `${textValue}|${width}x${height}|${LCD_BG_LIGHT}|${LCD_INK}`;
-
-  if (deathUiSpriteCache.has(key)) {
-    return deathUiSpriteCache.get(key);
-  }
-
-  const canvas = document.createElement("canvas");
-  const spriteCtx = canvas.getContext("2d");
-
-  canvas.width = width;
-  canvas.height = height;
-  spriteCtx.font = "12px monospace";
-  spriteCtx.textAlign = "center";
-  spriteCtx.textBaseline = "middle";
-  spriteCtx.globalAlpha = 0.92;
-  spriteCtx.fillStyle = LCD_BG_LIGHT;
-  spriteCtx.fillRect(0, 0, width, height);
-  spriteCtx.globalAlpha = 1;
-  spriteCtx.strokeStyle = LCD_INK;
-  spriteCtx.lineWidth = 1;
-  spriteCtx.strokeRect(0.5, 0.5, width - 1, height - 1);
-  spriteCtx.fillStyle = LCD_INK;
-  spriteCtx.fillText(
-    textValue,
-    width / 2,
-    height / 2
-  );
-  deathUiSpriteCache.set(key, canvas);
-
-  return canvas;
-}
-
-function prewarmDeathUiGraphics() {
-  getModeBadgeSprite(text("mode.dead"));
-  getModeBadgeSprite(text("mode.fly"));
-  getDeathButtonSprite(text("death.continue"), 116, 28);
-  getDeathButtonSprite(text("death.exit"), 116, 28);
+  ctx.restore();
 }
 
 function handleDeathPromptClick(x, y) {
@@ -8437,13 +7052,13 @@ function drawTutorialOverlay() {
 }
 
 function draw() {
-  const isBase = isUserBaseRoom();
+  const isCabinet = isUserCabinetRoom();
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGrid();
   drawTrails();
 
-  if (!isBase) {
+  if (!isCabinet) {
     drawStains();
 
     drawAmmoPacks();
@@ -8454,16 +7069,15 @@ function draw() {
 
   drawRoomObjects();
 
-  if (!isBase) {
+  if (!isCabinet) {
     drawBullets();
-    drawServerBullets();
   }
 
   for (const unit of units) {
     drawUnit(unit);
   }
 
-  if (!isBase) {
+  if (!isCabinet) {
     drawExplosions();
 
     drawPlayerCannonMarker();
@@ -8474,17 +7088,16 @@ function draw() {
 
   drawLCDOverlay();
 
-  if (!isBase) {
+  if (!isCabinet) {
     drawScoreboard();
   }
 
   drawFlyMode();
   drawModeStateOverlay();
-  if (!isBase) {
+  if (!isCabinet) {
     drawDeathPromptButtons();
   }
   drawHints();
-  drawMultiplayerDebugOverlay();
   drawTutorialOverlay();
 
   drawPauseOverlay();
@@ -8499,8 +7112,9 @@ function loop(now) {
   lastTime = now;
 
   if (window.GUNS_APP?.started !== false) {
-    if (!arenaGraphicsPrewarmed) {
-      arenaGraphicsPrewarmed = prewarmArenaGraphics();
+    if (!cannonSpritesPrewarmed) {
+      prewarmCannonSpritePalettes();
+      cannonSpritesPrewarmed = true;
     }
 
     update(dt);
@@ -8535,12 +7149,6 @@ window.addEventListener("mousedown", e => {
       return;
     }
 
-    if (handleTeleportClick(pointer.x, pointer.y)) {
-      mouse.down = false;
-      e.preventDefault();
-      return;
-    }
-
     mouse.down = true;
   }
 });
@@ -8565,12 +7173,6 @@ function shouldIgnoreGameKeyboard(e) {
 window.addEventListener("keydown", e => {
   if (shouldIgnoreGameKeyboard(e)) return;
 
-  if (PILOT_WEAPON_SLOTS[e.code]) {
-    selectPlayerPilotWeaponByType(PILOT_WEAPON_SLOTS[e.code]);
-    e.preventDefault();
-    return;
-  }
-
   if (
     (e.code === "Equal" || e.code === "NumpadAdd")
   ) {
@@ -8586,16 +7188,6 @@ window.addEventListener("keydown", e => {
   }
 
   if (e.code === "Space") {
-    if (isUserBaseRoom()) {
-      if (!keys.space) {
-        baseCursorFollowEnabled = !baseCursorFollowEnabled;
-      }
-
-      keys.space = true;
-      e.preventDefault();
-      return;
-    }
-
     keys.space = true;
     e.preventDefault();
   }
@@ -8611,7 +7203,7 @@ window.addEventListener("keydown", e => {
   }
 
   if (e.code === "KeyP") {
-    if (!keys.p && !isUserBaseRoom()) {
+    if (!keys.p && !isUserCabinetRoom()) {
       paused = !paused;
     }
 

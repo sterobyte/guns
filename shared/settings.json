@@ -4,8 +4,7 @@
     "gunsCoin": {
       "visitorGrant": 0,
       "playGrant": 0,
-      "registrationGrant": 0,
-      "exchangeScorePerCoin": 100
+      "registrationGrant": 0
     }
   }
 }

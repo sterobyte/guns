@@ -3,9 +3,6 @@
   "kind": "teleport",
   "title": "Teleport",
   "version": 1,
-  "behavior": {
-    "triggerDelaySeconds": 0
-  },
   "render": {
     "radius": 42
   },

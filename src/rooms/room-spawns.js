@@ -5,15 +5,7 @@
     if (mode === "fixed") return false;
     if (mode === "random") return true;
 
-    return !isUserBaseRoom(room);
-  }
-
-  function isUserBaseRoom(room) {
-    return (
-      room?.id === "user-cabinet" ||
-      room?.roomKind === "user-base" ||
-      room?.roomKind === "user-cabinet"
-    );
+    return room?.roomKind !== "user-cabinet";
   }
 
   function applyRoomSpawns(options) {
@@ -49,8 +41,6 @@
 
       if (botSpawn) {
         applyActorRoomSpawn(unit, botSpawn, room, options);
-      } else if (unit.roomHidden) {
-        options.resetUnit?.(unit);
       }
     }
   }
@@ -86,17 +76,11 @@
       ? !spawn
       : !options.isCannonAllowed?.(unit.gunType);
 
-    if (!spawn) {
-      if (unit.roomHidden) {
-        options.resetUnit?.(unit);
-      }
-      return;
-    }
+    if (!spawn) return;
 
     options.resetUnit?.(unit);
     unit.state = "pilot";
     unit.cannonDestroyed = false;
-    unit.cannonEntityId = spawn.cannonEntityId || spawn.unitId || unit.cannonEntityId;
     unit.x = Number(spawn.x || 0);
     unit.y = Number(spawn.y || 0);
     unit.pilotX = unit.x;
@@ -184,7 +168,6 @@
     unit.cannonDestroyed = false;
     unit.cannonEntityId =
       spawn.cannonEntityId ||
-      spawn.unitId ||
       unit.cannonEntityId ||
       `${unit.id}-${unit.gunType || "autogun"}`;
     unit.hp = Math.max(1, unit.hp || unit.maxHp);

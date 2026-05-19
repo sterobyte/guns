@@ -2,9 +2,6 @@
   const AUTH_MIN_PASSWORD_LENGTH = 6;
   const SERVICE_NICK_PREFIX = "visitor-";
   const FALLBACK_SERVICE_NICK = "visitor-0000";
-  const USER_BASE_ROOM_ID = "user-cabinet";
-  const USER_BASE_ROOM_KIND = "user-base";
-  const LEGACY_USER_BASE_ROOM_KIND = "user-cabinet";
   const state = {
     visit: null,
     pilot: null,
@@ -12,17 +9,12 @@
     pendingMode: "game",
     pendingNick: "",
     localCallsign: "",
-    exchangeScore: 0,
     walletGunsCoin: 0,
-    pilotWeapons: [],
     walletConfirmedByPickup: false
   };
   const teleportConfirm = {
     onYes: null,
     onNo: null
-  };
-  const cabinetMessageButtons = {
-    ok: null
   };
 
   window.GUNS_APP = {
@@ -44,98 +36,17 @@
     },
 
     getWalletGunsCoin() {
+      if (isServiceNick(this.playerNick)) return 0;
+
       return state.walletGunsCoin;
-    },
-
-    spendWalletGunsCoin(amount) {
-      const value = Math.max(0, Math.floor(Number(amount) || 0));
-
-      if (value <= 0) return true;
-      if (state.walletGunsCoin < value) return false;
-
-      state.walletGunsCoin -= value;
-      return true;
     },
 
     notifyWalletIncrease(entity) {
       notifyWalletIncrease(entity);
     },
 
-    addPilotWeapon(weaponId) {
-      const id = String(weaponId || "").trim();
-
-      if (id && !state.pilotWeapons.includes(id)) {
-        state.pilotWeapons.push(id);
-      }
-    },
-
-    hasPilotWeapon(weaponId) {
-      return state.pilotWeapons.includes(String(weaponId || "").trim());
-    },
-
-    getPilotWeapons() {
-      return [...state.pilotWeapons];
-    },
-
-    syncInventory(entityOrInventory) {
-      syncKnownInventory(
-        entityOrInventory?.inventory
-          ? entityOrInventory
-          : { inventory: entityOrInventory }
-      );
-    },
-
-    async purchasePilotWeapon(weaponId, priceGs, context = {}) {
-      const id = String(weaponId || "").trim();
-      const price = Math.max(0, Math.floor(Number(priceGs) || 0));
-
-      if (!id || price <= 0 || state.walletGunsCoin < price) {
-        return false;
-      }
-
-      const result = await window.GUNS_NET?.purchasePilotWeapon?.(
-        this.playerNick || getCallsign(),
-        id,
-        {
-          reason: "market-purchase",
-          itemType: "pilot-weapon",
-          itemId: id,
-          roomId: context.roomId,
-          instanceId: context.instanceId
-        }
-      );
-
-      if (!result?.ok) return false;
-
-      syncKnownWallet(result.user);
-      syncKnownInventory(result.user);
-      return result;
-    },
-
-    bankExchangeScore(score) {
-      const value = Math.max(0, Math.floor(Number(score) || 0));
-
-      state.exchangeScore = value;
-    },
-
-    addExchangeScore(score) {
-      const value = Math.floor(Number(score) || 0);
-
-      if (value !== 0) {
-        state.exchangeScore = Math.max(0, state.exchangeScore + value);
-      }
-    },
-
-    getExchangeScore() {
-      return state.exchangeScore;
-    },
-
-    handleBaseExchange() {
-      handleBaseExchange();
-    },
-
-    showBaseMessage(message) {
-      showBaseMessage(message);
+    showCabinetMessage(message) {
+      showCabinetMessage(message);
     },
 
     confirmServiceTeleport(options = {}) {
@@ -146,20 +57,18 @@
       return Boolean(state.pilot);
     },
 
-    getBasePilotActionLabel() {
+    getCabinetPilotActionLabel() {
       return state.pilot ? "LOGOUT" : "CHANGE CALLSIGN";
     },
 
-    handleBasePilotAction() {
+    handleCabinetPilotAction() {
       if (state.pilot) {
         logoutPilot();
       } else {
-        window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal");
+        showCabinetMessage("COMING SOON", {
+          onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("settings-terminal")
+        });
       }
-    },
-
-    syncBaseRoomPanel() {
-      syncBaseRoomPanel();
     },
 
     setPlayerNick(nick, options = {}) {
@@ -203,16 +112,14 @@
         nick: cleanNick
       }).catch(() => {});
       document.getElementById("start-screen")?.classList.add("hidden");
-      syncBaseRoomPanel();
     },
 
     stop() {
       this.started = true;
       this.mode = "game";
       window.GUNS_NET?.disconnect?.();
-      window.GUNS_LEGACY?.setActiveRoom?.(USER_BASE_ROOM_ID);
+      window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
       document.getElementById("start-screen")?.classList.add("cabinet-start");
-      syncBaseRoomPanel();
     }
   };
 
@@ -239,12 +146,10 @@
     const cabinetMessageClose = document.getElementById("cabinet-message-close");
     const teleportConfirmYes = document.getElementById("teleport-confirm-yes");
     const teleportConfirmNo = document.getElementById("teleport-confirm-no");
-    const cabinetRoomGo = document.getElementById("cabinet-room-go");
 
     applyRandomStartBackground();
     buildSkinButtons();
     buildRoomSelect();
-    buildBaseRoomSelect();
     window.GUNS_I18N?.apply();
     syncLanguageButtons();
     syncSkinButtons();
@@ -273,7 +178,7 @@
     input.value = "";
     setStatus(t("identity.loading"));
     initializeIdentity().finally(() => {
-      enterBaseStart();
+      enterCabinetStart();
     });
 
     form.addEventListener("submit", event => {
@@ -368,11 +273,7 @@
     });
 
     cabinetMessageOk?.addEventListener("click", () => {
-      if (cabinetMessageButtons.ok) {
-        cabinetMessageButtons.ok();
-      } else {
-        closeCabinetMessage();
-      }
+      closeCabinetMessage();
     });
 
     cabinetMessageClose?.addEventListener("click", () => {
@@ -389,22 +290,17 @@
       teleportConfirm.onNo?.();
     });
 
-    cabinetRoomGo?.addEventListener("click", () => {
-      goToBaseSelectedRoom();
-    });
-
   });
 
-  function enterBaseStart() {
+  function enterCabinetStart() {
     window.GUNS_APP.setPlayerNick(state.pilot?.nick || getCallsign(), {
       persist: Boolean(state.pilot?.nick)
     });
-    window.GUNS_APP.roomId = USER_BASE_ROOM_ID;
+    window.GUNS_APP.roomId = "user-cabinet";
     window.GUNS_APP.started = true;
     window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
-    window.GUNS_LEGACY?.setActiveRoom?.(USER_BASE_ROOM_ID);
+    window.GUNS_LEGACY?.setActiveRoom?.("user-cabinet");
     document.getElementById("start-screen")?.classList.add("cabinet-start");
-    syncBaseRoomPanel();
   }
 
   let pilotDialogCheckTimer = 0;
@@ -445,14 +341,13 @@
 
   let cabinetMessageOnClose = null;
 
-  function showBaseMessage(message, options = {}) {
+  function showCabinetMessage(message, options = {}) {
     const dialog = document.getElementById("cabinet-message-dialog");
     const text = document.getElementById("cabinet-message-text");
 
     cabinetMessageOnClose =
       typeof options.onClose === "function" ? options.onClose : null;
     if (text) text.textContent = message || "";
-    setCabinetMessageButtons(options.buttons);
     dialog?.classList.remove("hidden");
   }
 
@@ -460,18 +355,7 @@
     document.getElementById("cabinet-message-dialog")?.classList.add("hidden");
     const onClose = cabinetMessageOnClose;
     cabinetMessageOnClose = null;
-    setCabinetMessageButtons();
     onClose?.();
-  }
-
-  function setCabinetMessageButtons(buttons = {}) {
-    const okButton = document.getElementById("cabinet-message-ok");
-    const okLabel = buttons.okLabel || "OK";
-
-    cabinetMessageButtons.ok =
-      typeof buttons.onOk === "function" ? buttons.onOk : null;
-
-    if (okButton) okButton.textContent = okLabel;
   }
 
   function showTeleportConfirm(options = {}) {
@@ -658,23 +542,13 @@
   }
 
   function syncKnownWallet(entity) {
-    syncKnownInventory(entity);
+    if (!state.walletConfirmedByPickup) return;
 
     const coins = Number(entity?.wallet?.gunsCoin);
 
     if (!Number.isFinite(coins)) return;
 
     state.walletGunsCoin = Math.max(0, Math.floor(coins));
-  }
-
-  function syncKnownInventory(entity) {
-    const weapons = entity?.inventory?.pilotWeapons;
-
-    if (!Array.isArray(weapons)) return;
-
-    state.pilotWeapons = Array.from(
-      new Set(weapons.map((weaponId) => String(weaponId || "").trim()).filter(Boolean))
-    );
   }
 
   function notifyWalletIncrease(entity) {
@@ -689,61 +563,6 @@
     state.walletGunsCoin = Math.max(0, Math.floor(coins));
 
     if (delta <= 0) return;
-  }
-
-  async function handleBaseExchange() {
-    window.GUNS_APP.bankExchangeScore(
-      window.GUNS_LEGACY?.player?.score || state.exchangeScore
-    );
-
-    const score = Math.max(0, Math.floor(state.exchangeScore || 0));
-
-    if (score <= 0) {
-      window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal");
-      return;
-    }
-
-    showBaseMessage(`EXCHANGE ${score} SCORE?`, {
-      buttons: {
-        okLabel: "CHANGE",
-        onOk: () => confirmBaseExchange(score)
-      }
-    });
-  }
-
-  async function confirmBaseExchange(score) {
-    setCabinetMessageButtons();
-
-    try {
-      const result = await window.GUNS_NET?.exchangeScore?.(
-        state.pilot?.nick || window.GUNS_APP.playerNick,
-        score
-      );
-
-      if (!result?.ok) {
-        throw new Error(result?.message || result?.error || "Exchange rejected");
-      }
-
-      state.exchangeScore = Math.max(0, Math.floor(result.remainingScore || 0));
-      if (window.GUNS_LEGACY?.player) {
-        window.GUNS_LEGACY.player.score = state.exchangeScore;
-      }
-      const previousCoins = state.walletGunsCoin;
-      syncKnownWallet(result.user);
-      if (state.walletGunsCoin <= previousCoins && result.gunsCoinAdded > 0) {
-        state.walletGunsCoin = previousCoins + Math.floor(result.gunsCoinAdded);
-      }
-      showBaseMessage(
-        `EXCHANGED ${result.exchangedScore} SCORE FOR ${result.gunsCoinAdded} GS`,
-        {
-          onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
-        }
-      );
-    } catch (error) {
-      showBaseMessage(String(error?.message || "EXCHANGE FAILED").toUpperCase(), {
-        onClose: () => window.GUNS_LEGACY?.bouncePlayerFromRoomObject?.("exchange-terminal")
-      });
-    }
   }
 
   async function handlePlay(mode) {
@@ -983,7 +802,18 @@
 
     if (!select) return;
 
-    fillRoomSelect(select, rooms);
+    select.textContent = "";
+
+    Object.values(rooms)
+      .filter(isSelectableRoom)
+      .forEach(room => {
+        const option = document.createElement("option");
+        option.value = room.id;
+        option.textContent = room.description
+          ? `${room.title || room.id} - ${room.description}`
+          : room.title || room.id;
+        select.appendChild(option);
+      });
 
     const defaultRoomId = getDefaultRoomId(rooms);
     const roomId = isSelectableRoom(rooms[defaultRoomId])
@@ -997,49 +827,6 @@
       const nextRoomId = getSelectedRoomId();
       window.GUNS_APP.roomId = nextRoomId;
     });
-  }
-
-  function buildBaseRoomSelect() {
-    const select = document.getElementById("cabinet-room-select");
-    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
-
-    if (!select) return;
-
-    fillRoomSelect(select, rooms);
-    select.value = getDefaultRoomId(rooms);
-  }
-
-  function fillRoomSelect(select, rooms) {
-    select.textContent = "";
-
-    Object.values(rooms)
-      .filter(isSelectableRoom)
-      .filter(room => !isUserBaseRoom(room))
-      .sort((a, b) => String(a.title || a.id).localeCompare(String(b.title || b.id)))
-      .forEach(room => {
-        const option = document.createElement("option");
-        option.value = room.id;
-        option.textContent = getRoomOptionLabel(room);
-        select.appendChild(option);
-      });
-  }
-
-  function getRoomOptionLabel(room) {
-    const roomId = String(room?.id || "");
-    const titleKey = `room.${roomId}.title`;
-    const descriptionKey = `room.${roomId}.description`;
-    const translatedTitle = window.GUNS_I18N?.t?.(titleKey);
-    const translatedDescription = window.GUNS_I18N?.t?.(descriptionKey);
-    const title =
-      translatedTitle && translatedTitle !== titleKey
-        ? translatedTitle
-        : room?.title || roomId;
-    const description =
-      translatedDescription && translatedDescription !== descriptionKey
-        ? translatedDescription
-        : room?.description || "";
-
-    return description ? `${title} - ${description}` : title;
   }
 
   function getSelectedRoomId() {
@@ -1060,39 +847,6 @@
         ? defaultRoomId
         : Object.values(rooms || {}).find(isSelectableRoom)?.id ||
           defaultRoomId
-    );
-  }
-
-  function goToBaseSelectedRoom() {
-    const roomId = document.getElementById("cabinet-room-select")?.value || getSelectedRoomId();
-    const rooms = window.GUNS_SHARED_CONFIG?.rooms || {};
-
-    if (!rooms[roomId] || !isSelectableRoom(rooms[roomId])) return;
-
-    window.GUNS_APP.roomId = roomId;
-    window.GUNS_LEGACY?.clearPlayerDeathPrompt?.();
-    window.GUNS_LEGACY?.setActiveRoom?.(roomId);
-    window.GUNS_NET?.disconnect?.();
-    window.GUNS_NET?.connect?.({
-      roomId,
-      nick: window.GUNS_APP.playerNick || getCallsign()
-    }).catch(() => {});
-    syncBaseRoomPanel();
-  }
-
-  function syncBaseRoomPanel() {
-    const panel = document.getElementById("cabinet-room-panel");
-    const activeRoom = window.GUNS_LEGACY?.getActiveRoom?.();
-    const isBase = isUserBaseRoom(activeRoom);
-
-    panel?.classList.toggle("hidden", !isBase);
-  }
-
-  function isUserBaseRoom(room) {
-    return (
-      room?.id === USER_BASE_ROOM_ID ||
-      room?.roomKind === USER_BASE_ROOM_KIND ||
-      room?.roomKind === LEGACY_USER_BASE_ROOM_KIND
     );
   }
 
@@ -1137,67 +891,21 @@
   }
 
   function createLocalCallsign() {
-    if (isValidLocalCallsign(state.localCallsign)) return state.localCallsign;
+    if (state.localCallsign) return state.localCallsign;
 
-    try {
-      const stored = localStorage.getItem("guns.localCallsign") || "";
-      if (isValidLocalCallsign(stored)) {
-        state.localCallsign = stored;
-        return state.localCallsign;
-      }
-    } catch {}
-
-    state.localCallsign = `visitor-${createLocalVisitCode()}`;
-    try {
-      localStorage.setItem("guns.localCallsign", state.localCallsign);
-    } catch {}
+    state.localCallsign = FALLBACK_SERVICE_NICK;
     return state.localCallsign;
   }
 
-  function isValidLocalCallsign(callsign) {
-    return /^visitor-\d{4}$/u.test(String(callsign || "")) &&
-      callsign !== FALLBACK_SERVICE_NICK;
-  }
+  function createTail() {
+    const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let tail = "";
 
-  function createLocalVisitCode() {
-    const firstSeenKey = "guns.localFirstSeenAt";
-    let firstSeenAt = 0;
-
-    try {
-      firstSeenAt = Number(localStorage.getItem(firstSeenKey) || 0);
-      if (!Number.isFinite(firstSeenAt) || firstSeenAt <= 0) {
-        firstSeenAt = Date.now();
-        localStorage.setItem(firstSeenKey, String(firstSeenAt));
-      }
-    } catch {
-      firstSeenAt = Date.now();
+    for (let i = 0; i < 3; i++) {
+      tail += alphabet[Math.floor(Math.random() * alphabet.length)];
     }
 
-    const meta = collectVisitMeta();
-    const source = [
-      meta.browser,
-      meta.os,
-      meta.device,
-      meta.language,
-      meta.timezone,
-      meta.screenWidth,
-      meta.screenHeight,
-      meta.pixelRatio,
-      firstSeenAt
-    ].join("|");
-
-    return String(1000 + (hashStringToNumber(source) % 9000)).padStart(4, "0");
-  }
-
-  function hashStringToNumber(value) {
-    let hash = 2166136261;
-
-    for (let i = 0; i < String(value || "").length; i++) {
-      hash ^= String(value).charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-
-    return Math.abs(hash >>> 0);
+    return tail;
   }
 
   function buildSkinButtons() {

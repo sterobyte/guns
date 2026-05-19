@@ -1,24 +1,13 @@
 {
   "name": "guns-next1",
-  "version": "0.16.93",
+  "version": "0.14.0",
   "private": true,
   "description": "Project wrapper around gunsdemo22.html with legacy behavior preserved.",
-  "dependencies": {
-    "mongodb": "^6.18.0"
-  },
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "dev:all": "start-local.cmd",
     "server": "node server/index.mjs",
-    "start": "node server/index.mjs",
     "build:config": "node scripts/build-config.mjs",
-    "check": "node scripts/check.mjs",
-    "migrate:users:mongo": "node scripts/migrate-users-to-mongo.mjs",
-    "backup:users": "node scripts/backup-users.mjs",
-    "compare:users:mongo": "node scripts/compare-users-store.mjs",
-    "migrate:users:mongo:pipeline": "node scripts/run-users-mongo-migration.mjs",
-    "backup:mongo": "node scripts/backup-mongo.mjs",
-    "restore:mongo": "node scripts/restore-mongo.mjs",
-    "test:multiplayer": "node scripts/test-multiplayer.mjs"
+    "check": "node scripts/check.mjs"
   }
 }
