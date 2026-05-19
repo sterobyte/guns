@@ -798,7 +798,11 @@ export class ArenaRoomState {
       bullet.lastCheckedAt = now;
 
       if (hit) {
-        hits.push(this.applyHitDamage(hit, now));
+        const damage = this.applyHitDamage(hit, now);
+
+        if (damage) {
+          hits.push(damage);
+        }
         this.bullets.delete(id);
       }
     }
@@ -838,6 +842,8 @@ export class ArenaRoomState {
         continue;
       }
 
+      const targetIsCannon = target.state === "in-cannon";
+
       return {
         id: `${now}-${bullet.id}-${target.id}`,
         bulletId: bullet.id,
@@ -845,7 +851,8 @@ export class ArenaRoomState {
         ownerNick: bullet.ownerNick,
         targetId: target.id,
         targetNick: target.nick,
-        targetKind: target.state === "in-cannon" ? "cannon" : "pilot",
+        targetKind: targetIsCannon ? "cannon" : "pilot",
+        targetCannonId: targetIsCannon ? target.occupiedCannonId : "",
         damage: bullet.damage,
         weapon: bullet.weapon,
         x: target.x,
@@ -859,9 +866,22 @@ export class ArenaRoomState {
 
   applyHitDamage(hit, now) {
     const target = this.players.get(hit.targetId);
-    const targetCannon = hit.targetKind === "cannon" && target?.occupiedCannonId
-      ? this.cannons.get(target.occupiedCannonId)
-      : null;
+
+    if (!target) return null;
+
+    let targetCannon = null;
+
+    if (hit.targetKind === "cannon") {
+      const hitCannonId = sanitizeEventText(hit.targetCannonId || hit.cannonEntityId, 64);
+
+      if (!target.occupiedCannonId) return null;
+      if (hitCannonId && hitCannonId !== target.occupiedCannonId) return null;
+
+      targetCannon = this.cannons.get(target.occupiedCannonId);
+
+      if (!targetCannon || isServerCannonBroken(targetCannon)) return null;
+    }
+
     const beforeHp = Math.max(0, finiteNumber(targetCannon?.hp ?? target?.hp));
     const maxHp = Math.max(1, finiteNumber(targetCannon?.maxHp ?? target?.maxHp) || 1);
     const damage = Math.max(0, finiteNumber(hit.damage));
