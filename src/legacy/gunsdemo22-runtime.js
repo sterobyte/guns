@@ -607,6 +607,10 @@ const PILOT_WEAPON_SLOTS = {
   Digit2: "pistol",
   Numpad2: "pistol"
 };
+const PILOT_WEAPON_ICON_SOURCES = {
+  knife: "./assets/pilot-weapons/guns-knife.png",
+  pistol: "./assets/pilot-weapons/guns-pistol.png"
+};
 const GRAVE_NAME_TRIGGER_RADIUS = 32;
 const GRAVE_NAME_SHOW_TIME = 1;
 
@@ -1814,6 +1818,10 @@ function preloadCannonSprites() {
 
     watchSpriteImagePrewarm(getSpriteImage(sprites.body?.src));
     watchSpriteImagePrewarm(getSpriteImage(sprites.turret?.src));
+  }
+
+  for (const src of Object.values(PILOT_WEAPON_ICON_SOURCES)) {
+    watchSpriteImagePrewarm(getSpriteImage(src));
   }
 }
 
@@ -5822,11 +5830,7 @@ function drawMarketItem(instance, definition) {
 
   ctx.save();
   ctx.translate(0, -height * 0.12);
-  if (icon === "knife") {
-    drawKnifeMarketIcon(iconSize);
-  } else {
-    drawPistolMarketIcon(iconSize);
-  }
+  drawPilotWeaponIcon(icon, iconSize);
   ctx.restore();
 
   ctx.fillStyle = LCD_INK;
@@ -5842,6 +5846,38 @@ function drawMarketItem(instance, definition) {
   ctx.fillText(`x${stock}`, width * 0.32, -height * 0.42);
 
   ctx.restore();
+}
+
+function getPilotWeaponIconImage(type) {
+  return getSpriteImage(PILOT_WEAPON_ICON_SOURCES[type] || "");
+}
+
+function drawPilotWeaponIcon(type, size) {
+  const icon = String(type || "").toLowerCase();
+  const image = getPilotWeaponIconImage(icon);
+
+  if (isSpriteImageReady(image)) {
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const scale = size / Math.max(width, height);
+    const drawWidth = width * scale;
+    const drawHeight = height * scale;
+
+    ctx.drawImage(
+      image,
+      -drawWidth / 2,
+      -drawHeight / 2,
+      drawWidth,
+      drawHeight
+    );
+    return;
+  }
+
+  if (icon === "knife") {
+    drawKnifeMarketIcon(size);
+  } else {
+    drawPistolMarketIcon(size);
+  }
 }
 
 function drawPistolMarketIcon(size) {
@@ -5892,11 +5928,7 @@ function drawPilotCarryIcon(slot, x, y, size) {
   ctx.translate(x, y);
 
   if (slot.kind === "weapon") {
-    if (slot.type === "knife") {
-      drawKnifeMarketIcon(size);
-    } else {
-      drawPistolMarketIcon(size);
-    }
+    drawPilotWeaponIcon(slot.type, size);
   } else if (slot.type === POWERUP_REPAIR) {
     const s = size / 32;
 
