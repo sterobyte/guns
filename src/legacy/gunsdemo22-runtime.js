@@ -6549,17 +6549,14 @@ function applyNetworkRespawnEvent(event) {
   player.state = "pilot";
 }
 
-function drawNameLabel(text, x, y, color = LCD_INK, scale = 1) {
+function drawNameLabel(text, x, y, color = "#000000", scale = 1) {
   ctx.save();
 
   ctx.font = `${Math.round(12 * scale)}px monospace`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = LCD_BG_LIGHT;
-  ctx.fillStyle = color;
+  ctx.fillStyle = color || "#000000";
 
-  ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
 
   ctx.restore();
@@ -7139,7 +7136,7 @@ function drawPilot(unit) {
     unit,
     getPilotCarrySlot(unit),
     p.x,
-    p.y - z(unit.pilotRadius + 29),
+    p.y - z(unit.pilotRadius + 22),
     z(30)
   );
 
@@ -7147,7 +7144,7 @@ function drawPilot(unit) {
     getUnitLabelName(unit),
     p.x,
     p.y + z(unit.pilotRadius + 15),
-    unit.color,
+    "#000000",
     unit.pilotRadius / PILOT_RADIUS
   );
 
@@ -7156,7 +7153,7 @@ function drawPilot(unit) {
       `${getPlayerGunsCoinBalance()}`,
       p.x,
       p.y + z(unit.pilotRadius + 39),
-      unit.color,
+      "#000000",
       unit.pilotRadius / PILOT_RADIUS
     );
   }
