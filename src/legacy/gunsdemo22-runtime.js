@@ -397,6 +397,7 @@ function resetUnitRuntimeState(unit) {
   unit.activePilotWeaponId = "";
   unit.pilotWeaponCooldown = 0;
   unit.pilotFireCooldown = 0;
+  unit.pilotCarryIconState = null;
   unit.carriedAmmoValue = 0;
   unit.carriedRepairValue = 0;
   unit.wreckRepair = 0;
@@ -599,6 +600,13 @@ const PILOT_EJECT_PEAK_RADIUS = 27;
 const PILOT_FLY_PEAK_RADIUS = 17;
 const PILOT_FLY_TRANSITION_TIME = 0.75;
 const PILOT_WEAPON_CONTACT_COOLDOWN = 0.65;
+const PILOT_CARRY_ICON_ANIMATION_MS = 520;
+const PILOT_WEAPON_SLOTS = {
+  Digit1: "knife",
+  Numpad1: "knife",
+  Digit2: "pistol",
+  Numpad2: "pistol"
+};
 const GRAVE_NAME_TRIGGER_RADIUS = 32;
 const GRAVE_NAME_SHOW_TIME = 1;
 
@@ -653,16 +661,39 @@ function getOwnedPilotWeaponByType(typeId) {
   }) || "";
 }
 
+function isOwnedPilotWeapon(weaponId) {
+  const id = String(weaponId || "").trim();
+
+  return !!id && playerHasPilotWeapon(id);
+}
+
+function getFallbackPilotWeaponId() {
+  return (
+    getOwnedPilotWeaponByType("pistol") ||
+    getOwnedPilotWeaponByType("knife") ||
+    ""
+  );
+}
+
 function getActivePilotWeaponId(unit) {
   if (unit?.isPlayer) {
-    return (
-      getOwnedPilotWeaponByType("pistol") ||
-      getOwnedPilotWeaponByType("knife") ||
-      ""
-    );
+    if (isOwnedPilotWeapon(unit.activePilotWeaponId)) {
+      return unit.activePilotWeaponId;
+    }
+
+    return getFallbackPilotWeaponId();
   }
 
   return unit?.activePilotWeaponId || "";
+}
+
+function selectPlayerPilotWeaponByType(typeId) {
+  const weaponId = getOwnedPilotWeaponByType(typeId);
+
+  if (!weaponId) return false;
+
+  player.activePilotWeaponId = weaponId;
+  return true;
 }
 
 function hasCarriedPowerup(unit) {
@@ -695,6 +726,20 @@ function getPilotCarrySlot(unit) {
     type: weapon.typeId,
     title: weapon.title
   };
+}
+
+function getPilotCarrySlotKey(slot) {
+  if (!slot) return "empty";
+  if (slot.kind === "weapon") return `weapon:${slot.weaponId}`;
+
+  return `powerup:${slot.type}:${Math.floor(Number(slot.value) || 0)}`;
+}
+
+function easeOutBack(t) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
 
 const cannonRenderMetrics = new Map();
@@ -1000,6 +1045,7 @@ function makeUnit(
     activePilotWeaponId: "",
     pilotWeaponCooldown: 0,
     pilotFireCooldown: 0,
+    pilotCarryIconState: null,
 
     pilotKnockback: null,
     pilotEject: null,
@@ -3103,7 +3149,7 @@ function updateNetworkPilotWeaponCollisions() {
   if (player.pilotEject) return;
   if (isPilotAirborne(player)) return;
 
-  const weaponId = getOwnedPilotWeaponByType("knife");
+  const weaponId = getActivePilotWeaponId(player);
   const weapon = getPilotWeaponDefinition(weaponId);
 
   if (weapon?.typeId !== "knife") return;
@@ -3161,7 +3207,7 @@ function applyPilotWeaponContact(attacker, victim) {
   if (!canUsePilotWeapon(attacker)) return;
 
   const weaponId = attacker.isPlayer
-    ? getOwnedPilotWeaponByType("knife")
+    ? getActivePilotWeaponId(attacker)
     : attacker.activePilotWeaponId || "";
   const weapon = getPilotWeaponDefinition(weaponId);
 
@@ -4777,9 +4823,10 @@ function updatePlayerPilotShooting() {
   if (isPilotDialogOpen()) return;
   if (!mouse.down || !mouse.active || player.pilotFireCooldown > 0) return;
 
-  const weaponId = getOwnedPilotWeaponByType("pistol");
+  const weaponId = getActivePilotWeaponId(player);
+  const weapon = getPilotWeaponDefinition(weaponId);
 
-  if (!weaponId) return;
+  if (weapon?.typeId !== "pistol") return;
 
   const target = screenToWorld(mouse.x, mouse.y);
   const angle = Math.atan2(
@@ -5865,6 +5912,62 @@ function drawPilotCarryIcon(slot, x, y, size) {
     ctx.fillText(String(Math.floor(Number(slot.value) || 0)), 0, 0);
   }
 
+  ctx.restore();
+}
+
+function drawAnimatedPilotCarrySlot(unit, slot, x, y, size) {
+  const now = performance.now();
+  const key = getPilotCarrySlotKey(slot);
+  let state = unit.pilotCarryIconState;
+
+  if (!state) {
+    state = {
+      key,
+      slot,
+      previousSlot: null,
+      startedAt: 0
+    };
+    unit.pilotCarryIconState = state;
+  } else if (state.key !== key) {
+    state = {
+      key,
+      slot,
+      previousSlot: state.slot,
+      startedAt: now
+    };
+    unit.pilotCarryIconState = state;
+  } else {
+    state.slot = slot;
+  }
+
+  if (!slot) return;
+
+  const elapsed = now - state.startedAt;
+  const t = state.startedAt
+    ? clamp(elapsed / PILOT_CARRY_ICON_ANIMATION_MS, 0, 1)
+    : 1;
+  const eased = clamp(easeOutBack(t), 0, 1.14);
+
+  if (state.previousSlot && t < 1) {
+    ctx.save();
+    ctx.globalAlpha = 1 - t;
+    drawPilotCarryIcon(
+      state.previousSlot,
+      x,
+      y + z(34 * t),
+      size * (1 - 0.12 * t)
+    );
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.globalAlpha = state.startedAt ? clamp(t * 1.6, 0, 1) : 1;
+  drawPilotCarryIcon(
+    slot,
+    x,
+    y - z(28 * (1 - eased)),
+    size
+  );
   ctx.restore();
 }
 
@@ -7000,7 +7103,8 @@ function drawPilot(unit) {
 
   ctx.restore();
 
-  drawPilotCarryIcon(
+  drawAnimatedPilotCarrySlot(
+    unit,
     getPilotCarrySlot(unit),
     p.x,
     p.y - z(unit.pilotRadius + 29),
@@ -8431,6 +8535,12 @@ function shouldIgnoreGameKeyboard(e) {
 
 window.addEventListener("keydown", e => {
   if (shouldIgnoreGameKeyboard(e)) return;
+
+  if (PILOT_WEAPON_SLOTS[e.code]) {
+    selectPlayerPilotWeaponByType(PILOT_WEAPON_SLOTS[e.code]);
+    e.preventDefault();
+    return;
+  }
 
   if (
     (e.code === "Equal" || e.code === "NumpadAdd")
