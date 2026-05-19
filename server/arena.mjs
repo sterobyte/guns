@@ -861,25 +861,63 @@ export class ArenaRoomState {
       };
     }
 
+    for (const cannon of this.cannons.values()) {
+      if (cannon.occupiedBy === bullet.ownerId) continue;
+      if (isServerCannonBroken(cannon)) continue;
+
+      const targetRadius = getServerCannonRadius(cannon, this.getCannonConfig);
+      const hitRadius = targetRadius + Math.max(1, bullet.radius);
+
+      if (distanceToSegment(cannon.x, cannon.y, from.x, from.y, to.x, to.y) > hitRadius) {
+        continue;
+      }
+
+      const occupant = cannon.occupiedBy
+        ? this.players.get(cannon.occupiedBy)
+        : null;
+
+      return {
+        id: `${now}-${bullet.id}-${cannon.id}`,
+        bulletId: bullet.id,
+        ownerId: bullet.ownerId,
+        ownerNick: bullet.ownerNick,
+        targetId: occupant?.id || cannon.id,
+        targetNick: occupant?.nick || cannon.id,
+        targetKind: "cannon",
+        targetCannonId: cannon.id,
+        damage: bullet.damage,
+        weapon: bullet.weapon,
+        x: cannon.x,
+        y: cannon.y,
+        serverTime: now
+      };
+    }
+
     return null;
   }
 
   applyHitDamage(hit, now) {
     const target = this.players.get(hit.targetId);
 
-    if (!target) return null;
-
     let targetCannon = null;
 
     if (hit.targetKind === "cannon") {
       const hitCannonId = sanitizeEventText(hit.targetCannonId || hit.cannonEntityId, 64);
 
-      if (!target.occupiedCannonId) return null;
-      if (hitCannonId && hitCannonId !== target.occupiedCannonId) return null;
+      if (target) {
+        if (!target.occupiedCannonId) return null;
+        if (hitCannonId && hitCannonId !== target.occupiedCannonId) return null;
 
-      targetCannon = this.cannons.get(target.occupiedCannonId);
+        targetCannon = this.cannons.get(target.occupiedCannonId);
+      } else {
+        targetCannon = this.cannons.get(hitCannonId || hit.targetId);
+      }
+
+      if (targetCannon?.occupiedBy && targetCannon.occupiedBy !== target?.id) return null;
 
       if (!targetCannon || isServerCannonBroken(targetCannon)) return null;
+    } else if (!target) {
+      return null;
     }
 
     const beforeHp = Math.max(0, finiteNumber(targetCannon?.hp ?? target?.hp));
@@ -1139,6 +1177,17 @@ function getPlayerMovementSpeed(player, cannon = null) {
   return Math.max(
     0,
     finiteNumber(cannon?.physics?.speed?.player) || DEFAULT_CANNON_MOVE_SPEED
+  );
+}
+
+function getServerCannonRadius(cannon = {}, getCannonConfig = () => null) {
+  const config = getCannonConfig(cannon.gunType) || {};
+
+  return Math.max(
+    1,
+    finiteNumber(config?.physics?.radiusOuter) ||
+      finiteNumber(cannon.radiusOuter) ||
+      34
   );
 }
 

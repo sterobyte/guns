@@ -64,6 +64,11 @@ try {
   await waitFor(() => clients.every((client) => client.deaths.length >= 1), "server death event");
   clients[1].sendRespawnEvent();
   await waitFor(() => clients.every((client) => client.respawns.length >= 1), "server respawn event");
+  clients[0].sendFreeCannonShotEvent();
+  await waitFor(() => clients.every((client) => {
+    const cannon = client.cannons.find((item) => item.id === "autogun2");
+    return cannon && cannon.hp < cannon.maxHp;
+  }), "server free cannon damage");
   clients[0].sendCombatEvent(999999, "pilot-kill");
   clients[0].sendCombatEvent(999999, "cannon-break");
   clients[0].sendCombatEvent(999999, "pilot-death");
@@ -71,7 +76,7 @@ try {
   clients[0].sendScoreEvent(999999, "unknown-score");
   await waitFor(() => clients.every((client) => client.scoreboard.some((row) =>
     row.nick === clients[0].nick &&
-    row.score === 280 &&
+    row.score === 310 &&
     row.pilotKills === 2 &&
     row.cannonBreaks === 1 &&
     row.pilotDeaths === 1
@@ -204,6 +209,7 @@ function createTestClient(nick, snapshot, options = {}) {
     remoteSnapshots: new Set(),
     scoreboard: [],
     bullets: [],
+    cannons: [],
     hits: [],
     damageEvents: [],
     deaths: [],
@@ -285,6 +291,26 @@ function createTestClient(nick, snapshot, options = {}) {
         clientTime: Date.now()
       }));
     },
+    sendFreeCannonShotEvent() {
+      state.socket?.send(JSON.stringify({
+        type: "shoot:event",
+        event: {
+          weapon: "gun",
+          cannonEntityId: "autogun0",
+          bullets: [{
+            cannonEntityId: "autogun0",
+            x: 60,
+            y: 0,
+            vx: 720,
+            vy: 0,
+            radius: 4,
+            damage: 120,
+            lifeMs: 1000
+          }]
+        },
+        clientTime: Date.now()
+      }));
+    },
     sendPistolEvent() {
       state.socket?.send(JSON.stringify({
         type: "shoot:event",
@@ -354,6 +380,7 @@ function handleMessage(client, event) {
     client.matchEvents = message.arena?.match?.events || client.matchEvents;
     client.scoreboard = message.arena?.scoreboard || client.scoreboard;
     client.bullets = message.arena?.bullets || client.bullets;
+    client.cannons = message.arena?.cannons || client.cannons;
     for (const player of message.arena?.players || []) {
       client.players.add(player.id);
       if (player.id !== client.clientId) {
