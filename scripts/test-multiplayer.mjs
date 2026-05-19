@@ -42,6 +42,40 @@ try {
   await waitFor(() => clients.every((client) => client.players.size === 2), "players=2");
   await waitFor(() => clients.every((client) => client.remoteSnapshots.size >= 1), "remote snapshots");
   clients[0].sendSnapshot({
+    bots: [{
+      id: "bot3",
+      nick: "Kirk",
+      state: "on-foot",
+      x: -111,
+      y: 222,
+      hp: 1,
+      maxHp: 1,
+      score: 5,
+      pilotKills: 1
+    }]
+  });
+  await waitFor(() => clients.every((client) => {
+    const bot = client.bots.find((item) => item.id === "bot3");
+    return bot && bot.x === -111 && bot.y === 222 && bot.score === 5;
+  }), "server bot state sync");
+  clients[1].sendSnapshot({
+    bots: [{
+      id: "bot3",
+      state: "on-foot",
+      x: 777,
+      y: 777,
+      score: 99
+    }]
+  });
+  await sleep(200);
+  assert(
+    clients.every((client) => {
+      const bot = client.bots.find((item) => item.id === "bot3");
+      return bot && bot.x === -111 && bot.y === 222 && bot.score === 5;
+    }),
+    "non-controller bot snapshot was accepted"
+  );
+  clients[0].sendSnapshot({
     state: "in-cannon",
     gunType: "autogun",
     cannonEntityId: "autogun0",
@@ -243,6 +277,7 @@ function createTestClient(nick, snapshot, options = {}) {
     scoreboard: [],
     bullets: [],
     cannons: [],
+    bots: [],
     hits: [],
     damageEvents: [],
     deaths: [],
@@ -414,6 +449,7 @@ function handleMessage(client, event) {
     client.scoreboard = message.arena?.scoreboard || client.scoreboard;
     client.bullets = message.arena?.bullets || client.bullets;
     client.cannons = message.arena?.cannons || client.cannons;
+    client.bots = message.arena?.bots || client.bots;
     for (const player of message.arena?.players || []) {
       client.players.add(player.id);
       if (player.id !== client.clientId) {
@@ -520,8 +556,13 @@ function fail(message) {
       acceptedSnapshots: client.acceptedSnapshots.length,
       matchEvents: client.matchEvents,
       scoreboard: client.scoreboard,
-      cannons: client.cannons
+      cannons: client.cannons,
+      bots: client.bots
     }))
   }, null, 2));
   process.exit(1);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

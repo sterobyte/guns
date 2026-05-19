@@ -5992,14 +5992,31 @@ function getLocalNetworkSnapshot() {
 function getLocalBotNetworkSnapshots() {
   return units
     .filter(unit => !unit.isPlayer && !unit.isCannonOnly && !isUnitHidden(unit))
-    .map(unit => ({
-      id: unit.id,
-      nick: getUnitDisplayName(unit),
-      score: unit.score || 0,
-      pilotKills: unit.pilotKills || 0,
-      cannonBreaks: unit.cannonBreaks || 0,
-      pilotDeaths: unit.pilotDeaths || 0
-    }));
+    .map(unit => {
+      const inCannon = unit.state === "alive";
+
+      return {
+        id: unit.id,
+        nick: getUnitDisplayName(unit),
+        x: inCannon ? unit.x : unit.pilotX,
+        y: inCannon ? unit.y : unit.pilotY,
+        angle: inCannon ? unit.turretAngle : unit.pilotAngle,
+        state: inCannon ? "in-cannon" : "on-foot",
+        cannonEntityId: inCannon ? unit.cannonEntityId : "",
+        occupiedCannonId: inCannon ? unit.cannonEntityId : "",
+        gunType: inCannon ? unit.gunType : "",
+        flying: isPilotAirborne(unit),
+        alive: unit.pilotAlive !== false,
+        hp: inCannon ? unit.hp : unit.pilotHp,
+        maxHp: inCannon ? unit.maxHp : 1,
+        radiusOuter: unit.radiusOuter,
+        radiusInner: unit.radiusInner,
+        score: unit.score || 0,
+        pilotKills: unit.pilotKills || 0,
+        cannonBreaks: unit.cannonBreaks || 0,
+        pilotDeaths: unit.pilotDeaths || 0
+      };
+    });
 }
 
 function getLocalCannonNetworkSnapshots() {

@@ -34,9 +34,10 @@ export class ArenaRoomState {
     this.createdAt = Date.now();
     this.scoreEvents = [];
     this.players = new Map();
-    this.bots = createRoomBots(roomConfig);
     this.getCannonConfig = options.getCannonConfig || (() => null);
     this.getPilotWeaponConfig = options.getPilotWeaponConfig || (() => null);
+    this.bots = createRoomBots(roomConfig, this.getCannonConfig);
+    this.botControllerClientId = "";
     this.cannons = createRoomCannons(roomConfig, this.getCannonConfig);
     this.bullets = new Map();
     this.nextBulletSeq = 1;
@@ -95,6 +96,10 @@ export class ArenaRoomState {
 
     player.online = false;
     player.lastSeenAt = Date.now();
+
+    if (this.botControllerClientId === clientId) {
+      this.botControllerClientId = "";
+    }
   }
 
   updatePlayer(client, snapshot = {}) {
@@ -172,7 +177,7 @@ export class ArenaRoomState {
     player.lastSeenAt = now;
     player.lastSnapshotAt = now;
 
-    this.updateBots(snapshot.bots);
+    this.updateBots(client, snapshot.bots);
     this.updateCannons(snapshot.cannons);
 
     return player;
@@ -751,8 +756,17 @@ export class ArenaRoomState {
     };
   }
 
-  updateBots(rawBots) {
+  updateBots(client, rawBots) {
     if (!Array.isArray(rawBots)) return;
+    if (!client?.id) return;
+
+    const currentController = this.players.get(this.botControllerClientId);
+
+    if (!this.botControllerClientId || currentController?.online === false) {
+      this.botControllerClientId = client.id;
+    }
+
+    if (client.id !== this.botControllerClientId) return;
 
     for (const rawBot of rawBots) {
       const botId = String(rawBot?.id || "");
@@ -761,10 +775,26 @@ export class ArenaRoomState {
       if (!bot) continue;
 
       bot.nick = String(rawBot.nick || bot.nick).slice(0, 24);
+      bot.x = finiteNumber(rawBot.x ?? bot.x);
+      bot.y = finiteNumber(rawBot.y ?? bot.y);
+      bot.angle = finiteNumber(rawBot.angle ?? bot.angle);
+      bot.state = rawBot.state === "in-cannon" ? "in-cannon" : "on-foot";
+      bot.gunType = sanitizeEventText(rawBot.gunType || bot.gunType || "autogun", 32);
+      bot.occupiedCannonId = sanitizeEventText(
+        rawBot.occupiedCannonId || rawBot.cannonEntityId || bot.occupiedCannonId || "",
+        64
+      );
+      bot.flying = Boolean(rawBot.flying);
+      bot.alive = rawBot.alive !== false;
+      bot.hp = Math.max(0, finiteNumber(rawBot.hp ?? bot.hp));
+      bot.maxHp = Math.max(1, finiteNumber(rawBot.maxHp ?? bot.maxHp) || 1);
+      bot.radiusOuter = Math.max(1, finiteNumber(rawBot.radiusOuter ?? bot.radiusOuter) || 34);
+      bot.radiusInner = Math.max(1, finiteNumber(rawBot.radiusInner ?? bot.radiusInner) || 13);
       bot.score = Math.max(bot.score, positiveInt(rawBot.score));
       bot.pilotKills = Math.max(bot.pilotKills, positiveInt(rawBot.pilotKills));
       bot.cannonBreaks = Math.max(bot.cannonBreaks, positiveInt(rawBot.cannonBreaks));
       bot.pilotDeaths = Math.max(bot.pilotDeaths, positiveInt(rawBot.pilotDeaths));
+      bot.sourceClientId = client.id;
       bot.lastSeenAt = Date.now();
     }
   }
@@ -1296,7 +1326,7 @@ function isPlayerNearCannon(player, cannon, rawX, rawY) {
   );
 }
 
-function createRoomBots(roomConfig = {}) {
+function createRoomBots(roomConfig = {}, getCannonConfig = () => null) {
   const botSpawns = Array.isArray(roomConfig?.spawns?.bots)
     ? roomConfig.spawns.bots
     : [];
@@ -1305,18 +1335,45 @@ function createRoomBots(roomConfig = {}) {
   return new Map(
     botSpawns.map((bot, index) => {
       const id = String(bot.unitId || bot.id || `bot${index + 1}`);
+      const state = bot.state === "alive" ? "in-cannon" : "on-foot";
+      const gunType = sanitizeEventText(bot.gunType || "autogun", 32);
+      const config = getCannonConfig(gunType) || {};
+      const maxHp = state === "in-cannon"
+        ? Math.max(1, finiteNumber(bot.maxHp ?? config?.gameplay?.maxHp) || 100)
+        : Math.max(1, finiteNumber(bot.maxHp) || 1);
+      const x = state === "in-cannon"
+        ? finiteNumber(bot.x)
+        : finiteNumber(bot.pilotX ?? bot.x);
+      const y = state === "in-cannon"
+        ? finiteNumber(bot.y)
+        : finiteNumber(bot.pilotY ?? bot.y);
 
       return [
         id,
         {
           id,
           nick: String(bot.name || bot.nick || id),
+          x,
+          y,
+          angle: finiteNumber(bot.angle),
+          gunType,
+          state,
+          flying: false,
+          alive: true,
+          hp: maxHp,
+          maxHp,
+          radiusOuter: 34,
+          radiusInner: 13,
+          occupiedCannonId: state === "in-cannon"
+            ? sanitizeEventText(bot.cannonEntityId || bot.occupiedCannonId || "", 64)
+            : "",
           score: 0,
           pilotKills: 0,
           cannonBreaks: 0,
           pilotDeaths: 0,
           online: true,
           serverControlled: true,
+          sourceClientId: "",
           createdAt: now,
           lastSeenAt: now
         }
