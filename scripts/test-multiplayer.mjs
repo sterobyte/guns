@@ -1,16 +1,18 @@
 const roomId = process.env.GUNS_TEST_ROOM || "main";
 const wsUrl = process.env.GUNS_TEST_WS_URL ||
   `ws://127.0.0.1:3000/ws?room=${encodeURIComponent(roomId)}&nick=`;
+const httpUrl = process.env.GUNS_TEST_HTTP_URL || "http://127.0.0.1:3000";
 const timeoutMs = Number(process.env.GUNS_TEST_TIMEOUT_MS || 5000);
+const runId = Date.now().toString(36).slice(-6);
 
 const clients = [
-  createTestClient("smokeA", {
+  createTestClient(`smokea${runId}`, {
     x: -120,
     y: 0,
     score: 11,
     pilotKills: 1
   }),
-  createTestClient("smokeB", {
+  createTestClient(`smokeb${runId}`, {
     x: 120,
     y: 0,
     score: 7,
@@ -28,7 +30,9 @@ const emptyRoomClient = createTestClient("solo", {
 const timeout = setTimeout(() => fail("timeout"), timeoutMs);
 
 try {
+  await Promise.all(clients.map((client) => claimPilot(client.nick)));
   await Promise.all(clients.map((client) => client.open()));
+  await waitFor(() => clients.every((client) => client.userNick), "test user identity");
   clients.forEach((client) => client.sendSnapshot());
   await waitFor(() => clients.every((client) => client.matchId), "match id");
   assert(
@@ -44,6 +48,15 @@ try {
     x: 0,
     y: 0
   });
+  const victimAcceptedBeforeShot = clients[1].acceptedSnapshots.length;
+  clients[1].sendSnapshot({
+    hp: 20,
+    maxHp: 100
+  });
+  await waitFor(
+    () => clients[1].acceptedSnapshots.length > victimAcceptedBeforeShot,
+    "victim hp snapshot"
+  );
   clients[0].sendShootEvent();
   await waitFor(() => clients.every((client) => client.bullets.length >= 1), "server bullets");
   await waitFor(() => clients.every((client) => client.hits.length >= 1), "server bullet hit");
@@ -57,7 +70,7 @@ try {
   clients[0].sendCombatEvent(999999, "ammo-load");
   clients[0].sendScoreEvent(999999, "unknown-score");
   await waitFor(() => clients.every((client) => client.scoreboard.some((row) =>
-    row.nick === "smokeA" &&
+    row.nick === clients[0].nick &&
     row.score === 280 &&
     row.pilotKills === 2 &&
     row.cannonBreaks === 1 &&
@@ -71,8 +84,8 @@ try {
   clients[0].sendSnapshot({
     x: 120,
     y: 45,
-    hp: 100,
-    maxHp: 100
+    hp: 1,
+    maxHp: 1
   });
   clients[1].sendSnapshot({
     x: 120,
@@ -80,6 +93,20 @@ try {
     hp: 100,
     maxHp: 100
   });
+  await apiPost("/users/exchange-score", {
+    nick: clients[1].userNick,
+    score: 1000
+  });
+  await apiPost("/users/purchase-pilot-weapon", {
+    nick: clients[1].userNick,
+    weaponId: "basic-knife",
+    roomId: "guns-market",
+    instanceId: "market-basic-knife",
+    meta: {
+      reason: "test-market-purchase"
+    }
+  });
+  await waitFor(() => clients[1].inventory.pilotWeapons.includes("basic-knife"), "knife inventory sync");
   clients[1].sendMeleeEvent(clients[0], 120);
   await waitFor(() => clients.every((client) =>
     client.meleeEvents.length >= 1 &&
@@ -87,10 +114,51 @@ try {
     client.deaths.length >= 2
   ), "server melee kill");
   await waitFor(() => clients.every((client) => client.scoreboard.some((row) =>
-    row.nick === "smokeB" &&
+    row.nick === clients[1].nick &&
     row.score === 130 &&
     row.pilotKills === 1
   )), "server melee scoring");
+  clients[0].sendRespawnEvent();
+  clients[1].sendRespawnEvent();
+  await waitFor(() => clients.every((client) => client.respawns.length >= 2), "server pistol respawns");
+  await apiPost("/users/exchange-score", {
+    nick: clients[0].userNick,
+    score: 2500
+  });
+  await apiPost("/users/purchase-pilot-weapon", {
+    nick: clients[0].userNick,
+    weaponId: "basic-pistol",
+    roomId: "guns-market",
+    instanceId: "market-basic-pistol",
+    meta: {
+      reason: "test-market-purchase"
+    }
+  });
+  await waitFor(() => clients[0].inventory.pilotWeapons.includes("basic-pistol"), "pistol inventory sync");
+  clients[0].sendSnapshot({
+    state: "on-foot",
+    x: -80,
+    y: 0,
+    hp: 1,
+    maxHp: 1
+  });
+  clients[1].sendSnapshot({
+    state: "on-foot",
+    x: 20,
+    y: 0,
+    hp: 1,
+    maxHp: 1
+  });
+  clients[0].sendPistolEvent();
+  await waitFor(() => clients.every((client) => client.damageEvents.some((event) =>
+    event.weapon === "basic-pistol" &&
+    event.targetId === clients[1].clientId &&
+    event.afterHp === 0
+  )), "server pistol damage");
+  await waitFor(() => clients.every((client) => client.deaths.some((event) =>
+    event.weapon === "basic-pistol" &&
+    event.targetId === clients[1].clientId
+  )), "server pistol death");
   await emptyRoomClient.open();
   emptyRoomClient.sendSnapshot();
   await waitFor(() => emptyRoomClient.scoreboard.length === 1, "empty room solo scoreboard");
@@ -143,6 +211,10 @@ function createTestClient(nick, snapshot, options = {}) {
     acceptedSnapshots: [],
     meleeEvents: [],
     matchEvents: [],
+    userNick: "",
+    inventory: {
+      pilotWeapons: []
+    },
     open() {
       return new Promise((resolve, reject) => {
         const socket = new WebSocket(`${clientWsUrl}${encodeURIComponent(nick)}`);
@@ -208,6 +280,25 @@ function createTestClient(nick, snapshot, options = {}) {
             radius: 4,
             damage: 120,
             lifeMs: 1000
+          }]
+        },
+        clientTime: Date.now()
+      }));
+    },
+    sendPistolEvent() {
+      state.socket?.send(JSON.stringify({
+        type: "shoot:event",
+        event: {
+          weapon: "basic-pistol",
+          bullets: [{
+            weapon: "basic-pistol",
+            x: snapshot.x + 40,
+            y: snapshot.y,
+            vx: 520,
+            vy: 0,
+            radius: 3,
+            damage: 10,
+            lifeMs: 1050
           }]
         },
         clientTime: Date.now()
@@ -283,6 +374,11 @@ function handleMessage(client, event) {
     client.deaths.push(message.death);
   }
 
+  if (message.type === "inventory:sync") {
+    client.inventory = message.inventory || message.user?.inventory || client.inventory;
+    client.userNick = message.user?.nick || message.user?.callsign || client.userNick;
+  }
+
   if (message.type === "respawn:event" && message.respawn) {
     client.respawns.push(message.respawn);
   }
@@ -322,6 +418,30 @@ function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+async function apiPost(path, body) {
+  const response = await fetch(`${httpUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data?.ok) {
+    throw new Error(`api failed ${path}: ${JSON.stringify(data)}`);
+  }
+
+  return data;
+}
+
+async function claimPilot(nick) {
+  return apiPost("/pilots/claim", {
+    nick,
+    password: `test-${runId}`
+  });
 }
 
 function fail(message) {
