@@ -1362,9 +1362,12 @@ function applyServerCannonStateToUnit(unit) {
     !unit.isCannonOnly &&
     unit.state === "alive";
 
+  if (localBotOwnsActiveCannon) {
+    return;
+  }
+
   if (
     !localPlayerOwnsActiveCannon &&
-    !localBotOwnsActiveCannon &&
     Number.isFinite(serverX) &&
     Number.isFinite(serverY)
   ) {
