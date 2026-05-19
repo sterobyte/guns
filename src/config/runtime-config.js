@@ -1,7 +1,7 @@
 window.GUNS_CONFIG = {
   project: {
     name: "guns-next1",
-    version: "0.16.71",
+    version: "0.16.72",
     brand: "GUNS.GS",
     domain: "guns.gs",
     source: "gunsdemo22.html",

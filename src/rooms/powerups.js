@@ -205,6 +205,15 @@
         unit.maxHp,
         unit.hp + unit.maxHp * pack.value
       );
+      options.addScore?.(
+        unit,
+        options.getActiveModeRule("repairPickupScore", 0),
+        "repair-pickup",
+        {
+          cannonEntityId: unit.cannonEntityId,
+          repairValue: pack.value
+        }
+      );
       return true;
     }
 

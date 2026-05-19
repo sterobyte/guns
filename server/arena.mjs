@@ -588,7 +588,12 @@ export class ArenaRoomState {
     const now = Date.now();
 
     if (!reason) return null;
-    if (value <= 0 && reason !== "pilot-death" && reason !== "repair-load") return null;
+    if (
+      value <= 0 &&
+      reason !== "pilot-death" &&
+      reason !== "repair-load" &&
+      reason !== "repair-pickup"
+    ) return null;
 
     if (reason === "passive" && now - player.lastPassiveScoreAt < PASSIVE_SCORE_INTERVAL_MS) {
       return null;
@@ -597,12 +602,17 @@ export class ArenaRoomState {
     const serverContext =
       reason === "ammo-load" || reason === "ammo-pickup"
         ? this.applyServerAmmoLoad(player, event)
-        : reason === "repair-load"
+        : reason === "repair-load" || reason === "repair-pickup"
           ? this.applyServerRepairLoad(player, event, now)
           : {};
 
     if (
-      (reason === "ammo-load" || reason === "ammo-pickup" || reason === "repair-load") &&
+      (
+        reason === "ammo-load" ||
+        reason === "ammo-pickup" ||
+        reason === "repair-load" ||
+        reason === "repair-pickup"
+      ) &&
       !serverContext
     ) {
       return null;
@@ -1285,6 +1295,7 @@ const SCORE_REASON_TO_RULE = {
   "bullet-hit": "bulletHitScore",
   "ammo-pickup": "ammoPickupScore",
   "ammo-load": "ammoLoadScore",
+  "repair-pickup": "repairPickupScore",
   "repair-load": "repairLoadScore",
   "pilot-kill": "pilotKillScore",
   "cannon-break": "cannonBreakScore",
@@ -1303,6 +1314,7 @@ const DEFAULT_SCORE_VALUES = {
   "bullet-hit": 30,
   "ammo-pickup": 40,
   "ammo-load": 40,
+  "repair-pickup": 0,
   "repair-load": 0,
   "pilot-kill": 100,
   "cannon-break": 50,
