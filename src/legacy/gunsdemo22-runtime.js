@@ -3143,6 +3143,8 @@ function startKnockbackUnit(unit, nx, ny) {
 
     time: 0
   };
+
+  markCannonPositionForSync(unit);
 }
 
 function startPilotKnockback(unit, nx, ny) {
@@ -3223,9 +3225,16 @@ function updateKnockback(unit, dt) {
 
   if (t >= 1) {
     unit.knockback = null;
+    markCannonPositionForSync(unit, 300);
   }
 
   return true;
+}
+
+function markCannonPositionForSync(unit, durationMs = 800) {
+  if (!unit?.cannonEntityId) return;
+
+  unit.cannonPositionSyncUntil = Date.now() + durationMs;
 }
 
 function updatePilotKnockback(unit, dt) {
@@ -4436,6 +4445,7 @@ function updatePostEjectBrake(unit, dt) {
 
   unit.lastMoveVx = vx;
   unit.lastMoveVy = vy;
+  markCannonPositionForSync(unit, 300);
 
   b.speed = Math.max(
     0,
@@ -5993,11 +6003,18 @@ function getLocalBotNetworkSnapshots() {
 }
 
 function getLocalCannonNetworkSnapshots() {
+  const now = Date.now();
+
   return units
     .filter(unit => (
       unit.cannonEntityId &&
       !isUnitHidden(unit) &&
-      unit.state !== "alive"
+      unit.state !== "alive" &&
+      (
+        unit.knockback ||
+        unit.postEjectBrake ||
+        Number(unit.cannonPositionSyncUntil || 0) >= now
+      )
     ))
     .map(unit => ({
       id: unit.cannonEntityId,
